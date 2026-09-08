@@ -1,0 +1,137 @@
+'use server'
+
+import { revalidatePath } from 'next/cache'
+import { createClient } from '@/lib/supabase/server'
+import prisma from '@/lib/prisma'
+import { withIdempotency } from '@/lib/idempotency'
+import type { SignupState } from '@/types'
+
+const statuses = ['complete', 'partial'] as const
+const recipientRoles = ['Employee', 'PGSO Personnel'] as const
+
+interface ItemInput {
+  description?: string
+  units?: string
+  quantity?: string | number
+  unitCost?: string | number
+}
+
+export async function logDelivery(
+  _prevState: SignupState,
+  formData: FormData
+): Promise<SignupState> {
+  const assetType = (formData.get('assetType') as string)?.trim()
+  const assetCode = (formData.get('assetCode') as string)?.trim()
+  const accountType = (formData.get('accountType') as string)?.trim()
+  const dateSupplied = formData.get('dateSupplied') as string
+  const supplierName = (formData.get('supplierName') as string)?.trim()
+  const poReference = (formData.get('poReference') as string)?.trim()
+  const deliveryStatus = (
+    formData.get('deliveryStatus') as string
+  )?.toLowerCase()
+  const recipientRole = (formData.get('recipientRole') as string)?.trim()
+  const recipientName = (formData.get('recipientName') as string)?.trim()
+
+  if (!assetType || !assetCode || !accountType) {
+    return { error: 'Asset type, code, and account type are required.' }
+  }
+
+  if (!dateSupplied || Number.isNaN(Date.parse(dateSupplied))) {
+    return { error: 'A valid date supplied is required.' }
+  }
+
+  if (!supplierName) {
+    return { error: 'Supplier name is required.' }
+  }
+
+  if (!poReference) {
+    return { error: 'PO reference is required.' }
+  }
+
+  if (!statuses.includes(deliveryStatus as (typeof statuses)[number])) {
+    return { error: 'Invalid delivery status.' }
+  }
+
+  if (!recipientRoles.includes(recipientRole as (typeof recipientRoles)[number])) {
+    return { error: 'Recipient must be an Employee or PGSO Personnel.' }
+  }
+
+  let items: ItemInput[]
+  try {
+    items = JSON.parse((formData.get('itemsJson') as string) || '[]')
+  } catch {
+    return { error: 'Invalid items payload.' }
+  }
+
+  if (!Array.isArray(items) || items.length === 0) {
+    return { error: 'Add at least one delivered item.' }
+  }
+
+  const parsedItems = items.map((item) => {
+    const description = String(item.description || '').trim()
+    const quantity = Number(item.quantity)
+    const unit = String(item.units || '').trim() || null
+    const costRaw = String(item.unitCost ?? '').trim()
+    return { description, quantity, unit, costRaw }
+  })
+
+  for (const item of parsedItems) {
+    if (!item.description) {
+      return { error: 'Every item needs a description.' }
+    }
+    if (!Number.isInteger(item.quantity) || item.quantity <= 0) {
+      return { error: 'Item quantities must be whole numbers above zero.' }
+    }
+    if (item.costRaw && (Number.isNaN(Number(item.costRaw)) || Number(item.costRaw) < 0)) {
+      return { error: 'Unit costs must be zero or more.' }
+    }
+  }
+
+  const supabase = createClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+
+  if (!user) {
+    return { error: 'You must be signed in to log a delivery.' }
+  }
+
+  try {
+    const outcome = await withIdempotency(
+      formData.get('idempotencyKey') as string,
+      'delivery:create',
+      async () => {
+        const delivery = await prisma.delivery.create({
+          data: {
+            supplier: supplierName,
+            po_reference: poReference,
+            date_delivered: new Date(dateSupplied),
+            delivery_status: deliveryStatus,
+            received_by: user.id,
+            recipient_role: recipientRole,
+            recipient_name: recipientName || null,
+            asset_type: assetType,
+            asset_code: assetCode,
+            account_type: accountType,
+            items: {
+              create: parsedItems.map((item) => ({
+                item_name: item.description,
+                unit: item.unit,
+                quantity: item.quantity,
+                unit_cost: item.costRaw ? item.costRaw : null,
+              })),
+            },
+          },
+          select: { id: true },
+        })
+        return { deliveryId: delivery.id }
+      }
+    )
+
+    revalidatePath('/personnel/deliveries')
+    revalidatePath('/personnel/dashboard')
+    return { success: true, deliveryId: outcome.result.deliveryId }
+  } catch {
+    return { error: 'Failed to save delivery. Please try again.' }
+  }
+}

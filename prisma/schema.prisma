@@ -1,0 +1,159 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model Profile {
+  id         String    @id @db.Uuid
+  full_name  String?
+  role       String    @default("employee") @db.VarChar
+  status     String    @default("active") @db.VarChar
+  created_at DateTime? @default(now()) @db.Timestamptz
+
+  @@map("profiles")
+}
+
+model Asset {
+  id              String   @id @default(uuid()) @db.Uuid
+  property_number String?  @unique @db.VarChar
+  qr_code         String?  @unique @db.VarChar
+  category        String?  @db.VarChar
+  description     String?  @db.Text
+  condition       String?  @default("good") @db.VarChar
+  location        String?  @db.VarChar
+  assigned_to     String?  @db.Uuid
+  status          String?  @default("available") @db.VarChar
+  date_acquired   DateTime? @db.Date
+  image_url       String?
+  created_at      DateTime? @default(now()) @db.Timestamptz
+
+  @@map("assets")
+}
+
+model Delivery {
+  id              String   @id @default(uuid()) @db.Uuid
+  po_reference    String?  @db.VarChar
+  supplier        String?  @db.VarChar
+  date_delivered  DateTime? @db.Date
+  delivery_status String? @default("complete") @db.VarChar
+  received_by     String   @db.Uuid
+  recipient_role  String?  @db.VarChar
+  recipient_name  String?  @db.VarChar
+  asset_type      String?  @db.VarChar
+  asset_code      String?  @db.VarChar
+  account_type    String?  @db.VarChar
+  created_at      DateTime? @default(now()) @db.Timestamptz
+  items           DeliveryItem[]
+
+  @@map("deliveries")
+}
+
+model DeliveryItem {
+  id          String   @id @default(uuid()) @db.Uuid
+  delivery_id String   @db.Uuid
+  delivery    Delivery @relation(fields: [delivery_id], references: [id], onDelete: Cascade)
+  item_name   String   @db.VarChar
+  unit        String?  @db.VarChar
+  quantity    Int
+  unit_cost   Decimal? @db.Decimal(12, 2)
+  created_at  DateTime? @default(now()) @db.Timestamptz
+
+  @@index([delivery_id])
+  @@map("delivery_items")
+}
+
+model Inspection {
+  id              String   @id @default(uuid()) @db.Uuid
+  delivery_id     String   @db.Uuid
+  inspector_id    String   @db.Uuid
+  inspection_date DateTime @db.Date
+  result          String   @db.VarChar
+  remarks         String?
+  air_document_id String?  @db.Uuid
+  created_at      DateTime? @default(now()) @db.Timestamptz
+
+  @@map("inspections")
+}
+
+model InventoryItem {
+  id               String   @id @default(uuid()) @db.Uuid
+  item_name        String   @db.VarChar
+  category         String?  @db.VarChar
+  quantity         Int
+  unit             String?  @db.VarChar
+  reorder_threshold Int?
+  location         String?  @db.VarChar
+  updated_at       DateTime? @default(now()) @db.Timestamptz
+
+  @@map("inventory")
+}
+
+model Repair {
+  id           String    @id @default(uuid()) @db.Uuid
+  asset_id     String    @db.Uuid
+  reported_by  String    @db.Uuid
+  repair_date  DateTime  @db.Date
+  description  String    @db.Text
+  status       String?   @default("pending") @db.VarChar
+  cost         Decimal?  @db.Decimal(10, 2)
+  technician   String?   @db.VarChar
+  created_at   DateTime? @default(now()) @db.Timestamptz
+
+  @@map("repairs")
+}
+
+model Document {
+  id                 String   @id @default(uuid()) @db.Uuid
+  document_type      String   @db.VarChar
+  reference_number   String   @unique @db.VarChar
+  related_asset_id   String?  @db.Uuid
+  related_inventory_id String? @db.Uuid
+  status             String?  @default("pending") @db.VarChar
+  file_url           String?
+  date_created       DateTime? @default(now()) @db.Date
+  prepared_by        String   @db.Uuid
+  approved_by        String?  @db.Uuid
+  created_at         DateTime? @default(now()) @db.Timestamptz
+
+  @@map("documents")
+}
+
+model Request {
+  id             String    @id @default(uuid()) @db.Uuid
+  employee_id    String    @db.Uuid
+  request_type   String    @db.VarChar
+  asset_id       String?   @db.Uuid
+  description    String    @db.Text
+  status         String?   @default("pending") @db.VarChar
+  date_requested DateTime? @default(now()) @db.Timestamptz
+  date_resolved  DateTime?
+
+  @@map("requests")
+}
+
+model AuditLog {
+  id         String   @id @db.Uuid
+  user_id    String   @db.Uuid
+  action     String   @db.VarChar
+  module     String   @db.VarChar
+  details    Json?
+  created_at DateTime? @default(now()) @db.Timestamptz
+
+  @@map("audit_logs")
+}
+
+model IdempotencyKey {
+  key        String    @id @db.VarChar
+  operation  String    @db.VarChar
+  status     String    @default("processing") @db.VarChar
+  response   Json?
+  created_at DateTime? @default(now()) @db.Timestamptz
+  updated_at DateTime? @updatedAt @db.Timestamptz
+
+  @@map("idempotency_keys")
+}

@@ -1,0 +1,39 @@
+.section {
+  margin-inline: auto;
+  padding-top: 3rem;
+  padding-bottom: 3rem;
+  width: min(90% + (100% - 64rem) / 2, 64rem);
+}
+
+.title {
+  font-size: 1.875rem;
+  font-weight: 700;
+}
+
+.subtitle {
+  margin-top: 0.5rem;
+  font-size: 0.875rem;
+  color: var(--color-navy-600);
+}
+
+@media (prefers-color-scheme: dark) {
+  .subtitle {
+    color: var(--color-navy-300);
+  }
+}
+
+.grid {
+  margin-top: 2rem;
+  display: grid;
+  gap: 1rem;
+}
+
+@media (min-width: 768px) {
+  .grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.form {
+  margin-top: 2rem;
+}

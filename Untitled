@@ -1,0 +1,27 @@
+## Error Type
+Build Error
+
+## Error Message
+You're importing a module that depends on `useEffect` into a React Server Component module. This API is only available in Client Components. To fix, mark the file (or its parent) with the `"use client"` directive.
+
+## Build Output
+./src/components/landing/AnalyticsSection.tsx:11:10
+Error: You're importing a module that depends on `useEffect` into a React Server Component module. This API is only available in Client Components. To fix, mark the file (or its parent) with the `"use client"` directive.
+    Learn more: https://nextjs.org/docs/app/api-reference/directives/use-client
+   9 |   AlertTriangle,
+  10 | } from "lucide-react";
+> 11 | import { useEffect, useRef } from "react";
+     |          ^^^^^^^^^
+  12 | import { gsap, createGSAPContext } from "@/lib/gsap-utils";
+  13 | import { GridBackground } from "@/components/landing/effects/GridBackground";
+  14 | import { NoiseOverlay } from "@/components/landing/effects/NoiseOverlay";
+
+Ecmascript file had an error
+
+Import trace:
+  Server Component:
+    ./src/components/landing/AnalyticsSection.tsx
+    ./src/components/landing/LandingLayout.tsx
+    ./src/app/page.tsx
+
+Next.js version: 16.3.4 (Turbopack)

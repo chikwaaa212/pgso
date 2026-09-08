@@ -1,0 +1,75 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@theme inline {
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+  --font-inter: "Inter", sans-serif;
+  --color-navy-900: #1b2a4a;
+  --color-navy-800: #243b66;
+  --color-navy-700: #2d4a7a;
+  --color-navy-600: #4a6080;
+  --color-navy-500: #6b7a95;
+  --color-navy-400: #8a9bb5;
+  --color-navy-300: #b0bdd0;
+  --color-navy-200: #d1d9e6;
+  --color-navy-100: #e8edf5;
+  --color-yellow-500: #f5c518;
+  --color-yellow-600: #e6a800;
+  --color-yellow-100: #fef3c7;
+  --color-white: #ffffff;
+  --color-background: #ffffff;
+  --color-foreground: #1b2a4a;
+  --color-muted: #f5f7fa;
+  --color-chart-1: #243b66;
+  --color-chart-2: #f5c518;
+  --color-chart-3: #2d4a7a;
+  --color-chart-4: #e6a800;
+  --color-chart-5: #6b7a95;
+  --color-muted-foreground: #64748b;
+  --color-popover: #ffffff;
+  --color-popover-foreground: #1b2a4a;
+  --color-card: #ffffff;
+  --color-card-foreground: #1b2a4a;
+  --color-accent: #e8edf5;
+  --color-accent-foreground: #1b2a4a;
+  --color-primary: #243b66;
+  --color-primary-foreground: #ffffff;
+  --color-destructive: #991b1b;
+  --color-border: #e8edf5;
+  --color-input: #d1d9e6;
+  --color-ring: #1b2a4a;
+}
+
+@layer components {
+  .bg-grid {
+    background-image:
+      linear-gradient(to right, currentColor 1px, transparent 1px),
+      linear-gradient(to bottom, currentColor 1px, transparent 1px);
+    color: var(--color-navy-200);
+  }
+  .bg-noise {
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.69' numOctaves='3' stitchTiles='stitch'%3E%3C/feTurbulence%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    opacity: 0.05;
+  }
+}
+
+html {
+  font-family: var(--font-sans);
+  background: var(--color-background);
+  color: var(--color-foreground);
+}
+
+body {
+  background: var(--color-background);
+  color: var(--color-foreground);
+  font-family: var(--font-sans);
+  margin: 0;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.container {
+  width: min(90% + (100% - 64rem) / 2, 64rem);
+  margin-inline: auto;
+}
