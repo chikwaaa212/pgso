@@ -1,0 +1,73 @@
+.qrImg {
+  display: inline-block;
+  width: 5rem;
+  height: 5rem;
+  flex-shrink: 0;
+}
+
+.thumb {
+  display: inline-block;
+  width: 3rem;
+  height: 3rem;
+  object-fit: cover;
+  border-radius: 0.375rem;
+  border: 1px solid var(--color-navy-200);
+}
+
+.property {
+  font-family: var(--font-mono, monospace);
+  font-size: 0.8125rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--color-navy-900);
+  white-space: nowrap;
+}
+
+.searchWrap {
+  position: relative;
+  flex: 1 1 14rem;
+  min-width: 12rem;
+}
+
+.searchIcon {
+  position: absolute;
+  left: 0.625rem;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--color-navy-400);
+  pointer-events: none;
+}
+
+.search {
+  padding-left: 2rem;
+}
+
+.filterRow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  flex-wrap: wrap;
+}
+
+.filterRow .filterBtn {
+  font-size: 0.75rem;
+  font-weight: 600;
+  border-radius: 9999px;
+  padding: 0.375rem 0.875rem;
+  cursor: pointer;
+  border: 1px solid var(--color-navy-200);
+  background-color: transparent;
+  color: var(--color-navy-600);
+  transition: color 0.15s, background-color 0.15s, border-color 0.15s;
+}
+
+.filterRow .filterBtn[data-active="true"] {
+  color: var(--color-navy-900);
+  background-color: var(--color-yellow-500);
+  border-color: var(--color-yellow-500);
+}
+
+.filterRow .filterBtn:hover:not([data-active="true"]) {
+  color: var(--color-navy-800);
+  background-color: var(--color-navy-100);
+}
