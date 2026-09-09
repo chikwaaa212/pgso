@@ -1,14 +1,23 @@
 import { Card } from "@/components/ui/card";
-import { mockAssets } from "@/components/personnel/mock";
+import prisma from "@/lib/prisma";
 import styles from "../dashboard/page.module.css";
 
-function tone(status: string) {
-  if (status === "Available") return "ok";
-  if (status === "Assigned") return "info";
+function tone(status: string | null) {
+  if (status === "available") return "ok";
+  if (status === "assigned")  return "info";
   return "warn";
 }
 
-export default function PersonnelAssetsPage() {
+function label(status: string | null) {
+  if (!status) return "—";
+  return status.charAt(0).toUpperCase() + status.slice(1).replace(/_/g, " ");
+}
+
+export default async function PersonnelAssetsPage() {
+  const assets = await prisma.asset.findMany({
+    orderBy: { created_at: "desc" },
+  });
+
   return (
     <section className={styles.section}>
       <p className={styles.crumb}>Personnel / Assets</p>
@@ -16,8 +25,7 @@ export default function PersonnelAssetsPage() {
         <div>
           <h1 className={styles.title}>Assets</h1>
           <p className={styles.subtitle}>
-            Encode items, validate, and assign QR codes.{" "}
-            <span className={styles.badge}>Mockup — no live data</span>
+            {assets.length} {assets.length === 1 ? "asset" : "assets"} registered
           </p>
         </div>
         <div className={styles.actions}>
@@ -27,32 +35,42 @@ export default function PersonnelAssetsPage() {
 
       <Card className={styles.panel}>
         <h2 className={styles.panelTitle}>Asset registry</h2>
-        <div className={styles.tableWrap}>
-          <table className={styles.table}>
-            <thead>
-              <tr>
-                <th>Property no.</th>
-                <th>Category</th>
-                <th>Status</th>
-                <th>Location</th>
-              </tr>
-            </thead>
-            <tbody>
-              {mockAssets.map((a) => (
-                <tr key={a.id}>
-                  <td>{a.propertyNo}</td>
-                  <td>{a.category}</td>
-                  <td>
-                    <span className={styles.status} data-tone={tone(a.status)}>
-                      {a.status}
-                    </span>
-                  </td>
-                  <td>{a.location}</td>
+        {assets.length === 0 ? (
+          <div className={styles.emptyState}>
+            <p className={styles.panelSub}>No assets registered yet.</p>
+          </div>
+        ) : (
+          <div className={styles.tableWrap}>
+            <table className={styles.table}>
+              <thead>
+                <tr>
+                  <th>Property no.</th>
+                  <th>Category</th>
+                  <th>Description</th>
+                  <th>Condition</th>
+                  <th>Status</th>
+                  <th>Location</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {assets.map((a) => (
+                  <tr key={a.id}>
+                    <td>{a.property_number ?? "—"}</td>
+                    <td>{a.category ?? "—"}</td>
+                    <td>{a.description ?? "—"}</td>
+                    <td>{label(a.condition)}</td>
+                    <td>
+                      <span className={styles.status} data-tone={tone(a.status)}>
+                        {label(a.status)}
+                      </span>
+                    </td>
+                    <td>{a.location ?? "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </Card>
     </section>
   );

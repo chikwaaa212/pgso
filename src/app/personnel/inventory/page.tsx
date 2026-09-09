@@ -1,8 +1,12 @@
 import { Card } from "@/components/ui/card";
-import { mockInventory } from "@/components/personnel/mock";
+import prisma from "@/lib/prisma";
 import styles from "../dashboard/page.module.css";
 
-export default function PersonnelInventoryPage() {
+export default async function PersonnelInventoryPage() {
+  const items = await prisma.inventoryItem.findMany({
+    orderBy: { item_name: "asc" },
+  });
+
   return (
     <section className={styles.section}>
       <p className={styles.crumb}>Personnel / Inventory</p>
@@ -10,8 +14,7 @@ export default function PersonnelInventoryPage() {
         <div>
           <h1 className={styles.title}>Inventory</h1>
           <p className={styles.subtitle}>
-            Monitor stock levels and thresholds.{" "}
-            <span className={styles.badge}>Mockup — no live data</span>
+            {items.length} {items.length === 1 ? "item" : "items"} tracked
           </p>
         </div>
         <div className={styles.actions}>
@@ -21,41 +24,60 @@ export default function PersonnelInventoryPage() {
 
       <Card className={styles.panel}>
         <h2 className={styles.panelTitle}>Stock list</h2>
-        <div className={styles.tableWrap}>
-          <table className={styles.table}>
-            <thead>
-              <tr>
-                <th>ID</th>
-                <th>Item</th>
-                <th>Qty</th>
-                <th>Location</th>
-                <th>Flag</th>
-              </tr>
-            </thead>
-            <tbody>
-              {mockInventory.map((item) => (
-                <tr key={item.id}>
-                  <td>{item.id}</td>
-                  <td>{item.item}</td>
-                  <td>{item.qty}</td>
-                  <td>{item.location}</td>
-                  <td>
-                    {item.flag ? (
-                      <span
-                        className={styles.status}
-                        data-tone={item.flag === "Critical" ? "bad" : "warn"}
-                      >
-                        {item.flag}
-                      </span>
-                    ) : (
-                      <span className={styles.status} data-tone="ok">OK</span>
-                    )}
-                  </td>
+        {items.length === 0 ? (
+          <div className={styles.emptyState}>
+            <p className={styles.panelSub}>No inventory items recorded yet.</p>
+          </div>
+        ) : (
+          <div className={styles.tableWrap}>
+            <table className={styles.table}>
+              <thead>
+                <tr>
+                  <th>Item</th>
+                  <th>Category</th>
+                  <th>Quantity</th>
+                  <th>Unit</th>
+                  <th>Location</th>
+                  <th>Stock level</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {items.map((item) => {
+                  const low =
+                    item.reorder_threshold != null &&
+                    item.quantity <= item.reorder_threshold;
+                  const critical =
+                    item.reorder_threshold != null &&
+                    item.quantity <= Math.floor(item.reorder_threshold / 2);
+                  return (
+                    <tr key={item.id}>
+                      <td>{item.item_name}</td>
+                      <td>{item.category ?? "—"}</td>
+                      <td>{item.quantity}</td>
+                      <td>{item.unit ?? "—"}</td>
+                      <td>{item.location ?? "—"}</td>
+                      <td>
+                        {critical ? (
+                          <span className={styles.status} data-tone="bad">
+                            Critical
+                          </span>
+                        ) : low ? (
+                          <span className={styles.status} data-tone="warn">
+                            Low stock
+                          </span>
+                        ) : (
+                          <span className={styles.status} data-tone="ok">
+                            OK
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </Card>
     </section>
   );

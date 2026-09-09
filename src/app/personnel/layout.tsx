@@ -1,5 +1,4 @@
-import { PersonnelSidebar } from "@/components/personnel/PersonnelSidebar";
-import styles from "./layout.module.css";
+import { PersonnelChrome } from "@/components/personnel/PersonnelChrome";
 
 export const dynamic = "force-dynamic";
 
@@ -8,10 +7,5 @@ export default function PersonnelLayout({
 }: {
   children: React.ReactNode;
 }) {
-  return (
-    <div className={styles.shell}>
-      <PersonnelSidebar />
-      <div className={styles.main}>{children}</div>
-    </div>
-  );
+  return <PersonnelChrome>{children}</PersonnelChrome>;
 }

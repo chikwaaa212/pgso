@@ -23,7 +23,7 @@ model Asset {
   property_number String?  @unique @db.VarChar
   qr_code         String?  @unique @db.VarChar
   category        String?  @db.VarChar
-  description     String?  @db.Text
+  description     String?
   condition       String?  @default("good") @db.VarChar
   location        String?  @db.VarChar
   assigned_to     String?  @db.Uuid
@@ -36,31 +36,34 @@ model Asset {
 }
 
 model Delivery {
-  id              String   @id @default(uuid()) @db.Uuid
-  po_reference    String?  @db.VarChar
-  supplier        String?  @db.VarChar
-  date_delivered  DateTime? @db.Date
-  delivery_status String? @default("complete") @db.VarChar
-  received_by     String   @db.Uuid
-  recipient_role  String?  @db.VarChar
-  recipient_name  String?  @db.VarChar
-  asset_type      String?  @db.VarChar
-  asset_code      String?  @db.VarChar
-  account_type    String?  @db.VarChar
-  created_at      DateTime? @default(now()) @db.Timestamptz
-  items           DeliveryItem[]
+  id                String         @id @default(uuid()) @db.Uuid
+  po_reference      String?        @db.VarChar
+  supplier          String?        @db.VarChar
+  date_delivered    DateTime?      @db.Date
+  delivery_status   String?        @default("complete") @db.VarChar
+  inspection_status String?        @default("pending") @db.VarChar
+  received_by       String         @db.Uuid
+  recipient_role    String?        @db.VarChar
+  recipient_name    String?        @db.VarChar
+  asset_type        String?        @db.VarChar
+  asset_code        String?        @db.VarChar
+  account_type      String?        @db.VarChar
+  created_at        DateTime?      @default(now()) @db.Timestamptz
+  items             DeliveryItem[]
+  inspections       Inspection[]
+  iar_records       IarRecord[]
 
   @@map("deliveries")
 }
 
 model DeliveryItem {
-  id          String   @id @default(uuid()) @db.Uuid
-  delivery_id String   @db.Uuid
-  delivery    Delivery @relation(fields: [delivery_id], references: [id], onDelete: Cascade)
-  item_name   String   @db.VarChar
-  unit        String?  @db.VarChar
+  id          String    @id @default(uuid()) @db.Uuid
+  delivery_id String    @db.Uuid
+  delivery    Delivery  @relation(fields: [delivery_id], references: [id], onDelete: Cascade)
+  item_name   String    @db.VarChar
+  unit        String?   @db.VarChar
   quantity    Int
-  unit_cost   Decimal? @db.Decimal(12, 2)
+  unit_cost   Decimal?  @db.Decimal(12, 2)
   created_at  DateTime? @default(now()) @db.Timestamptz
 
   @@index([delivery_id])
@@ -69,15 +72,47 @@ model DeliveryItem {
 
 model Inspection {
   id              String   @id @default(uuid()) @db.Uuid
+  delivery        Delivery @relation(fields: [delivery_id], references: [id])
   delivery_id     String   @db.Uuid
-  inspector_id    String   @db.Uuid
+  inspector_id    String?  @db.Uuid
+  inspector_name  String?  @db.VarChar
   inspection_date DateTime @db.Date
   result          String   @db.VarChar
   remarks         String?
+  supplier_checks Json?
+  item_checks     Json?
   air_document_id String?  @db.Uuid
+  iar_no          String?  @db.VarChar
+  iar_date        DateTime? @db.Date
+  iar_invoice_no  String?  @db.VarChar
+  iar_invoice_date DateTime? @db.Date
+  iar_data        Json?
+  iar_generated_at DateTime? @db.Timestamptz
+  iar_image_url   String?
   created_at      DateTime? @default(now()) @db.Timestamptz
+  iar_records     IarRecord[]
 
   @@map("inspections")
+}
+
+model IarRecord {
+  id               String     @id @default(uuid()) @db.Uuid
+  inspection       Inspection @relation(fields: [inspection_id], references: [id], onDelete: Cascade)
+  inspection_id    String     @db.Uuid
+  delivery         Delivery   @relation(fields: [delivery_id], references: [id], onDelete: Cascade)
+  delivery_id      String     @db.Uuid
+  kind             String     @db.VarChar
+  iar_no           String?    @db.VarChar
+  iar_date         DateTime?  @db.Date
+  iar_invoice_no   String?    @db.VarChar
+  iar_invoice_date DateTime?  @db.Date
+  iar_data         Json?
+  iar_image_url    String?
+  created_at       DateTime?  @default(now()) @db.Timestamptz
+
+  @@index([delivery_id])
+  @@index([inspection_id])
+  @@map("iar_records")
 }
 
 model InventoryItem {

@@ -10,9 +10,17 @@ import styles from "./LayoutClient.module.css";
 
 const LANDING_PATHS = ["/"];
 
+function isReceiptPath(pathname: string) {
+  return (
+    pathname.startsWith("/personnel/inspections/") &&
+    /\/receipts?$|\/iar$/.test(pathname)
+  );
+}
+
 export function LayoutClient({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const isLanding = LANDING_PATHS.includes(pathname);
+  const isBare = isLanding || isReceiptPath(pathname);
 
   useEffect(() => {
     const html = document.documentElement;
@@ -26,9 +34,9 @@ export function LayoutClient({ children }: { children: React.ReactNode }) {
   return (
     <ToastProvider>
       <div className={styles.root}>
-        {isLanding ? null : <Header />}
+        {isBare ? null : <Header />}
         <main className={styles.main}>{children}</main>
-        <Footer />
+        {isReceiptPath(pathname) ? null : <Footer />}
       </div>
     </ToastProvider>
   );

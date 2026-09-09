@@ -18,9 +18,10 @@ interface DatePickerProps {
   value?: Date
   onChange?: (date: Date | undefined) => void
   placeholder?: string
+  hasError?: boolean
 }
 
-export function DatePicker({ id, value, onChange, placeholder }: DatePickerProps) {
+export function DatePicker({ id, value, onChange, placeholder, hasError }: DatePickerProps) {
   const [open, setOpen] = React.useState(false)
 
   return (
@@ -31,7 +32,8 @@ export function DatePicker({ id, value, onChange, placeholder }: DatePickerProps
           id={id}
           className={cn(
             "w-full justify-between rounded-md font-normal",
-            !value && "text-muted-foreground"
+            !value && "text-muted-foreground",
+            hasError && "border-red-500"
           )}
         >
           {value ? format(value, "PPP") : (placeholder ?? "Pick a date")}

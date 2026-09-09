@@ -7,6 +7,7 @@ import { withIdempotency } from '@/lib/idempotency'
 import type { SignupState } from '@/types'
 
 const statuses = ['complete', 'partial'] as const
+const inspectionResults = ['passed', 'failed', 'partial'] as const
 const recipientRoles = ['Employee', 'PGSO Personnel'] as const
 
 interface ItemInput {
@@ -107,6 +108,7 @@ export async function logDelivery(
             po_reference: poReference,
             date_delivered: new Date(dateSupplied),
             delivery_status: deliveryStatus,
+            inspection_status: 'pending',
             received_by: user.id,
             recipient_role: recipientRole,
             recipient_name: recipientName || null,
@@ -133,5 +135,112 @@ export async function logDelivery(
     return { success: true, deliveryId: outcome.result.deliveryId }
   } catch {
     return { error: 'Failed to save delivery. Please try again.' }
+  }
+}
+
+export interface InspectionState {
+  success?: boolean
+  error?: string
+}
+
+export async function recordInspection(
+  _prevState: InspectionState,
+  formData: FormData
+): Promise<InspectionState> {
+  const deliveryId      = (formData.get('deliveryId') as string)?.trim()
+  const result          = (formData.get('result') as string)?.toLowerCase()
+  const remarks         = (formData.get('remarks') as string)?.trim()
+  const inspectorName   = (formData.get('inspectorName') as string)?.trim()
+  const inspectionDate  = (formData.get('inspectionDate') as string)?.trim()
+  const supplierRaw     = (formData.get('supplierChecks') as string)?.trim()
+  const itemsRaw        = (formData.get('itemChecks') as string)?.trim()
+
+  if (!deliveryId) {
+    return { error: 'Delivery ID is required.' }
+  }
+
+  if (!inspectionResults.includes(result as (typeof inspectionResults)[number])) {
+    return { error: 'Invalid inspection result.' }
+  }
+
+  if (!inspectorName) {
+    return { error: 'Inspector name is required.' }
+  }
+
+  if (!inspectionDate || Number.isNaN(Date.parse(inspectionDate))) {
+    return { error: 'A valid inspection date is required.' }
+  }
+
+  let supplierChecks: Record<string, unknown> = {}
+  let itemChecks: unknown[] = []
+
+  try {
+    if (supplierRaw) supplierChecks = JSON.parse(supplierRaw)
+  } catch {
+    return { error: 'Invalid supplier checks payload.' }
+  }
+
+  try {
+    if (itemsRaw) itemChecks = JSON.parse(itemsRaw)
+  } catch {
+    return { error: 'Invalid item checks payload.' }
+  }
+
+  const supabase = createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+
+  if (!user) {
+    return { error: 'You must be signed in to record an inspection.' }
+  }
+
+  try {
+    const exists = await prisma.delivery.findUnique({
+      where: { id: deliveryId },
+      select: { id: true, inspection_status: true },
+    })
+
+    if (!exists) {
+      return { error: 'Delivery not found.' }
+    }
+
+    if (exists.inspection_status !== 'pending' && exists.inspection_status !== 'partial' && exists.inspection_status !== 'failed') {
+      return { error: 'This delivery has already been inspected.' }
+    }
+
+    await withIdempotency(
+      formData.get('idempotencyKey') as string,
+      'inspection:create',
+      async () => {
+        const inspection = await prisma.inspection.create({
+          data: {
+            delivery_id:     deliveryId,
+            inspector_id:    user.id,
+            inspector_name:  inspectorName,
+            inspection_date: new Date(inspectionDate),
+            result,
+            remarks:         remarks || null,
+            supplier_checks: supplierChecks,
+            item_checks:     itemChecks,
+          },
+          select: { id: true },
+        })
+
+        await prisma.delivery.update({
+          where: { id: deliveryId },
+          data:  { inspection_status: result },
+        })
+
+        return { inspectionId: inspection.id }
+      }
+    )
+
+    revalidatePath('/personnel/deliveries')
+    revalidatePath('/personnel/inspections')
+    revalidatePath(`/personnel/inspections/${deliveryId}`)
+    revalidatePath('/personnel/dashboard')
+    return { success: true }
+  } catch (e) {
+    console.error('[recordInspection]', e)
+    return { error: 'Failed to record inspection. Please try again.' }
   }
 }

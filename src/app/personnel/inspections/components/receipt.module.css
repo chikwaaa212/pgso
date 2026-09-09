@@ -1,0 +1,473 @@
+/* ─── Page shell ──────────────────────────────────────────────────────────── */
+
+.page {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.25rem;
+  padding: 2rem 1rem;
+  background-color: #eef1f5;
+}
+
+.receiptStack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2.25rem;
+  width: 100%;
+  max-width: 52rem;
+}
+
+.stackLabel {
+  font-family: var(--font-mono);
+  font-size: 0.625rem;
+  font-weight: 700;
+  letter-spacing: 0.25em;
+  text-transform: uppercase;
+  text-align: center;
+  color: var(--color-navy-500);
+  border: 1px dashed var(--color-navy-300);
+  border-radius: 9999px;
+  padding: 0.25rem 0.875rem;
+  margin: 0;
+}
+
+.empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  max-width: 52rem;
+  min-height: 14rem;
+  background-color: #fff;
+  border: 1px dashed var(--color-navy-300);
+  border-radius: 0.5rem;
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  color: var(--color-navy-500);
+  text-align: center;
+  padding: 1rem;
+}
+
+/* ─── Print / navigation toolbar ─────────────────────────────────────────── */
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.625rem;
+  width: 100%;
+  max-width: 52rem;
+}
+
+.toolbarBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.375rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  line-height: 1;
+  padding: 0.625rem 1rem;
+  border-radius: 9999px;
+  border: 1px solid var(--color-navy-200);
+  color: var(--color-navy-700);
+  background-color: #fff;
+  cursor: pointer;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: border-color 0.15s, background-color 0.15s, color 0.15s;
+}
+
+.toolbarGhost:hover {
+  border-color: var(--color-navy-400);
+  background-color: var(--color-navy-100);
+  color: var(--color-navy-900);
+}
+
+.toolbarPrint {
+  border-color: var(--color-navy-800);
+  background-color: var(--color-navy-800);
+  color: #fff;
+}
+
+.toolbarPrint:hover {
+  border-color: var(--color-navy-700);
+  background-color: var(--color-navy-700);
+}
+
+/* ─── Receipt paper ──────────────────────────────────────────────────────── */
+
+.receipt {
+  width: 100%;
+  max-width: 52rem;
+  background-color: #fff;
+  border-radius: 0.5rem;
+  box-shadow: 0 14px 38px rgb(27 42 74 / 0.14);
+  padding: 0.75rem;
+}
+
+.receiptInner {
+  border: 3px double var(--color-navy-300);
+  border-radius: 0.25rem;
+  padding: 1.75rem 2rem 2.25rem;
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  line-height: 1.55;
+  color: var(--color-navy-900);
+}
+
+/* ─── Masthead ──────────────────────────────────────────────────────────── */
+
+.masthead {
+  text-align: center;
+}
+
+.orgName {
+  font-size: 1.125rem;
+  font-weight: 700;
+  letter-spacing: 0.25em;
+  margin: 0;
+}
+
+.orgSub {
+  font-size: 0.6875rem;
+  letter-spacing: 0.1em;
+  color: var(--color-navy-600);
+  margin: 0.125rem 0 0;
+}
+
+.docTitle {
+  font-size: 0.875rem;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  margin: 0.875rem 0 0;
+}
+
+.docSub {
+  font-size: 0.6875rem;
+  letter-spacing: 0.12em;
+  color: var(--color-navy-600);
+  margin: 0.25rem 0 0;
+}
+
+/* ─── Structural bits ───────────────────────────────────────────────────── */
+
+.divider {
+  border-top: 1px dashed var(--color-navy-300);
+  margin: 1.125rem 0;
+}
+
+.sectionTitle {
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  color: var(--color-navy-600);
+  margin: 0 0 0.625rem;
+  text-transform: uppercase;
+}
+
+/* ─── Key-value rows ────────────────────────────────────────────────────── */
+
+.rows {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+  margin: 0;
+}
+
+.row {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.row dt {
+  color: var(--color-navy-600);
+  flex-shrink: 0;
+}
+
+.row dd {
+  margin: 0;
+  text-align: right;
+  font-weight: 600;
+  word-break: break-word;
+}
+
+/* ─── Result badge ──────────────────────────────────────────────────────── */
+
+.resultBadge {
+  display: inline-block;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 0.1875rem 0.625rem;
+  border-radius: 9999px;
+  white-space: nowrap;
+}
+
+.resultBadge[data-tone="ok"] {
+  color: #166534;
+  background-color: #dcfce7;
+}
+
+.resultBadge[data-tone="warn"] {
+  color: #92400e;
+  background-color: #fef3c7;
+}
+
+.resultBadge[data-tone="bad"] {
+  color: #991b1b;
+  background-color: #fee2e2;
+}
+
+.resultBadge[data-tone="info"] {
+  color: var(--color-navy-800);
+  background-color: var(--color-navy-100);
+}
+
+/* ─── Supplier check list ───────────────────────────────────────────────── */
+
+.checkList {
+  display: flex;
+  flex-direction: column;
+}
+
+.checkItem {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.375rem 0;
+  border-bottom: 1px dotted var(--color-navy-200);
+}
+
+.checkItem:last-child {
+  border-bottom: none;
+}
+
+.checkAnswer {
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.checkAnswer[data-v="yes"] {
+  color: #166534;
+}
+
+.checkAnswer[data-v="no"] {
+  color: #b91c1c;
+}
+
+.checkAnswer[data-v=""] {
+  color: var(--color-navy-400);
+}
+
+/* ─── Item table ────────────────────────────────────────────────────────── */
+
+.tableWrap {
+  overflow-x: auto;
+  margin-inline: -0.25rem;
+  padding-inline: 0.25rem;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.75rem;
+}
+
+.table th {
+  text-align: left;
+  font-weight: 700;
+  font-size: 0.625rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-navy-600);
+  padding: 0.4375rem 0.5rem;
+  border-bottom: 1px solid var(--color-navy-300);
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.table td {
+  padding: 0.375rem 0.5rem;
+  border-bottom: 1px dotted var(--color-navy-200);
+  vertical-align: top;
+}
+
+.table tfoot td {
+  border-top: 2px solid var(--color-navy-300);
+  border-bottom: none;
+  font-weight: 700;
+}
+
+.table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.idx {
+  color: var(--color-navy-500);
+  text-align: center;
+}
+
+.itemName {
+  font-weight: 600;
+  min-width: 10rem;
+  word-break: break-word;
+}
+
+.num {
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.itemStatus {
+  display: inline-block;
+  font-size: 0.625rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 0.125rem 0.5rem;
+  border-radius: 9999px;
+  white-space: nowrap;
+}
+
+.itemStatus[data-tone="ok"] {
+  color: #166534;
+  background-color: #dcfce7;
+}
+
+.itemStatus[data-tone="warn"] {
+  color: #92400e;
+  background-color: #fef3c7;
+}
+
+.itemStatus[data-tone="bad"] {
+  color: #991b1b;
+  background-color: #fee2e2;
+}
+
+.itemStatus[data-tone="info"] {
+  color: var(--color-navy-700);
+  background-color: var(--color-navy-100);
+}
+
+/* ─── Remarks ───────────────────────────────────────────────────────────── */
+
+.remarksLabel {
+  margin: 1.125rem 0 0;
+  font-size: 0.75rem;
+  color: var(--color-navy-600);
+}
+
+.remarks {
+  color: var(--color-navy-900);
+  white-space: pre-wrap;
+  font-weight: 600;
+}
+
+/* ─── Signature block ───────────────────────────────────────────────────── */
+
+.signatureRow {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 2.75rem;
+}
+
+.signature {
+  text-align: center;
+  width: 15rem;
+}
+
+.signatureName {
+  min-height: 1.5em;
+  margin: 0;
+  font-weight: 700;
+  border-bottom: 1px solid var(--color-navy-500);
+  overflow-wrap: anywhere;
+}
+
+.signatureLabel {
+  font-size: 0.625rem;
+  letter-spacing: 0.08em;
+  color: var(--color-navy-600);
+  margin: 0.3rem 0 0;
+}
+
+/* ─── Receipt footer ────────────────────────────────────────────────────── */
+
+.receiptKicker {
+  text-align: center;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  color: var(--color-navy-500);
+  margin: 0 0 0.375rem;
+}
+
+.scanned {
+  margin: 0 auto;
+  width: 11rem;
+  height: 1.5rem;
+}
+
+.scannedLabel {
+  text-align: center;
+  font-size: 0.6875rem;
+  letter-spacing: 0.3em;
+  color: var(--color-navy-600);
+  margin: 0.125rem 0 0;
+}
+
+.recorded {
+  text-align: center;
+  font-size: 0.625rem;
+  letter-spacing: 0.12em;
+  color: var(--color-navy-500);
+  margin: 0.25rem 0 0;
+}
+
+.thanks {
+  text-align: center;
+  font-size: 0.6875rem;
+  color: var(--color-navy-600);
+  margin: 0.5rem 0 0;
+}
+
+/* ─── Print ─────────────────────────────────────────────────────────────── */
+
+@media print {
+  .page {
+    background-color: #fff;
+    min-height: auto;
+    padding: 0;
+    display: block;
+  }
+
+  .toolbar {
+    display: none;
+  }
+
+  .receiptStack {
+    gap: 1.5rem;
+    max-width: none;
+  }
+
+  .stackLabel,
+  .empty {
+    display: block;
+  }
+
+  .receipt {
+    max-width: none;
+    box-shadow: none;
+    border-radius: 0;
+    padding: 0;
+    break-inside: avoid;
+  }
+
+  .receiptInner {
+    border: 2px solid var(--color-navy-300);
+  }
+}
