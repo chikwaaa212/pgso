@@ -67,8 +67,8 @@ export function DeliveryReceipt({
           <span className="text-right">{data.assetType || "—"}</span>
         </div>
         <div className="flex justify-between gap-4">
-          <span className="text-navy-600">Asset Code</span>
-          <span className="text-right">{data.assetCode || "—"}</span>
+          <span className="text-navy-600">Account Code</span>
+          <span className="text-right">{data.accountCode || "—"}</span>
         </div>
         <div className="flex justify-between gap-4">
           <span className="text-navy-600">Account</span>

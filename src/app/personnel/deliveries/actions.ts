@@ -1,13 +1,15 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
+import { notFound } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import prisma from '@/lib/prisma'
 import { withIdempotency } from '@/lib/idempotency'
+import { stockInspectionItems } from '@/lib/stock'
 import type { SignupState } from '@/types'
 
 const statuses = ['complete', 'partial'] as const
-const inspectionResults = ['passed', 'failed', 'partial'] as const
+const inspectionResults = ['passed', 'partial'] as const
 const recipientRoles = ['Employee', 'PGSO Personnel'] as const
 
 interface ItemInput {
@@ -22,7 +24,7 @@ export async function logDelivery(
   formData: FormData
 ): Promise<SignupState> {
   const assetType = (formData.get('assetType') as string)?.trim()
-  const assetCode = (formData.get('assetCode') as string)?.trim()
+  const accountCode = (formData.get('accountCode') as string)?.trim()
   const accountType = (formData.get('accountType') as string)?.trim()
   const dateSupplied = formData.get('dateSupplied') as string
   const supplierName = (formData.get('supplierName') as string)?.trim()
@@ -33,8 +35,8 @@ export async function logDelivery(
   const recipientRole = (formData.get('recipientRole') as string)?.trim()
   const recipientName = (formData.get('recipientName') as string)?.trim()
 
-  if (!assetType || !assetCode || !accountType) {
-    return { error: 'Asset type, code, and account type are required.' }
+  if (!assetType || !accountCode || !accountType) {
+    return { error: 'Asset type, account code, and account type are required.' }
   }
 
   if (!dateSupplied || Number.isNaN(Date.parse(dateSupplied))) {
@@ -113,7 +115,7 @@ export async function logDelivery(
             recipient_role: recipientRole,
             recipient_name: recipientName || null,
             asset_type: assetType,
-            asset_code: assetCode,
+            account_code: accountCode,
             account_type: accountType,
             items: {
               create: parsedItems.map((item) => ({
@@ -141,6 +143,8 @@ export async function logDelivery(
 export interface InspectionState {
   success?: boolean
   error?: string
+  /** Set when the inspection saved but stocking failed — recover via Stocks sync. */
+  stockWarning?: string
 }
 
 export async function recordInspection(
@@ -207,7 +211,7 @@ export async function recordInspection(
       return { error: 'This delivery has already been inspected.' }
     }
 
-    await withIdempotency(
+    const { stockWarning } = await withIdempotency(
       formData.get('idempotencyKey') as string,
       'inspection:create',
       async () => {
@@ -232,15 +236,91 @@ export async function recordInspection(
 
         return { inspectionId: inspection.id }
       }
-    )
+    ).then(async (outcome) => {
+      // Passed/partial + already has an AIR (e.g. re-inspection) → move the
+      // remaining received items to stock. Never fails the save; idempotent.
+      let stockWarning: string | undefined
+      try {
+        const res = await stockInspectionItems(outcome.result.inspectionId)
+        if (res.stocked) revalidatePath('/personnel/inventory')
+      } catch (e) {
+        console.error('[recordInspection:stock]', e)
+        stockWarning =
+          'Inspection saved, but moving items to stocks failed. Use “Sync from inspections” on the Stocks page.'
+      }
+      return { stockWarning }
+    })
 
     revalidatePath('/personnel/deliveries')
     revalidatePath('/personnel/inspections')
     revalidatePath(`/personnel/inspections/${deliveryId}`)
     revalidatePath('/personnel/dashboard')
-    return { success: true }
+    return { success: true, stockWarning }
   } catch (e) {
     console.error('[recordInspection]', e)
     return { error: 'Failed to record inspection. Please try again.' }
+  }
+}
+
+// ─── Delivery details for the /personnel/deliveries/[id] page ─────────────────
+
+export interface DeliveryDetailItem {
+  id: string
+  item_name: string
+  unit: string | null
+  quantity: number
+  unit_cost: number | null
+}
+
+export interface DeliveryDetails {
+  id: string
+  delivery_ref: string
+  supplier: string | null
+  po_reference: string | null
+  date_delivered: string | null
+  delivery_status: string | null
+  inspection_status: string | null
+  asset_type: string | null
+  account_code: string | null
+  account_type: string | null
+  recipient_role: string | null
+  recipient_name: string | null
+  created_at: string | null
+  items: DeliveryDetailItem[]
+}
+
+export async function getDeliveryDetails(
+  deliveryId: string
+): Promise<DeliveryDetails> {
+  const delivery = await prisma.delivery.findUnique({
+    where: { id: deliveryId },
+    include: {
+      items: { orderBy: { created_at: 'asc' } },
+    },
+  })
+
+  if (!delivery) notFound()
+
+  return {
+    id: delivery.id,
+    delivery_ref: delivery.id.slice(0, 8).toUpperCase(),
+    supplier: delivery.supplier,
+    po_reference: delivery.po_reference,
+    date_delivered: delivery.date_delivered?.toISOString().slice(0, 10) ?? null,
+    delivery_status: delivery.delivery_status,
+    inspection_status: delivery.inspection_status,
+    asset_type: delivery.asset_type,
+    account_code: delivery.account_code,
+    account_type: delivery.account_type,
+    recipient_role: delivery.recipient_role,
+    recipient_name: delivery.recipient_name,
+    created_at: delivery.created_at?.toISOString() ?? null,
+    items: delivery.items.map((item) => ({
+      id: item.id,
+      item_name: item.item_name,
+      unit: item.unit,
+      quantity: item.quantity,
+      unit_cost: item.unit_cost ? Number(item.unit_cost) : null,
+    })),
   }
 }

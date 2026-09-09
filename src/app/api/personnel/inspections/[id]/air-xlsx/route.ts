@@ -34,7 +34,7 @@ export async function GET(
 
   const checks = inspection?.item_checks ?? [];
   const items = delivery.items.map((item) => ({
-    stockNo: val(delivery.asset_code),
+     stockNo: val(delivery.account_code),
     description: item.item_name,
     unit: item.unit ?? "",
     qty: checks.find((c) => c.itemId === item.id)?.actualQty ?? item.quantity,

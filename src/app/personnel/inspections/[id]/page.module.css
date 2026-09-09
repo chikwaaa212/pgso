@@ -354,6 +354,12 @@
   white-space: nowrap;
 }
 
+/* Outstanding balance from earlier partial receipts */
+.remainingDue {
+  font-weight: 700;
+  color: #92400e;
+}
+
 .qtyInput {
   width: 5.5rem;
   text-align: right;
@@ -517,6 +523,16 @@
 .verdictOption:hover {
   border-color: var(--color-navy-400);
   background-color: var(--color-navy-50, #f8fafc);
+}
+
+.verdictOption:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.verdictOption:disabled:hover {
+  border-color: var(--color-navy-200);
+  background-color: transparent;
 }
 
 /* Active state per tone */

@@ -54,7 +54,6 @@ const FILTERS = [
   { value: 'all', label: 'All inspections' },
   { value: 'pending', label: 'Pending inspection' },
   { value: 'passed', label: 'Complete — Passed' },
-  { value: 'failed', label: 'Complete — Failed' },
   { value: 'partial', label: 'Complete — Partial' },
 ] as const
 
@@ -67,7 +66,6 @@ const AIR_STATUS_FILTERS = [
 const AIR_RESULT_FILTERS = [
   { value: 'all', label: 'Result: All' },
   { value: 'passed', label: 'Passed' },
-  { value: 'failed', label: 'Failed' },
   { value: 'partial', label: 'Partial' },
   { value: 'pending', label: 'Pending' },
 ] as const
@@ -378,6 +376,11 @@ export default function PersonnelInspectionsPage() {
                         <span className={air.chip} data-tone={resultChipTone(d)}>
                           {resultLabel(d)}
                         </span>
+                        {d.stocked_at ? (
+                          <span className={air.chip} data-tone="ok">
+                            Stocked
+                          </span>
+                        ) : null}
                       </span>
                     </div>
 

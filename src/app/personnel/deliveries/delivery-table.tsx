@@ -160,26 +160,35 @@ export function DeliveryTable({ rows: allRows }: { rows: DeliveryRow[] }) {
                       </span>
                     </td>
                     <td>
-                      {d.inspectionStatus === "pending" ? (
+                      <div className="flex items-center gap-1.5">
                         <Link
-                          href={`/personnel/inspections/${d.deliveryId}`}
-                          className={styles.inspectLink}
-                          aria-label={`Inspect delivery ${d.id}`}
+                          href={`/personnel/deliveries/${d.deliveryId}`}
+                          className={styles.inspectLinkSecondary}
+                          aria-label={`View details for delivery ${d.id}`}
                         >
-                          Inspect
+                          View Details
                         </Link>
-                      ) : (
-                        <span
-                          className={cn(
-                            "inline-flex items-center justify-center rounded-full font-medium",
-                            "h-8 px-3 text-xs",
-                            "border border-navy-200 bg-transparent text-navy-400 cursor-default"
-                          )}
-                          aria-label={`Delivery ${d.id} already inspected`}
-                        >
-                          Inspected
-                        </span>
-                      )}
+                        {d.inspectionStatus === "pending" ? (
+                          <Link
+                            href={`/personnel/inspections/${d.deliveryId}`}
+                            className={styles.inspectLink}
+                            aria-label={`Inspect delivery ${d.id}`}
+                          >
+                            Inspect
+                          </Link>
+                        ) : (
+                          <span
+                            className={cn(
+                              "inline-flex items-center justify-center rounded-full font-medium",
+                              "h-8 px-3 text-xs",
+                              "border border-navy-200 bg-transparent text-navy-400 cursor-default"
+                            )}
+                            aria-label={`Delivery ${d.id} already inspected`}
+                          >
+                            Inspected
+                          </span>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}

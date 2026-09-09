@@ -137,7 +137,7 @@ export default async function IarReportPage({
     const check = checkFor(item.id);
     return {
       key: item.id,
-      stockNo: val(delivery.asset_code) || "",
+       stockNo: val(delivery.account_code) || "",
       description: item.item_name,
       unit: item.unit ?? "",
       qty: check?.actualQty ?? item.quantity,

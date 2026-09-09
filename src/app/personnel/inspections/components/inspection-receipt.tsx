@@ -15,6 +15,7 @@ export interface ReceiptInspection {
     remarks: string
   }> | null
   created_at?: string | null
+  stocked_at?: string | null
 }
 
 function peso(n: number | null) {
@@ -142,7 +143,7 @@ export function InspectionReceipt({
             [
               "Asset Type / Code",
               delivery.asset_type
-                ? `${delivery.asset_type} — ${delivery.asset_code ?? "—"}`
+                ? `${delivery.asset_type} — ${delivery.account_code ?? "—"}`
                 : "—",
             ],
             ["Account Type", delivery.account_type ?? "—"],
@@ -154,6 +155,12 @@ export function InspectionReceipt({
               <dd>{value}</dd>
             </div>
           ))}
+          {inspection?.stocked_at ? (
+            <div className={styles.row}>
+              <dt>Stocked to Inventory</dt>
+              <dd>{fmtDateTime(inspection.stocked_at)}</dd>
+            </div>
+          ) : null}
           <div className={styles.row}>
             <dt>Inspection Result</dt>
             <dd>

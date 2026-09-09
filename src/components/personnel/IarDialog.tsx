@@ -64,6 +64,8 @@ export function IarDialog({
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [warning, setWarning] = useState("");
+  const [savedRecordId, setSavedRecordId] = useState("");
   const [entity, setEntity] = useState("");
   const [department, setDepartment] = useState("");
   const [rcCode, setRcCode] = useState("");
@@ -87,6 +89,8 @@ export function IarDialog({
     if (!canGenerate || saving) return;
     setSaving(true);
     setError("");
+    setWarning("");
+    setSavedRecordId("");
     void saveAir(deliveryId, {
       entity: entity.trim(),
       department: department.trim(),
@@ -102,11 +106,16 @@ export function IarDialog({
         setError(res.error ?? "Failed to save the AIR. Please try again.");
         return;
       }
-      router.push(
-        res.recordId
-          ? `/personnel/inspections/${deliveryId}/iar?record=${res.recordId}`
-          : `/personnel/inspections/${deliveryId}/iar`
-      );
+      const href = res.recordId
+        ? `/personnel/inspections/${deliveryId}/iar?record=${res.recordId}`
+        : `/personnel/inspections/${deliveryId}/iar`;
+      if (res.stockWarning) {
+        // AIR is saved — stay and show the warning with a way through.
+        setWarning(res.stockWarning);
+        setSavedRecordId(href);
+        return;
+      }
+      router.push(href);
       setOpen(false);
     });
   }
@@ -221,6 +230,27 @@ export function IarDialog({
           >
             {error}
           </p>
+        ) : null}
+
+        {warning ? (
+          <div
+            role="alert"
+            className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900"
+          >
+            <p>{warning}</p>
+            {savedRecordId ? (
+              <Button
+                type="button"
+                className="mt-2"
+                onClick={() => {
+                  router.push(savedRecordId);
+                  setOpen(false);
+                }}
+              >
+                View IAR anyway
+              </Button>
+            ) : null}
+          </div>
         ) : null}
 
         <DialogFooter>

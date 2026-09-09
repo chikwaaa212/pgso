@@ -83,6 +83,19 @@
   min-width: 12rem;
 }
 
+/* ─── Inline status message ────────────────────────────────────────────── */
+
+.syncMsg {
+  margin: 0 0 1rem;
+  padding: 0.625rem 1rem;
+  border-radius: 0.625rem;
+  border: 1px solid var(--color-navy-200);
+  background-color: #fff;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--color-navy-700);
+}
+
 /* ─── Card grid ────────────────────────────────────────────────────────── */
 
 .grid {

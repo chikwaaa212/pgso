@@ -13,6 +13,16 @@
   margin: 0;
 }
 
+.crumbLink {
+  color: var(--color-navy-500);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.crumbLink:hover {
+  color: var(--color-navy-900);
+}
+
 .headerRow {
   display: flex;
   flex-direction: column;

@@ -4,6 +4,7 @@ import { notFound } from 'next/navigation'
 import { revalidatePath } from 'next/cache'
 import { Prisma } from '@prisma/client'
 import { createClient } from '@/lib/supabase/server'
+import { stockInspectionItems } from '@/lib/stock'
 import prisma from '@/lib/prisma'
 
 // ─── Types returned to the client ────────────────────────────────────────────
@@ -14,6 +15,7 @@ export interface DeliveryItemData {
   unit: string | null
   quantity: number
   unit_cost: number | null
+  stocked_qty: number
 }
 
 export interface DeliveryForInspection {
@@ -26,7 +28,7 @@ export interface DeliveryForInspection {
   recipient_name: string | null
   recipient_role: string | null
   asset_type: string | null
-  asset_code: string | null
+  account_code: string | null
   account_type: string | null
   received_by: string             // UUID
   items: DeliveryItemData[]
@@ -50,6 +52,7 @@ export interface DeliveryForInspection {
     iar_data: Record<string, string> | null
     iar_generated_at: string | null
     iar_image_url: string | null
+    stocked_at: string | null
   }
 }
 
@@ -101,6 +104,7 @@ export async function getDeliveryForInspection(
           iar_data: true,
           iar_generated_at: true,
           iar_image_url: true,
+          stocked_at: true,
         },
       },
     },
@@ -120,7 +124,7 @@ export async function getDeliveryForInspection(
     recipient_name:   delivery.recipient_name,
     recipient_role:   delivery.recipient_role,
     asset_type:       delivery.asset_type,
-    asset_code:       delivery.asset_code,
+    account_code:     delivery.account_code,
     account_type:     delivery.account_type,
     received_by:      delivery.received_by,
     items: delivery.items.map((item) => ({
@@ -129,6 +133,7 @@ export async function getDeliveryForInspection(
       unit:      item.unit,
       quantity:  item.quantity,
       unit_cost: item.unit_cost ? Number(item.unit_cost) : null,
+      stocked_qty: item.stocked_qty,
     })),
     inspection_data: latestInspection
       ? {
@@ -151,6 +156,7 @@ export async function getDeliveryForInspection(
           iar_data: latestInspection.iar_data as Record<string, string> | null,
           iar_generated_at: latestInspection.iar_generated_at?.toISOString() ?? null,
           iar_image_url: latestInspection.iar_image_url,
+          stocked_at: latestInspection.stocked_at?.toISOString() ?? null,
         }
       : undefined,
   }
@@ -173,11 +179,12 @@ export interface UnifiedInspectionRow {
   created_at: string | null
   iar_no: string | null
   iar_image_url: string | null
+  stocked_at: string | null
 }
 
 export async function getInspectionsList(): Promise<UnifiedInspectionRow[]> {
   const deliveries = await prisma.delivery.findMany({
-    orderBy: { date_delivered: 'desc' },
+    orderBy: { created_at: 'desc' },
     include: {
       _count: { select: { items: true } },
       inspections: {
@@ -190,6 +197,7 @@ export async function getInspectionsList(): Promise<UnifiedInspectionRow[]> {
           created_at: true,
           iar_no: true,
           iar_image_url: true,
+          stocked_at: true,
         },
       },
     },
@@ -210,6 +218,7 @@ export async function getInspectionsList(): Promise<UnifiedInspectionRow[]> {
     created_at:        d.inspections[0]?.created_at?.toISOString() ?? null,
     iar_no:            d.inspections[0]?.iar_no ?? null,
     iar_image_url:     d.inspections[0]?.iar_image_url ?? null,
+    stocked_at:        d.inspections[0]?.stocked_at?.toISOString() ?? null,
   }))
 }
 
@@ -364,6 +373,8 @@ export interface SaveAirState {
   success?: boolean
   error?: string
   recordId?: string
+  /** Set when the AIR saved but stocking failed — recover via Stocks sync. */
+  stockWarning?: string
 }
 
 export interface SaveAirInput {
@@ -442,12 +453,22 @@ export async function saveAir(
       select: { id: true },
     })
     await syncInspectionAir(inspection.id)
+    // Passed/partial + AIR now present → move remaining items to stock.
+    let stockWarning: string | undefined
+    try {
+      const res = await stockInspectionItems(inspection.id)
+      if (res.stocked) revalidatePath('/personnel/inventory')
+    } catch (e) {
+      console.error('[saveAir:stock]', e)
+      stockWarning =
+        'AIR saved, but moving items to stocks failed. Use “Sync from inspections” on the Stocks page.'
+    }
 
     revalidatePath('/personnel/inspections')
     revalidatePath(`/personnel/inspections/${deliveryId}`)
     revalidatePath(`/personnel/inspections/${deliveryId}/iar`)
     revalidatePath(`/personnel/inspections/${deliveryId}/receipt`)
-    return { success: true, recordId: record.id }
+    return { success: true, recordId: record.id, stockWarning }
   } catch (e) {
     console.error('[saveAir]', e)
     return { error: 'Failed to save the AIR. Please try again.' }
@@ -457,6 +478,8 @@ export async function saveAir(
 export interface AttachAirState {
   success?: boolean
   error?: string
+  /** Set when the attach saved but stocking failed — recover via Stocks sync. */
+  stockWarning?: string
 }
 
 async function latestInspectionId(deliveryId: string) {
@@ -500,10 +523,20 @@ export async function attachIarImage(
       },
     })
     await syncInspectionAir(inspectionId)
+    // Passed/partial + AIR now present → move remaining items to stock.
+    let attachWarning: string | undefined
+    try {
+      const res = await stockInspectionItems(inspectionId)
+      if (res.stocked) revalidatePath('/personnel/inventory')
+    } catch (e) {
+      console.error('[attachIarImage:stock]', e)
+      attachWarning =
+        'Scan attached, but moving items to stocks failed. Use “Sync from inspections” on the Stocks page.'
+    }
     revalidatePath('/personnel/inspections')
     revalidatePath(`/personnel/inspections/${deliveryId}/iar`)
     revalidatePath(`/personnel/inspections/${deliveryId}/receipt`)
-    return { success: true }
+    return { success: true, stockWarning: attachWarning }
   } catch (e) {
     console.error('[attachIarImage]', e)
     return { error: 'Failed to attach the IAR image. Please try again.' }

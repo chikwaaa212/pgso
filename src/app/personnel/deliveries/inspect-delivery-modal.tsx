@@ -24,7 +24,7 @@ import { cn } from "@/lib/utils";
 import { recordInspection, type InspectionState } from "./actions";
 import styles from "../dashboard/page.module.css";
 
-const inspectionResults = ["passed", "failed", "partial"];
+const inspectionResults = ["passed", "partial"];
 
 export function InspectDeliveryModal({
   deliveryId,

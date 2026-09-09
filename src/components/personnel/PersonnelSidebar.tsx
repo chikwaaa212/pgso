@@ -9,38 +9,44 @@ import { SubmitButton } from "@/components/ui/submit-button";
 import { cn } from "@/lib/utils";
 import styles from "./PersonnelSidebar.module.css";
 
-const groups = [
-  {
-    title: "Overview",
-    links: [{ label: "Dashboard", href: "/personnel/dashboard" }],
-  },
-  {
-    title: "Operations",
-    links: [
-      { label: "Deliveries", href: "/personnel/deliveries" },
-      { label: "Inspections", href: "/personnel/inspections" },
-    ],
-  },
-  {
-    title: "Inventory",
-    links: [
-      { label: "Stock", href: "/personnel/inventory" },
-      { label: "Assets", href: "/personnel/assets" },
-    ],
-  },
-  {
-    title: "Records",
-    links: [
-      { label: "Documents", href: "/personnel/documents" },
-      { label: "Requests", href: "/personnel/requests" },
-      { label: "Repairs", href: "/personnel/repairs" },
-    ],
-  },
-];
+interface SidebarLink {
+  label: string;
+  href: string;
+  badge?: number;
+}
 
-export function PersonnelSidebar() {
+export function PersonnelSidebar({ pendingInspections = 0 }: { pendingInspections?: number }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
+
+  const groups: { title: string; links: SidebarLink[] }[] = [
+    {
+      title: "Overview",
+      links: [{ label: "Dashboard", href: "/personnel/dashboard" }],
+    },
+    {
+      title: "Operations",
+      links: [
+        { label: "Deliveries", href: "/personnel/deliveries" },
+        { label: "Inspections", href: "/personnel/inspections", badge: pendingInspections },
+      ],
+    },
+    {
+      title: "Inventory",
+      links: [
+        { label: "Stock", href: "/personnel/inventory" },
+        { label: "Assets", href: "/personnel/assets" },
+      ],
+    },
+    {
+      title: "Records",
+      links: [
+        { label: "Documents", href: "/personnel/documents" },
+        { label: "Requests", href: "/personnel/requests" },
+        { label: "Repairs", href: "/personnel/repairs" },
+      ],
+    },
+  ];
 
   return (
     <>
@@ -77,6 +83,11 @@ export function PersonnelSidebar() {
                     onClick={() => setOpen(false)}
                   >
                     {link.label}
+                    {(link.badge ?? 0) > 0 && (
+                      <span className={styles.badge} aria-label={`${link.badge} pending`}>
+                        {link.badge}
+                      </span>
+                    )}
                   </Link>
                 );
               })}

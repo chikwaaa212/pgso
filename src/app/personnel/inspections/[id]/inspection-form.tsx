@@ -29,6 +29,7 @@ import {
 import { useToast } from "@/components/ui/toaster";
 import { recordInspection, type InspectionState } from "../../deliveries/actions";
 import type { DeliveryForInspection } from "../actions";
+import { isPassedAllowed, remainingOf, toCumulative } from "@/lib/inspection-rules";
 import { cn } from "@/lib/utils";
 import styles from "./page.module.css";
 
@@ -53,7 +54,7 @@ interface SupplierChecks {
   sealedOrSecured: YesNo;
 }
 
-type Verdict = "passed" | "failed" | "partial" | "";
+type Verdict = "passed" | "partial" | "";
 
 interface InspectionDraft {
   itemChecks: ItemCheck[];
@@ -145,11 +146,14 @@ export function InspectionForm({
   const { toast } = useToast();
 
   const alreadyInspected = delivery.inspection_status !== 'pending'
-  const isPartialOrFailed =
-    delivery.inspection_status === 'partial' ||
-    delivery.inspection_status === 'failed';
+  // Updates stay open for partial inspections (and legacy failed ones so
+  // they can move to Partial/Passed). Only Passed and Partial are issued now.
+  const isPartial = delivery.inspection_status === 'partial'
+  const isLegacyFailed = delivery.inspection_status === 'failed'
+  const isEditable = isPartial || isLegacyFailed
 
-// Item-level checks
+// Item-level checks — the input collects THIS ROUND's received quantity
+// (prefilled with the outstanding Remaining balance).
   const [itemChecks, setItemChecks] = useState<ItemCheck[]>(() =>
     delivery.items.map((item) => {
       const existingCheck = delivery.inspection_data?.item_checks?.find(
@@ -158,7 +162,7 @@ export function InspectionForm({
       return {
         id: item.id,
         status: (existingCheck?.status as ItemCheckStatus) || ('' as ItemCheckStatus),
-        actualQty: existingCheck?.actualQty != null ? String(existingCheck.actualQty) : String(item.quantity),
+        actualQty: String(remainingOf(item)),
         remarks: existingCheck?.remarks || '',
       }
     })
@@ -209,19 +213,30 @@ export function InspectionForm({
           if (typeof draft.inspectorName === 'string') setInspectorName(draft.inspectorName)
           if (typeof draft.inspectionDate === 'string') setInspectionDate(draft.inspectionDate)
           if (typeof draft.overallRemarks === 'string') setOverallRemarks(draft.overallRemarks)
-          if (typeof draft.verdict === 'string') setVerdict(draft.verdict as Verdict)
+          if (
+            draft.verdict === 'passed' ||
+            draft.verdict === 'partial' ||
+            draft.verdict === ''
+          ) {
+            setVerdict(draft.verdict)
+          }
           existing = null
         }
       } catch {
         // ignore corrupt drafts
       }
 
-      // Initialize form with existing inspection data for partial/failed
+      // Initialize form with existing inspection data for partial updates
+      // (legacy failed results reset — only Passed and Partial are issued now)
       if (existing) {
         setInspectorName(existing.inspector_name || '')
         setInspectionDate(existing.inspection_date)
         setOverallRemarks(existing.remarks || '')
-        setVerdict(existing.result as Verdict)
+        setVerdict(
+          existing.result === 'passed' || existing.result === 'partial'
+            ? (existing.result as Verdict)
+            : ''
+        )
 
         if (existing.supplier_checks) {
           setSupplierChecks(existing.supplier_checks as unknown as SupplierChecks)
@@ -270,7 +285,7 @@ export function InspectionForm({
       }
       toast({
         title: "Inspection recorded",
-        description: `Delivery ${delivery.id.slice(0, 8).toUpperCase()} has been saved.`,
+        description: `Delivery ${delivery.id.slice(0, 8).toUpperCase()} has been saved.${actionState.stockWarning ? ` ${actionState.stockWarning}` : ""}`,
         variant: "success",
       });
       router.push("/personnel/inspections");
@@ -301,6 +316,17 @@ export function InspectionForm({
   const doneSoFar = itemsDone + supplierDone + (verdict ? 1 : 0);
   const progressPct = Math.round((doneSoFar / totalSteps) * 100);
 
+  // Effective cumulative totals (already-counted + this round's input).
+  // These are what the Passed gate, the saved record, and stocks use.
+  const cumulativeChecks = toCumulative(
+    itemChecks.map((c) => ({ id: c.id, actualQty: c.actualQty })),
+    delivery.items
+  );
+
+  // Passed is only allowed when every effective total equals its PO
+  // quantity — i.e. the Remaining balance is fully collected.
+  const canPass = isPassedAllowed(cumulativeChecks, delivery.items);
+
   // ── Handlers ──────────────────────────────────────────────────────────────
 
   function updateItem(
@@ -308,9 +334,33 @@ export function InspectionForm({
     field: keyof Omit<ItemCheck, "id">,
     value: string
   ) {
-    setItemChecks((prev) =>
-      prev.map((c) => (c.id === itemId ? { ...c, [field]: value } : c))
+    let v = value;
+    if (field === "actualQty" && v !== "") {
+      // This round's input can never exceed the outstanding Remaining.
+      const item = delivery.items.find((i) => i.id === itemId);
+      const remaining = item ? remainingOf(item) : 0;
+      const n = Number(v);
+      if (!Number.isFinite(n) || n < 0) v = "0";
+      else if (n > remaining) v = String(remaining);
+    }
+    const next = itemChecks.map((c) =>
+      c.id === itemId ? { ...c, [field]: v } : c
     );
+    setItemChecks(next);
+    // Passed requires the effective totals to cover every PO quantity —
+    // drop a now-invalid Passed verdict as soon as quantities diverge.
+    if (
+      verdict === "passed" &&
+      !isPassedAllowed(
+        toCumulative(
+          next.map((c) => ({ id: c.id, actualQty: c.actualQty })),
+          delivery.items
+        ),
+        delivery.items
+      )
+    ) {
+      setVerdict("");
+    }
   }
 
   function updateSupplier<K extends keyof SupplierChecks>(
@@ -324,19 +374,10 @@ const deliveryRef = delivery.id.slice(0, 8).toUpperCase();
 
   // ── Already inspected (read-only) banner ──────────────────────
 
-  if (alreadyInspected && !isPartialOrFailed) {
-    const tone =
-      delivery.inspection_status === "passed"
-        ? "ok"
-        : delivery.inspection_status === "failed"
-        ? "bad"
-        : "warn";
+  if (alreadyInspected && !isEditable) {
+    const tone = delivery.inspection_status === "passed" ? "ok" : "warn";
     const label =
-      delivery.inspection_status === "passed"
-        ? "Passed"
-        : delivery.inspection_status === "failed"
-        ? "Failed"
-        : "Partial";
+      delivery.inspection_status === "passed" ? "Passed" : "Partial";
 
     return (
       <section className={styles.section}>
@@ -400,8 +441,8 @@ const deliveryRef = delivery.id.slice(0, 8).toUpperCase();
             Delivery Inspection — {deliveryRef}
           </h1>
           <p className={styles.subtitle}>
-            {isPartialOrFailed
-              ? 'Update the inspection results for this delivery.'
+            {isEditable
+              ? 'Update the inspection results for this delivery. Collect the remaining balance to pass.'
               : 'Cross-verify items and supplier documents, then record a verdict.'}
           </p>
         </div>
@@ -439,7 +480,8 @@ const deliveryRef = delivery.id.slice(0, 8).toUpperCase();
             itemChecks.map((c) => ({
               itemId: c.id,
               status: c.status,
-              actualQty: Number(c.actualQty),
+              actualQty:
+                cumulativeChecks.find((t) => t.id === c.id)?.actualQty ?? 0,
               remarks: c.remarks,
             }))
           )}
@@ -461,7 +503,7 @@ const deliveryRef = delivery.id.slice(0, 8).toUpperCase();
               ["Date Delivered", fmt(delivery.date_delivered)],
               ["Received By", delivery.recipient_name ?? delivery.received_by.slice(0, 8)],
               ["Recipient Role", delivery.recipient_role ?? "—"],
-              ["Asset Type / Code", `${delivery.asset_type ?? "—"} — ${delivery.asset_code ?? "—"}`],
+              ["Asset Type / Code", `${delivery.asset_type ?? "—"} — ${delivery.account_code ?? "—"}`],
               ["Account Type", delivery.account_type ?? "—"],
             ].map(([label, value]) => (
               <div key={label} className={styles.summaryItem}>
@@ -522,7 +564,7 @@ const deliveryRef = delivery.id.slice(0, 8).toUpperCase();
           <SectionHeading
             icon={<PackageCheck className="h-5 w-5" />}
             title="Item Cross-Verification"
-            subtitle={`Verify each of the ${delivery.items.length} delivered item${delivery.items.length !== 1 ? "s" : ""} against the PO quantities.`}
+            subtitle={`Verify each of the ${delivery.items.length} delivered item${delivery.items.length !== 1 ? "s" : ""} against the PO quantities. Enter this round's received quantity per item — Received and Remaining show what earlier inspections already counted.`}
           />
           <div className={styles.itemTableWrap}>
             <table className={styles.itemTable}>
@@ -532,8 +574,10 @@ const deliveryRef = delivery.id.slice(0, 8).toUpperCase();
                   <th>Item Description</th>
                   <th>Unit</th>
                   <th>Qty (PO)</th>
+                  <th>Received</th>
+                  <th>Remaining</th>
                   <th>Unit Cost</th>
-                  <th>Actual Qty Received</th>
+                  <th>{isEditable ? "Qty Received (this round)" : "Actual Qty Received"}</th>
                   <th>Status</th>
                   <th>Remarks</th>
                 </tr>
@@ -541,12 +585,25 @@ const deliveryRef = delivery.id.slice(0, 8).toUpperCase();
               <tbody>
                 {delivery.items.map((item, idx) => {
                   const check = itemChecks.find((c) => c.id === item.id)!;
+                  // Receiving history: what already arrived vs what is left.
+                  const received = item.stocked_qty ?? 0;
+                  const remaining = Math.max(0, item.quantity - received);
                   return (
                     <tr key={item.id} data-status={check.status || undefined}>
                       <td className={styles.tdIndex}>{idx + 1}</td>
                       <td className={styles.tdDesc}>{item.item_name}</td>
                       <td>{item.unit ?? "—"}</td>
                       <td className={styles.tdNum}>{item.quantity}</td>
+                      <td className={styles.tdNum}>{received}</td>
+                      <td className={styles.tdNum}>
+                        <span
+                          className={
+                            remaining > 0 ? styles.remainingDue : undefined
+                          }
+                        >
+                          {remaining}
+                        </span>
+                      </td>
                       <td className={styles.tdNum}>
                         {item.unit_cost != null ? peso(item.unit_cost) : "—"}
                       </td>
@@ -554,6 +611,7 @@ const deliveryRef = delivery.id.slice(0, 8).toUpperCase();
                         <Input
                           type="number"
                           min={0}
+                          max={remaining}
                           value={check.actualQty}
                           onChange={(e) =>
                             updateItem(item.id, "actualQty", e.target.value)
@@ -692,23 +750,16 @@ const deliveryRef = delivery.id.slice(0, 8).toUpperCase();
                     {
                       value: "passed",
                       label: "Passed",
-                      desc: "All items and documents verified and complete.",
+                      desc: "Remaining balance collected — actual received now matches every PO quantity.",
                       icon: <CheckCircle2 className="h-5 w-5" />,
                       tone: "ok",
                     },
                     {
                       value: "partial",
                       label: "Partial",
-                      desc: "Some items or documents have discrepancies.",
+                      desc: "Some quantities still outstanding; only received items move to stocks.",
                       icon: <AlertCircle className="h-5 w-5" />,
                       tone: "warn",
-                    },
-                    {
-                      value: "failed",
-                      label: "Failed",
-                      desc: "Significant issues found; delivery cannot be accepted as-is.",
-                      icon: <XCircle className="h-5 w-5" />,
-                      tone: "bad",
                     },
                   ] as {
                     value: Verdict;
@@ -726,6 +777,12 @@ const deliveryRef = delivery.id.slice(0, 8).toUpperCase();
                     data-tone={opt.tone}
                     onClick={() => setVerdict(opt.value)}
                     aria-pressed={verdict === opt.value}
+                    disabled={opt.value === "passed" && !canPass}
+                    title={
+                      opt.value === "passed" && !canPass
+                        ? "Passed requires every actual received quantity to equal its PO quantity."
+                        : undefined
+                    }
                   >
                     <span className={styles.verdictOptionIcon}>{opt.icon}</span>
                     <span className={styles.verdictOptionLabel}>{opt.label}</span>
@@ -733,6 +790,14 @@ const deliveryRef = delivery.id.slice(0, 8).toUpperCase();
                   </button>
                 ))}
               </div>
+              {!canPass ? (
+                <p className={styles.hint}>
+                  <AlertCircle className="inline h-4 w-4 mr-1" />
+                  Passed unlocks once the entered quantity covers the
+                  Remaining for every item (entries can&apos;t exceed
+                  Remaining).
+                </p>
+              ) : null}
             </div>
           </div>
         </Card>
@@ -768,9 +833,9 @@ const deliveryRef = delivery.id.slice(0, 8).toUpperCase();
             </Button>
             <SubmitButton
               disabled={!canSubmit}
-              pendingLabel={isPartialOrFailed ? "Updating…" : "Recording…"}
+              pendingLabel={isEditable ? "Updating…" : "Recording…"}
             >
-              {isPartialOrFailed ? 'Update Inspection' : 'Record Inspection'}
+              {isEditable ? 'Update Inspection' : 'Record Inspection'}
             </SubmitButton>
           </div>
         </div>

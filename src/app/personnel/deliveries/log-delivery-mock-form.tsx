@@ -14,7 +14,7 @@ import type { SignupState } from "@/types";
 
 interface Step1Data {
   assetType: string;
-  assetCode: string;
+  accountCode: string;
   accountType: string;
 }
 
@@ -88,7 +88,7 @@ export function useLogDeliveryDraft() {
   const [step, setStep] = useState(1);
   const [step1, setStep1] = useState<Step1Data>({
     assetType: "",
-    assetCode: "",
+    accountCode: "",
     accountType: "",
   });
   const [step2, setStep2] = useState<Step2Data>({
@@ -104,7 +104,7 @@ export function useLogDeliveryDraft() {
   const [step3, setStep3] = useState<Step3Data>({ items: [] });
 
   const reset = () => {
-    setStep1({ assetType: "", assetCode: "", accountType: "" });
+    setStep1({ assetType: "", accountCode: "", accountType: "" });
     setStep2({
       dateSupplied: undefined,
       supplierName: "",
@@ -234,7 +234,7 @@ export function LogDeliveryMockForm({
   }, [actionState, toast, onClose]);
 
   const isStep1Valid =
-    !!step1.assetType && !!step1.assetCode && !!step1.accountType;
+    !!step1.assetType && !!step1.accountCode && !!step1.accountType;
   const isStep2Valid =
     !!step2.dateSupplied && !!step2.supplierName && !!step2.poReference;
   const isRecipientValid = !!recipient.recipientRole;
@@ -274,14 +274,14 @@ export function LogDeliveryMockForm({
         </Select>
       </div>
       <div>
-        <Label htmlFor="asset-code" className="mb-1 block text-sm font-medium">
-          Asset Code
+        <Label htmlFor="account-code" className="mb-1 block text-sm font-medium">
+          Account Code
         </Label>
         <Input
-          id="asset-code"
-          name="assetCode"
-          value={step1.assetCode}
-          onChange={(e) => handleStep1Change("assetCode", e.target.value)}
+          id="account-code"
+          name="accountCode"
+          value={step1.accountCode}
+          onChange={(e) => handleStep1Change("accountCode", e.target.value)}
           placeholder="e.g. A-001-B"
         />
       </div>
@@ -521,7 +521,7 @@ export function LogDeliveryMockForm({
   return (
     <form action={formAction}>
       <input type="hidden" name="assetType" value={step1.assetType} />
-      <input type="hidden" name="assetCode" value={step1.assetCode} />
+      <input type="hidden" name="accountCode" value={step1.accountCode} />
       <input type="hidden" name="accountType" value={step1.accountType} />
       <input
         type="hidden"

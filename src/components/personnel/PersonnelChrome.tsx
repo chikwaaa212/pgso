@@ -4,7 +4,13 @@ import { usePathname } from "next/navigation";
 import { PersonnelSidebar } from "./PersonnelSidebar";
 import layoutStyles from "../../app/personnel/layout.module.css";
 
-export function PersonnelChrome({ children }: { children: React.ReactNode }) {
+export function PersonnelChrome({
+  children,
+  pendingInspections = 0,
+}: {
+  children: React.ReactNode;
+  pendingInspections?: number;
+}) {
   const pathname = usePathname();
   const isBare =
     pathname.startsWith("/personnel/inspections/") &&
@@ -16,7 +22,7 @@ export function PersonnelChrome({ children }: { children: React.ReactNode }) {
 
   return (
     <div className={layoutStyles.shell}>
-      <PersonnelSidebar />
+      <PersonnelSidebar pendingInspections={pendingInspections} />
       <div className={layoutStyles.main}>{children}</div>
     </div>
   );

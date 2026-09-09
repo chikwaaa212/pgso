@@ -33,10 +33,12 @@ export function IarAttachButton({
   const inputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
 
   async function onPick(file: File | undefined) {
     if (!file) return;
     setError("");
+    setNotice("");
     if (!file.type.startsWith("image/")) {
       setError("Please choose an image file (JPG or PNG).");
       return;
@@ -66,6 +68,7 @@ export function IarAttachButton({
           .catch(() => undefined);
         throw new Error(res.error ?? "Failed to attach the IAR image.");
       }
+      if (res.stockWarning) setNotice(res.stockWarning);
       router.refresh();
       onDone?.();
     } catch (e) {
@@ -103,6 +106,11 @@ export function IarAttachButton({
       {error ? (
         <span role="alert" className="text-xs font-medium text-red-700">
           {error}
+        </span>
+      ) : null}
+      {!error && notice ? (
+        <span role="status" className="text-xs font-medium text-amber-700">
+          {notice}
         </span>
       ) : null}
     </span>
