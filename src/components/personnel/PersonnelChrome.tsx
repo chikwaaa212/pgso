@@ -10,12 +10,16 @@ export function PersonnelChrome({
   pendingRequests = 0,
   pendingRepairs = 0,
   totalDocuments = 0,
+  userName,
+  userDetail,
 }: {
   children: React.ReactNode;
   pendingInspections?: number;
   pendingRequests?: number;
   pendingRepairs?: number;
   totalDocuments?: number;
+  userName?: string;
+  userDetail?: string;
 }) {
   const pathname = usePathname();
   const isBare =
@@ -33,6 +37,8 @@ export function PersonnelChrome({
         pendingRequests={pendingRequests}
         pendingRepairs={pendingRepairs}
         totalDocuments={totalDocuments}
+        userName={userName}
+        userDetail={userDetail}
       />
       <div className={layoutStyles.main}>{children}</div>
     </div>

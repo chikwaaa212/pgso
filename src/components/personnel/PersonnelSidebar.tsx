@@ -19,11 +19,17 @@ export function PersonnelSidebar({
   pendingRequests = 0,
   pendingRepairs = 0,
   totalDocuments = 0,
+  userName = "PGSO Personnel",
+  userDetail = "Staff",
 }: {
   pendingInspections?: number;
   pendingRequests?: number;
   pendingRepairs?: number;
   totalDocuments?: number;
+  /** Signed-in user's display name (profiles.full_name). */
+  userName?: string;
+  /** Role / position line (position · office, else role label). */
+  userDetail?: string;
 }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
@@ -107,14 +113,16 @@ export function PersonnelSidebar({
         </nav>
 
         <div className={styles.user}>
-          <div className={styles.avatar} aria-hidden="true">
-            P
+          <div className={styles.userRow}>
+            <div className={styles.avatar} aria-hidden="true">
+              {(userName.trim().charAt(0) || "P").toUpperCase()}
+            </div>
+            <div className={styles.userInfo}>
+              <span className={styles.userName}>{userName}</span>
+              <span className={styles.userRole}>{userDetail}</span>
+            </div>
           </div>
-          <div className={styles.userInfo}>
-            <span className={styles.userName}>PGSO Personnel</span>
-            <span className={styles.userRole}>Staff (mock)</span>
-          </div>
-          <form action={logout}>
+          <form action={logout} className={styles.signOutForm}>
             <SubmitButton
               variant="ghost"
               size="sm"
