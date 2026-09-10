@@ -1,5 +1,6 @@
 import { getIssuance } from "@/app/personnel/issuances/actions";
 import { buildIcsWorkbook } from "@/lib/ics-excel";
+import { denyIssuanceDownload } from "../guard";
 
 export const runtime = "nodejs";
 
@@ -33,6 +34,8 @@ export async function GET(
   if (!r || r.doc_type !== "ICS") {
     return new Response("ICS record not found.", { status: 404 });
   }
+  const denied = await denyIssuanceDownload(r.employee_id);
+  if (denied) return denied;
   const d = (r.issuance_data ?? {}) as Record<string, unknown> & {
     lines?: Array<{
       quantity?: number;

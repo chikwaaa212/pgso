@@ -32,7 +32,7 @@ import {
   type IssuanceRecordRow,
   type IssuanceDetail,
 } from '@/app/personnel/issuances/actions'
-import { getPublicIssues, type PublicIssueLine } from '@/app/personnel/issues/actions'
+import { getCompletedRequestIssues, getPublicIssues, type PublicIssueLine } from '@/app/personnel/issues/actions'
 import { getRequests, type RequestRow } from '@/app/personnel/requests/actions'
 import { getRepairs, getRepair, type RepairRow } from '@/app/personnel/repairs/actions'
 import {
@@ -265,6 +265,17 @@ export async function browseIssues(): Promise<PublicIssueLine[]> {
   }
 }
 
+/** All completed requests (every type, asset or stock) — admin QR oversight. */
+export async function browseCompletedRequests(): Promise<RequestRow[]> {
+  if (!(await allowed())) return []
+  try {
+    return await getCompletedRequestIssues()
+  } catch (e) {
+    console.error('[browseCompletedRequests]', e)
+    return []
+  }
+}
+
 export type BrowseRequestRow = RequestRow & { logged_by: string | null }
 
 export async function browseRequests(): Promise<BrowseRequestRow[]> {
@@ -275,8 +286,11 @@ export async function browseRequests(): Promise<BrowseRequestRow[]> {
     // filed it is captured in the audit log (request:create → reference_id).
     let filerByRequest = new Map<string, string>()
     try {
+      // Bounded: audit_logs grows without bound; latest 5k covers years of filings.
       const audits = await prisma.auditLog.findMany({
         where: { action: 'request:create' },
+        orderBy: { created_at: 'desc' },
+        take: 5000,
         select: { user_id: true, details: true },
       })
       for (const a of audits) {

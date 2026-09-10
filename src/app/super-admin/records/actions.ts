@@ -64,10 +64,14 @@ export async function getRecentAssets(limit = 10): Promise<RecentAssetRow[]> {
   } catch {
     return []
   }
+  // Clamp client-controlled take: huge/negative values scanned or flipped rows.
+  const take = Number.isFinite(limit)
+    ? Math.min(Math.max(Math.floor(limit), 1), 100)
+    : 10
   try {
     const rows = await prisma.asset.findMany({
       orderBy: { created_at: 'desc' },
-      take: limit,
+      take,
       select: {
         id: true,
         article: true,

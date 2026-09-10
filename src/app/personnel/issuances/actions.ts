@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import { writeAuditLog } from '@/lib/audit'
+import { getPersonnelScope } from '@/lib/personnel-scope'
 import prisma from '@/lib/prisma'
 import { getRequestLines, parseQtyLine } from '@/app/personnel/requests/actions'
 import {
@@ -51,13 +52,25 @@ function isoDateTime(v: Date | string | null): string | null {
 
 async function listIssuanceRows(): Promise<IssuanceDbRow[]> {
   try {
+    // Own-data only for personnel; super_admin sees all.
+    const scope = await getPersonnelScope()
+    if (scope.isEmpty || !scope.userId) return []
+    if (scope.isSuperAdmin) {
+      return await prisma.$queryRaw<IssuanceDbRow[]>`
+        SELECT id::text AS id, doc_type, doc_no, doc_date,
+               asset_id::text AS asset_id, inventory_id::text AS inventory_id,
+               employee_id::text AS employee_id, request_id::text AS request_id,
+               quantity, unit_cost, total_amount, issuance_data, image_url, created_at,
+               created_by::text AS created_by
+        FROM issuance_records ORDER BY created_at DESC`
+    }
     return await prisma.$queryRaw<IssuanceDbRow[]>`
       SELECT id::text AS id, doc_type, doc_no, doc_date,
              asset_id::text AS asset_id, inventory_id::text AS inventory_id,
              employee_id::text AS employee_id, request_id::text AS request_id,
              quantity, unit_cost, total_amount, issuance_data, image_url, created_at,
              created_by::text AS created_by
-      FROM issuance_records ORDER BY created_at DESC`
+      FROM issuance_records WHERE created_by = ${scope.userId}::uuid ORDER BY created_at DESC`
   } catch (e) {
     console.error('[listIssuanceRows]', e)
     return []
@@ -66,13 +79,25 @@ async function listIssuanceRows(): Promise<IssuanceDbRow[]> {
 
 async function getIssuanceRow(id: string): Promise<IssuanceDbRow | null> {
   try {
+    const scope = await getPersonnelScope()
+    if (scope.isEmpty || !scope.userId) return null
+    if (scope.isSuperAdmin) {
+      const rows = await prisma.$queryRaw<IssuanceDbRow[]>`
+        SELECT id::text AS id, doc_type, doc_no, doc_date,
+               asset_id::text AS asset_id, inventory_id::text AS inventory_id,
+               employee_id::text AS employee_id, request_id::text AS request_id,
+               quantity, unit_cost, total_amount, issuance_data, image_url, created_at,
+               created_by::text AS created_by
+        FROM issuance_records WHERE id = ${id}::uuid`
+      return rows[0] ?? null
+    }
     const rows = await prisma.$queryRaw<IssuanceDbRow[]>`
       SELECT id::text AS id, doc_type, doc_no, doc_date,
              asset_id::text AS asset_id, inventory_id::text AS inventory_id,
              employee_id::text AS employee_id, request_id::text AS request_id,
              quantity, unit_cost, total_amount, issuance_data, image_url, created_at,
              created_by::text AS created_by
-      FROM issuance_records WHERE id = ${id}::uuid`
+      FROM issuance_records WHERE id = ${id}::uuid AND created_by = ${scope.userId}::uuid`
     return rows[0] ?? null
   } catch (e) {
     console.error('[getIssuanceRow]', e)
@@ -861,7 +886,28 @@ export async function updateEmployeePosting(
   const me = await requireUserId()
   if (!me) return { error: 'You must be signed in.' }
   if (!employeeId) return { error: 'Employee is required.' }
+  if (!isUuid(employeeId)) return { error: 'Employee is required.' }
   try {
+    // Personnel-only: employees must not rewrite profiles (including admins').
+    const [caller, target] = await Promise.all([
+      prisma.profile.findUnique({
+        where: { id: me },
+        select: { role: true, status: true },
+      }),
+      prisma.profile.findUnique({
+        where: { id: employeeId },
+        select: { role: true },
+      }),
+    ])
+    if (
+      !caller ||
+      caller.status !== 'active' ||
+      (caller.role !== 'pgso_personnel' && caller.role !== 'super_admin')
+    )
+      return { error: 'Forbidden: personnel only.' }
+    if (!target) return { error: 'Employee not found.' }
+    if (target.role === 'super_admin')
+      return { error: 'Super Admin accounts cannot be changed here.' }
     await prisma.$executeRaw`
       UPDATE profiles
       SET position = ${position.trim() || null}, office = ${office.trim() || null}
@@ -920,6 +966,7 @@ export async function approveRequestWithIssuance(
   let request: {
     id: string
     employee_id: string
+    recipient_id: string | null
     request_type: string
     asset_id: string | null
     description: string
@@ -936,6 +983,22 @@ export async function approveRequestWithIssuance(
     return { error: `Only pending requests can be approved (now ${request.status}).` }
   if (request.request_type !== 'new_assignment')
     return { error: 'Only new-assignment requests use issuance evaluation.' }
+
+  // Only the personnel this request was sent to (or a super admin) may
+  // approve it — legacy recipient-less rows stay actionable by any personnel.
+  try {
+    const scope = await getPersonnelScope()
+    if (scope.isEmpty || !scope.userId)
+      return { error: 'You must be signed in to approve requests.' }
+    if (
+      !scope.isSuperAdmin &&
+      request.recipient_id &&
+      request.recipient_id !== scope.userId
+    )
+      return { error: 'Only the personnel this request was sent to can approve it.' }
+  } catch {
+    return { error: 'Failed to verify your account. Please try again.' }
+  }
 
   const employeeId = clean(input.employeeId) || request.employee_id
   let employeeName: string | null = null
@@ -1230,6 +1293,12 @@ export async function approveRequestWithIssuance(
   }
 
   try {
+    // Suffix first: the request status flip below joins the same transaction
+    // so issuance + assignments + request can never commit partially (a crash
+    // between them used to leave stock issued with the request still pending,
+    // and a retry double-issued).
+    const suffix =
+      `${docNo} (${docType}) prepared and signed. ${resolved.length} item${resolved.length === 1 ? '' : 's'} assigned. Grand total ${grandTotal.toFixed(2)}.`
     const newId = await prisma.$transaction(async (tx) => {
       const { randomUUID } = await import('crypto')
       const id = randomUUID()
@@ -1286,18 +1355,15 @@ export async function approveRequestWithIssuance(
           })
         }
       }
+      await tx.request.update({
+        where: { id: request.id },
+        data: {
+          status: 'approved',
+          date_resolved: new Date(),
+          description: `${request.description}\nNote (approved): ${note}\nIssuance: ${suffix}`,
+        },
+      })
       return id
-    })
-
-    const suffix =
-      `${docNo} (${docType}) prepared and signed. ${resolved.length} item${resolved.length === 1 ? '' : 's'} assigned. Grand total ${grandTotal.toFixed(2)}.`
-    await prisma.request.update({
-      where: { id: request.id },
-      data: {
-        status: 'approved',
-        date_resolved: new Date(),
-        description: `${request.description}\nNote (approved): ${note}\nIssuance: ${suffix}`,
-      },
     })
 
     revalidatePath('/personnel/documents')

@@ -199,7 +199,7 @@ export default function PersonnelInspectionsPage() {
             <div>
               <h2 className={styles.panelTitle}>Inspections</h2>
               <p className={styles.panelSub}>
-                Deliveries awaiting cross-verification and completed inspections.
+                Your deliveries and inspections only — other personnel&apos;s records are hidden.
               </p>
             </div>
             <div className={styles.actions}>

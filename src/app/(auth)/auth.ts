@@ -1,5 +1,6 @@
 'use server'
 
+import { headers } from 'next/headers'
 import { createClient } from '@/lib/supabase/server'
 import prisma from '@/lib/prisma'
 import { writeAuditLog } from '@/lib/audit'
@@ -7,11 +8,78 @@ import { withIdempotency } from '@/lib/idempotency'
 import { redirect, unstable_rethrow } from 'next/navigation'
 import { createClient as createAdminClient } from '@supabase/supabase-js'
 import type { LoginState, SignupState } from '@/types'
+import { OAUTH_PROVIDER } from './oauth'
 
 const roleRoutes: Record<string, string> = {
   super_admin: '/super-admin/dashboard',
   pgso_personnel: '/personnel/dashboard',
   employee: '/employee/dashboard',
+}
+
+/** Only same-origin absolute paths are honored (open-redirect guard). */
+function safeNextParam(value: string | null | undefined): string | null {
+  if (!value || typeof value !== 'string') return null
+  if (!value.startsWith('/') || value.startsWith('//')) return null
+  return value
+}
+
+function roleAllowsPath(role: string, path: string): boolean {
+  if (path === '/' || path.startsWith('/login') || path.startsWith('/signup'))
+    return true
+  const m = path.match(/^\/(super-admin|personnel|employee)(\/|$)/)
+  if (!m) return true
+  const map: Record<string, string> = {
+    'super-admin': 'super_admin',
+    personnel: 'pgso_personnel',
+    employee: 'employee',
+  }
+  return role === map[m[1]]
+}
+
+async function callbackOrigin(): Promise<string> {
+  // Prefer the configured app URL — request headers (esp. x-forwarded-host)
+  // can be spoofed behind proxies that pass them through, which would leak
+  // the OAuth code to an attacker host via redirectTo.
+  const configured = (process.env.NEXT_PUBLIC_APP_URL ?? '').trim().replace(/\/+$/, '')
+  if (configured) {
+    try {
+      return new URL(configured).origin
+    } catch {
+      // fall through to headers
+    }
+  }
+  const list = await headers()
+  const host = list.get('x-forwarded-host') ?? list.get('host') ?? 'localhost:3000'
+  const proto = list.get('x-forwarded-proto') ?? 'http'
+  return `${proto}://${host}`
+}
+
+/**
+ * Starts Supabase OAuth (PKCE). New users get an employee/pending profile in
+ * the callback; returning users keep their existing role. Used by both the
+ * signup page (register) and the login page (OAuth users have no password).
+ * Preserves `next` (same-origin path) so guests bounced from a protected
+ * page return there after sign-in.
+ */
+export async function signInWithOAuth(formData?: FormData): Promise<never> {
+  const rawNext =
+    formData instanceof FormData ? (formData.get('next') as string | null) : null
+  const next = safeNextParam(rawNext)
+  const supabase = await createClient()
+  const base = await callbackOrigin()
+  const redirectTo = next
+    ? `${base}/auth/callback?next=${encodeURIComponent(next)}`
+    : `${base}/auth/callback`
+  const { data, error } = await supabase.auth.signInWithOAuth({
+    provider: OAUTH_PROVIDER,
+    options: {
+      redirectTo,
+    },
+  })
+  if (error || !data.url) {
+    redirect(`/login?notice=oauth-error`)
+  }
+  redirect(data.url)
 }
 
 export async function login(
@@ -77,7 +145,17 @@ export async function login(
       },
     })
 
-    redirect(roleRoutes[outcome.result.role] || '/')
+    // Guests bounced by middleware carry ?next=<protected path>.
+    // Honor it only when it is same-origin AND allowed for this role —
+    // otherwise fall back to the role dashboard (never an open redirect).
+    const requested = safeNextParam(formData.get('next') as string | null)
+    const role = outcome.result.role
+    const fallback = roleRoutes[role] || '/'
+    if (requested && roleAllowsPath(role, requested)) {
+      // "/" itself role-routes in middleware, so send role home directly.
+      redirect(requested === '/' ? fallback : requested)
+    }
+    redirect(fallback)
   } catch (e) {
     unstable_rethrow(e)
     return { error: e instanceof Error ? e.message : 'Login failed' }

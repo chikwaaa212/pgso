@@ -2,10 +2,8 @@
 
 import prisma from '@/lib/prisma'
 import { requireSuperAdmin } from '@/lib/auth-guard'
-import {
-  getOperationsStats,
-  type OperationsStats,
-} from '@/app/personnel/dashboard/actions'
+import { getDashboardStats } from '@/app/personnel/inspections/actions'
+import type { OperationsStats } from '@/app/personnel/dashboard/actions'
 
 export interface RecentAuditEntry {
   id: string
@@ -60,8 +58,11 @@ export async function getSuperAdminOverview(): Promise<SuperOverview> {
     return fallback
   }
   try {
+    // getDashboardStats is per-request memoized and shared with the layout,
+    // so the six overlapping global counts run once (was a second full
+    // getOperationsStats fan-out on top of the layout's queries).
     const [
-      ops,
+      dash,
       pendingAccounts,
       totalPersonnel,
       totalEmployees,
@@ -70,7 +71,7 @@ export async function getSuperAdminOverview(): Promise<SuperOverview> {
       inactiveCatalog,
       auditRows,
     ] = await Promise.all([
-      getOperationsStats(),
+      getDashboardStats(),
       prisma.profile.count({ where: { role: 'employee', status: 'pending' } }).catch(() => 0),
       prisma.profile.count({ where: { role: 'pgso_personnel' } }).catch(() => 0),
       prisma.profile.count({ where: { role: 'employee' } }).catch(() => 0),
@@ -85,6 +86,51 @@ export async function getSuperAdminOverview(): Promise<SuperOverview> {
         })
         .catch(() => [] as { id: string; user_id: string; action: string; module: string; details: unknown; created_at: Date | null }[]),
     ])
+
+    // Extras the badge stats don't carry — one small sequential batch.
+    const [
+      inProgressRepairs,
+      totalAssets,
+      totalStockSkus,
+      totalIssuances,
+      stocks,
+    ] = await Promise.all([
+      prisma.repair.count({ where: { status: 'in_progress' } }).catch(() => 0),
+      prisma.asset.count().catch(() => 0),
+      prisma.inventoryItem.count().catch(() => 0),
+      prisma.$queryRaw<Array<{ count: bigint }>>`SELECT COUNT(*)::bigint AS count FROM issuance_records`
+        .then((r) => Number(r[0]?.count ?? 0))
+        .catch(() => 0),
+      prisma.inventoryItem
+        .findMany({ select: { quantity: true, reorder_threshold: true } })
+        .catch(() => [] as { quantity: number; reorder_threshold: number | null }[]),
+    ])
+
+    let low = 0
+    let out = 0
+    for (const s of stocks) {
+      if (s.quantity <= 0) {
+        out += 1
+      } else if (s.reorder_threshold != null && s.quantity <= s.reorder_threshold) {
+        low += 1
+      }
+    }
+
+    const ops: OperationsStats = {
+      totalDeliveries: dash.totalDeliveries,
+      pendingInspections: dash.pendingInspections,
+      completedInspections: dash.completedInspections,
+      totalItems: dash.totalItems,
+      pendingRequests: dash.pendingRequests,
+      pendingRepairs: dash.pendingRepairs,
+      inProgressRepairs,
+      totalDocuments: dash.totalDocuments,
+      lowStockCount: low,
+      outOfStockCount: out,
+      totalAssets,
+      totalStockSkus,
+      totalIssuances,
+    }
 
     let recentAudit: RecentAuditEntry[] = []
     if (auditRows.length > 0) {

@@ -5,6 +5,7 @@ import { notFound } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import prisma from '@/lib/prisma'
 import type { Prisma } from '@prisma/client'
+import { getPersonnelScope } from '@/lib/personnel-scope'
 import { withIdempotency } from '@/lib/idempotency'
 import { writeAuditLog } from '@/lib/audit'
 import { stockInspectionItems } from '@/lib/stock'
@@ -230,11 +231,16 @@ export async function recordInspection(
   try {
     const exists = await prisma.delivery.findUnique({
       where: { id: deliveryId },
-      select: { id: true, inspection_status: true },
+      select: { id: true, inspection_status: true, received_by: true },
     })
 
     if (!exists) {
       return { error: 'Delivery not found.' }
+    }
+
+    // Own-data only: you can only inspect deliveries you logged.
+    if (exists.received_by !== user.id) {
+      return { error: 'You can only inspect your own logged deliveries.' }
     }
 
     if (exists.inspection_status !== 'pending' && exists.inspection_status !== 'partial' && exists.inspection_status !== 'failed') {
@@ -336,14 +342,27 @@ export async function getDeliveryDetails(
   deliveryId: string
 ): Promise<DeliveryDetails> {
   try {
+    const scope = await getPersonnelScope()
+    // Fail closed: signed-out callers see nothing (previously fell through
+    // to the unfiltered row, costs included).
+    if (scope.isEmpty || !scope.userId) notFound()
     const delivery = await prisma.delivery.findUnique({
       where: { id: deliveryId },
       include: {
         items: { orderBy: { created_at: 'asc' } },
+        inspections: { select: { inspector_id: true }, take: 5 },
       },
     })
 
     if (!delivery) notFound()
+
+    // Own-data only for personnel; super_admin sees all.
+    if (!scope.isSuperAdmin && scope.userId) {
+      const inspectedByMe = delivery.inspections.some(
+        (i) => i.inspector_id === scope.userId
+      )
+      if (delivery.received_by !== scope.userId && !inspectedByMe) notFound()
+    }
 
     let loggedByName: string | null = null
     try {

@@ -175,6 +175,7 @@ model Repair {
   status       String?   @default("pending") @db.VarChar
   cost         Decimal?  @db.Decimal(10, 2)
   technician   String?   @db.VarChar
+  created_by   String?   @db.Uuid
   created_at   DateTime? @default(now()) @db.Timestamptz
 
   @@map("repairs")
@@ -207,6 +208,7 @@ model Document {
 model Request {
   id             String    @id @default(uuid()) @db.Uuid
   employee_id    String    @db.Uuid
+  recipient_id   String?   @db.Uuid
   request_type   String    @db.VarChar
   asset_id       String?   @db.Uuid
   description    String    @db.Text
@@ -215,6 +217,7 @@ model Request {
   date_resolved  DateTime?
   items          RequestItem[]
 
+  @@index([recipient_id])
   @@map("requests")
 }
 
@@ -305,6 +308,7 @@ model AccountCatalog {
   id            String    @id @default(uuid()) @db.Uuid
   account_code  String    @unique @db.VarChar
   account_title String    @db.VarChar
+  account_name  String?   @db.VarChar
   asset_type    String    @db.VarChar
   description   String?
   status        String    @default("active") @db.VarChar

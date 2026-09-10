@@ -1,6 +1,7 @@
 'use server'
 
 import prisma from '@/lib/prisma'
+import { getPersonnelScope } from '@/lib/personnel-scope'
 import { VIEWED_DOC_TYPES } from './document-types'
 
 // ─── Viewed receipts ─────────────────────────────────────────────────────────
@@ -59,7 +60,11 @@ export interface DeliveryDocumentRow {
 /** Every logged delivery — the same receipt record shown on Deliveries. */
 export async function getDeliveryDocuments(): Promise<DeliveryDocumentRow[]> {
   try {
+    // Own-data only for personnel; super_admin sees all.
+    const scope = await getPersonnelScope()
+    if (scope.isEmpty) return []
     const deliveries = await prisma.delivery.findMany({
+      where: scope.isSuperAdmin ? {} : { received_by: scope.userId! },
       orderBy: { created_at: 'desc' },
       include: { _count: { select: { items: true } } },
     })
@@ -102,7 +107,20 @@ export interface IarReportRow {
 /** Every IAR ever generated or attached, newest first, across all deliveries. */
 export async function getAllIarReports(): Promise<IarReportRow[]> {
   try {
+    // Own-data only for personnel; super_admin sees all.
+    const scope = await getPersonnelScope()
+    if (scope.isEmpty) return []
     const rows = await prisma.iarRecord.findMany({
+      where: scope.isSuperAdmin
+        ? {}
+        : {
+            delivery: {
+              OR: [
+                { received_by: scope.userId! },
+                { inspections: { some: { inspector_id: scope.userId! } } },
+              ],
+            },
+          },
       orderBy: { created_at: 'desc' },
       include: {
         delivery: {

@@ -1,3 +1,4 @@
+import { createClient } from "@/lib/supabase/server";
 import { getDeliveryForInspection } from "@/app/personnel/inspections/actions";
 import { buildAirWorkbook } from "@/lib/air-excel";
 
@@ -28,6 +29,17 @@ export async function GET(
 ) {
   const { id } = await params;
   const q = new URL(req.url).searchParams;
+  try {
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    // Ownership is enforced inside getDeliveryForInspection (fail-closed);
+    // this gate keeps signed-out callers on a 401 instead of a 404.
+    if (!user) return new Response("Unauthorized.", { status: 401 });
+  } catch {
+    return new Response("Unauthorized.", { status: 401 });
+  }
   const delivery = await getDeliveryForInspection(id);
   const inspection = delivery.inspection_data;
   const ref = delivery.id.slice(0, 8).toUpperCase();

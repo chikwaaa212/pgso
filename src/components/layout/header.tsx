@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion } from "framer-motion";
+import { BrandLogo } from "@/components/layout/brand-logo";
 import styles from "./header.module.css";
 
 interface NavItem {
@@ -29,8 +30,8 @@ export function Header() {
       transition={{ duration: 0.5, ease: "easeOut" }}
     >
       <div className={styles.nav}>
-        <Link href="/" className={styles.logo}>
-          PGSO
+        <Link href="/" className={styles.logo} aria-label="PGSO EYE home">
+          <BrandLogo size={30} />
         </Link>
 
         {isAuthPage ? (

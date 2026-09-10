@@ -171,11 +171,10 @@ export async function rejectEmployee(targetId: string): Promise<{ ok: boolean; e
       where: { id: targetId },
       data: { status: 'inactive' },
     })
-    try {
-      await adminClient().auth.admin.signOut(targetId)
-    } catch {
-      // best-effort
-    }
+    // NOTE: auth.admin.signOut() takes a JWT, not a user ID, so it cannot
+    // revoke this session. No replacement call exists server-side; the
+    // middleware profile-status check signs the account out on its next
+    // request instead.
     await writeAuditLog({
       userId: actorId,
       action: 'users:reject_employee',
@@ -202,13 +201,10 @@ export async function setUserActive(
       where: { id: targetId },
       data: { status: active ? 'active' : 'inactive' },
     })
-    if (!active) {
-      try {
-        await adminClient().auth.admin.signOut(targetId)
-      } catch {
-        // best-effort
-      }
-    }
+    // NOTE: auth.admin.signOut() takes a JWT, not a user ID, so it cannot
+    // revoke this session — the middleware profile-status check signs the
+    // account out on its next request instead. The status flip above is the
+    // enforcement point.
     const target = await prisma.profile.findUnique({ where: { id: targetId } })
     await writeAuditLog({
       userId: actorId,

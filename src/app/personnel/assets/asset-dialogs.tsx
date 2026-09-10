@@ -371,7 +371,7 @@ export function ImportAssetsDialog({ onSuccess }: { onSuccess?: () => void }) {
       if (res.success) {
         toast({
           title: "Import complete",
-          description: `${res.created ?? 0} added · ${res.updated ?? 0} updated${res.skipped ? ` · ${res.skipped} skipped` : ""}.`,
+          description: `${res.created ?? 0} added${(res.updated ?? 0) > 0 ? ` · ${res.updated} updated` : ""}${res.skipped ? ` · ${res.skipped} skipped` : ""}.`,
           variant: "success",
         });
         onSuccess?.();
@@ -394,29 +394,24 @@ export function ImportAssetsDialog({ onSuccess }: { onSuccess?: () => void }) {
           }
         }}
       >
-        <DialogContent className="max-h-[90vh] overflow-y-auto bg-white sm:max-w-xl dark:bg-white">
+        <DialogContent className="pgso-no-scrollbar max-h-[90vh] overflow-y-auto bg-white sm:max-w-xl dark:bg-white">
           <DialogHeader>
             <DialogTitle>Import assets from Excel</DialogTitle>
             <DialogDescription>
-              Fill the template, then upload it here. Existing ACCOUNT CODEs are updated; new ones are added. Rows with unknown ACCOUNT CODEs are skipped — those codes must come from Master Data.
+              Upload the template or your existing file — only matching columns are read
+              (any order; extra columns ignored). Each row is verified: the code + title +
+              asset type triple must exist in Master Data, else the row is skipped. Rows
+              identical to the existing record are skipped as duplicates; differing rows
+              update the record; only verified new rows are added.
             </DialogDescription>
           </DialogHeader>
 
           <div className="rounded-md border border-navy-200 bg-navy-50 p-3 text-sm">
-            <p className="font-semibold text-navy-900">1 · Download the template</p>
+            <p className="font-semibold text-navy-900">1 · Get the template</p>
             <p className="mt-1 text-navy-700">
-              Keep its 34 headers exactly — do not rename, reorder, or add columns.
+              From <span className="font-semibold">Download Templates</span> in the sidebar
+              (Asset Import Template).
             </p>
-            <div className="mt-2 flex flex-wrap gap-2">
-              <a href="/api/personnel/assets/template-xlsx" download>
-                <Button type="button" size="sm" variant="outline">
-                  Download template (.xlsx)
-                </Button>
-              </a>
-              <a href="/templates/ASSET-TEMPLATE.xlsx" download className="text-xs font-medium text-navy-600 underline underline-offset-2">
-                mirror: /templates/ASSET-TEMPLATE.xlsx
-              </a>
-            </div>
           </div>
 
           <form ref={formRef} action={submit} className="mt-3 grid gap-3">
@@ -445,9 +440,15 @@ export function ImportAssetsDialog({ onSuccess }: { onSuccess?: () => void }) {
             {result?.success ? (
               <div className="rounded-md border border-green-300 bg-green-50 px-3 py-2 text-sm text-green-900">
                 <p className="font-semibold">
-                  {result.created ?? 0} added · {result.updated ?? 0} updated
+                  {result.created ?? 0} added
+                  {(result.updated ?? 0) > 0 ? ` · ${result.updated} updated` : ""}
                   {(result.skipped ?? 0) > 0 ? ` · ${result.skipped} skipped` : ""}
                 </p>
+                {(result.matched?.length ?? 0) > 0 ? (
+                  <p className="mt-1 text-xs">
+                    {result.matched!.length} template columns read
+                  </p>
+                ) : null}
                 {(result.errors?.length ?? 0) > 0 ? (
                   <ul className="mt-1 list-disc pl-5">
                     {result.errors!.map((m, i) => (

@@ -1,103 +1,53 @@
 'use client'
 
-import { useActionState, useEffect, useState } from 'react'
-import { signup } from '../auth'
-import type { SignupState } from '@/types'
-import { SubmitButton } from '@/components/ui/submit-button'
-import styles from './page.module.css'
+import { Suspense } from 'react'
+import Link from 'next/link'
+import { useSearchParams } from 'next/navigation'
+import { motion } from 'framer-motion'
+import { OAuthButton } from '../oauth-button'
+import { Card } from '@/components/ui/card'
+import styles from '../login/page.module.css'
+
+function SignupNotice() {
+  const params = useSearchParams()
+  if (params.get('notice') !== 'pending') return null
+  return (
+    <p className={styles.notice} role="status">
+      Account created — it is waiting for admin approval. You can sign in after approval.
+    </p>
+  )
+}
 
 export default function SignupPage() {
-  const [state, formAction] = useActionState<SignupState, FormData>(signup, {
-    success: false,
-    error: undefined,
-  })
-  const [idempotencyKey, setIdempotencyKey] = useState(() => crypto.randomUUID())
-
-  useEffect(() => {
-    if (state.success) {
-      const timer = setTimeout(() => setIdempotencyKey(crypto.randomUUID()), 0)
-      return () => clearTimeout(timer)
-    }
-  }, [state.success])
-
   return (
-    <div className={styles.formContainer}>
-      <h1 className={styles.title}>Create Account</h1>
-      <p className={styles.description}>
-        Sign up for PGSO-PSMS
-      </p>
-
-      <form action={formAction} className={styles.form}>
-        <input type="hidden" name="idempotencyKey" value={idempotencyKey} />
-        <div>
-          <label htmlFor="full_name" className={styles.label}>
-            Full Name
-          </label>
-          <input
-            id="full_name"
-            name="full_name"
-            type="text"
-            required
-            className={styles.input}
-            placeholder="Jane Doe"
-          />
-        </div>
-
-        <div>
-          <label htmlFor="email" className={styles.label}>
-            Email
-          </label>
-          <input
-            id="email"
-            name="email"
-            type="email"
-            required
-            className={styles.input}
-            placeholder="you@example.com"
-          />
-        </div>
-
-        <div>
-          <label htmlFor="password" className={styles.label}>
-            Password
-          </label>
-          <input
-            id="password"
-            name="password"
-            type="password"
-            required
-            minLength={6}
-            className={styles.input}
-            placeholder="At least 6 characters"
-          />
-        </div>
-
-        {state?.error && (
-          <p className={styles.error}>{state.error}</p>
-        )}
-
-        {state?.success && (
-          <p className={styles.success}>
-            Submitted for approval. You can sign in after an admin approves
-            your account.{' '}
-            <a href="/login" className={styles.link}>
-              Go to sign in
-            </a>
-            .
+    <motion.div
+      className={styles.pageWrapper}
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.5, ease: 'easeOut' }}
+    >
+      <Card className={styles.card}>
+        <div className={styles.header}>
+          <h1 className={styles.title}>Create employee account</h1>
+          <p className={styles.description}>
+            Sign up with Google. New accounts start as Employee and need admin
+            approval before sign-in.
           </p>
-        )}
+        </div>
 
-        <SubmitButton variant="primary" className="w-full" pendingLabel="Creating account…">
-          Sign Up
-        </SubmitButton>
-      </form>
+        <Suspense fallback={null}>
+          <SignupNotice />
+        </Suspense>
 
-      <p className={styles.footerText}>
-        Already have an account?{' '}
-        <a href="/login" className={styles.link}>
-          Sign in
-        </a>
-      </p>
-    </div>
+        <OAuthButton mode="signup" hideDivider />
+
+        <p className={styles.footerText}>
+          Already have an account?{' '}
+          <Link href="/login" className={styles.link}>
+            Sign in
+          </Link>
+        </p>
+      </Card>
+    </motion.div>
   )
 }

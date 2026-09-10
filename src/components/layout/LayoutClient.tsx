@@ -22,8 +22,13 @@ export function LayoutClient({ children }: { children: React.ReactNode }) {
   const isLanding = LANDING_PATHS.includes(pathname);
   const isPersonnel = pathname.startsWith("/personnel");
   const isSuperAdmin = pathname.startsWith("/super-admin");
+  const isEmployee = pathname.startsWith("/employee");
+  const isAuth = pathname === "/login" || pathname.startsWith("/login/") || pathname === "/signup" || pathname.startsWith("/signup/");
+  // Info docs open in a new tab as standalone reading pages — no navbar.
+  const isInfo = pathname === "/info" || pathname.startsWith("/info/");
   const isBare = isLanding || isReceiptPath(pathname);
-  const hideHeader = isBare || isPersonnel || isSuperAdmin;
+  // App shells (sidebars), auth screens, and standalone docs render without the global navbar.
+  const hideHeader = isBare || isPersonnel || isSuperAdmin || isEmployee || isAuth || isInfo;
 
   useEffect(() => {
     const html = document.documentElement;

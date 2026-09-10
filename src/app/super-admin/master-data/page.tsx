@@ -1,7 +1,7 @@
 import { Card } from "@/components/ui/card";
 import { label } from "@/lib/labels";
 import { getCatalog, getUnits } from "./actions";
-import { AddCatalogForm, AddUnitForm, CatalogEdit, CatalogToggle, UnitToggle } from "./master-forms";
+import { AddCatalogForm, AddUnitForm, CatalogEdit, CatalogToggle, ImportCatalogDialog, UnitToggle } from "./master-forms";
 import styles from "./page.module.css";
 
 export const dynamic = "force-dynamic";
@@ -66,19 +66,30 @@ export default async function SuperAdminMasterDataPage() {
       </Card>
 
       <Card className={styles.panel}>
-        <h2 className={styles.panelTitle}>Account catalog (code + title + asset type)</h2>
-        <p className={styles.panelSub}>
-          One record links the triple together. Selecting a code auto-fills title and
-          type in personnel forms (strict in Phase 3).
-        </p>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "1rem", flexWrap: "nowrap" }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <h2 className={styles.panelTitle}>Account catalog (code + title + name + asset type)</h2>
+            <p className={styles.panelSub}>
+              One record links the set together. Selecting a code auto-fills title and
+              type in personnel forms (strict in Phase 3). Bulk-load via Import Excel
+              using the template or the client&apos;s existing file — only matching
+              columns are read, duplicates are skipped with a message, and only new
+              codes are added.
+            </p>
+          </div>
+          <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", alignItems: "center", flexShrink: 0 }}>
+            <ImportCatalogDialog />
+          </div>
+        </div>
         <AddCatalogForm />
         <div className={styles.tableWrap}>
           <table className={styles.table}>
             <thead>
               <tr>
                 <th>Code</th>
-                <th>Title</th>
                 <th>Asset type</th>
+                <th>Title</th>
+                <th>Account name</th>
                 <th>Used in</th>
                 <th>Status</th>
                 <th>Actions</th>
@@ -88,8 +99,9 @@ export default async function SuperAdminMasterDataPage() {
               {catalog.map((c) => (
                 <tr key={c.id}>
                   <td>{c.account_code}</td>
-                  <td>{c.account_title}</td>
                   <td>{c.asset_type}</td>
+                  <td>{c.account_title}</td>
+                  <td>{c.account_name ?? "—"}</td>
                   <td>{c.usage}</td>
                   <td>
                     <span className={styles.status} data-tone={c.status === "active" ? "ok" : "bad"}>
@@ -97,8 +109,8 @@ export default async function SuperAdminMasterDataPage() {
                     </span>
                   </td>
                   <td>
-                    <div style={{ display: "flex", gap: "0.375rem", flexWrap: "wrap" }}>
-                      <CatalogEdit id={c.id} title={c.account_title} type={c.asset_type} description={c.description} />
+                    <div style={{ display: "flex", gap: "0.375rem", flexWrap: "nowrap", whiteSpace: "nowrap" }}>
+                      <CatalogEdit id={c.id} title={c.account_title} name={c.account_name} type={c.asset_type} description={c.description} />
                       <CatalogToggle id={c.id} code={c.account_code} isActive={c.status === "active"} />
                     </div>
                   </td>
@@ -106,7 +118,7 @@ export default async function SuperAdminMasterDataPage() {
               ))}
               {catalog.length === 0 && (
                 <tr>
-                  <td colSpan={6} className={styles.empty}>No catalog entries yet.</td>
+                  <td colSpan={7} className={styles.empty}>No catalog entries yet — import the template or add the first one above.</td>
                 </tr>
               )}
             </tbody>

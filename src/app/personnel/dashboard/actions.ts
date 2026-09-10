@@ -1,6 +1,7 @@
 'use server'
 
 import prisma from '@/lib/prisma'
+import { getPersonnelScope } from '@/lib/personnel-scope'
 
 // ─── Extended counts for the full operations overview ───────────────────────
 
@@ -20,13 +21,39 @@ export interface OperationsStats {
   totalIssuances: number
 }
 
-async function countIssuances(): Promise<number> {
+async function countIssuances(ownerId?: string | null, scopeAll?: boolean): Promise<number> {
   try {
+    if (ownerId && !scopeAll) {
+      const rows = await prisma.$queryRaw<Array<{ count: bigint }>>`
+        SELECT COUNT(*)::bigint AS count FROM issuance_records WHERE created_by = ${ownerId}::uuid`
+      return Number(rows[0]?.count ?? 0)
+    }
     const rows = await prisma.$queryRaw<Array<{ count: bigint }>>`
       SELECT COUNT(*)::bigint AS count FROM issuance_records`
     return Number(rows[0]?.count ?? 0)
   } catch {
     return 0
+  }
+}
+
+async function countMyRepairsByStatus(
+  ownerId: string | null,
+  status: string,
+  scopeAll?: boolean
+): Promise<number> {
+  if (!ownerId) return 0
+  try {
+    if (scopeAll) return await prisma.repair.count({ where: { status } })
+    const rows = await prisma.$queryRaw<Array<{ count: bigint }>>`
+      SELECT COUNT(*)::bigint AS count FROM repairs
+      WHERE status = ${status} AND (created_by = ${ownerId}::uuid OR created_by IS NULL)`
+    return Number(rows[0]?.count ?? 0)
+  } catch {
+    try {
+      return await prisma.repair.count({ where: { status } })
+    } catch {
+      return 0
+    }
   }
 }
 
@@ -47,6 +74,19 @@ export async function getOperationsStats(): Promise<OperationsStats> {
     totalIssuances: 0,
   }
   try {
+    // Own-data scope for personnel activity; super_admin sees all.
+    // Shared pools (requests queue, stocks, assets registry) stay global.
+    const scope = await getPersonnelScope()
+    if (scope.isEmpty || !scope.userId) return zeros
+    const me = scope.userId
+    const myDeliveryFilter = scope.isSuperAdmin ? {} : { received_by: me }
+    const myInspectionFilter = scope.isSuperAdmin ? {} : { inspector_id: me }
+    // Requests badge/cards match the personnel inbox (recipient = me + legacy NULL).
+    const myRequestFilter = scope.isSuperAdmin
+      ? { status: 'pending' }
+      : { status: 'pending', OR: [{ recipient_id: me }, { recipient_id: null }] }
+    // Two sequential batches (was one 11-way fan-out): the dashboard shares
+    // one pooler connection pool with the layout's own stats queries.
     const [
       totalDeliveries,
       pendingInspections,
@@ -54,22 +94,25 @@ export async function getOperationsStats(): Promise<OperationsStats> {
       totalItems,
       pendingRequests,
       pendingRepairs,
+    ] = await Promise.all([
+      prisma.delivery.count({ where: myDeliveryFilter }),
+      prisma.delivery.count({ where: { ...myDeliveryFilter, inspection_status: 'pending' } }),
+      prisma.inspection.count({ where: myInspectionFilter }),
+      prisma.deliveryItem.count({ where: { delivery: myDeliveryFilter } }),
+      prisma.request.count({ where: myRequestFilter }),
+      countMyRepairsByStatus(me, 'pending', scope.isSuperAdmin),
+    ])
+    const [
       inProgressRepairs,
       totalAssets,
       totalStockSkus,
       totalIssuances,
       stocks,
     ] = await Promise.all([
-      prisma.delivery.count(),
-      prisma.delivery.count({ where: { inspection_status: 'pending' } }),
-      prisma.inspection.count(),
-      prisma.deliveryItem.count(),
-      prisma.request.count({ where: { status: 'pending' } }),
-      prisma.repair.count({ where: { status: 'pending' } }),
-      prisma.repair.count({ where: { status: 'in_progress' } }),
+      countMyRepairsByStatus(me, 'in_progress', scope.isSuperAdmin),
       prisma.asset.count().catch(() => 0),
       prisma.inventoryItem.count().catch(() => 0),
-      countIssuances(),
+      countIssuances(me, scope.isSuperAdmin),
       prisma.inventoryItem
         .findMany({ select: { quantity: true, reorder_threshold: true } })
         .catch(() => [] as { quantity: number; reorder_threshold: number | null }[]),
@@ -223,18 +266,47 @@ export interface RecentRepairRow {
 
 export async function getRecentRepairs(limit = 5): Promise<RecentRepairRow[]> {
   try {
-    const rows = await prisma.repair.findMany({
-      orderBy: { created_at: 'desc' },
-      take: limit,
-      select: {
-        id: true,
-        description: true,
-        status: true,
-        technician: true,
-        asset_id: true,
-        repair_date: true,
-      },
-    })
+    // Own-data only for personnel (legacy NULL included); super_admin sees all.
+    const scope = await getPersonnelScope()
+    if (scope.isEmpty || !scope.userId) return []
+    const me = scope.userId
+    interface RepairRecentDb {
+      id: string
+      description: string
+      status: string | null
+      technician: string | null
+      asset_id: string
+      repair_date: Date | string
+    }
+    let rows: RepairRecentDb[] = []
+    try {
+      rows = scope.isSuperAdmin
+        ? await prisma.$queryRaw<RepairRecentDb[]>`
+        SELECT id::text AS id, description, status, technician,
+               asset_id::text AS asset_id, repair_date
+        FROM repairs
+        ORDER BY created_at DESC LIMIT ${limit}`
+        : await prisma.$queryRaw<RepairRecentDb[]>`
+        SELECT id::text AS id, description, status, technician,
+               asset_id::text AS asset_id, repair_date
+        FROM repairs
+        WHERE created_by = ${me}::uuid OR created_by IS NULL
+        ORDER BY created_at DESC LIMIT ${limit}`
+    } catch {
+      const fallback = await prisma.repair.findMany({
+        orderBy: { created_at: 'desc' },
+        take: limit,
+        select: {
+          id: true,
+          description: true,
+          status: true,
+          technician: true,
+          asset_id: true,
+          repair_date: true,
+        },
+      })
+      rows = fallback
+    }
     const assetMap = new Map<string, string>()
     if (rows.length > 0) {
       const assets = await prisma.asset
@@ -254,7 +326,10 @@ export async function getRecentRepairs(limit = 5): Promise<RecentRepairRow[]> {
       status: r.status,
       technician: r.technician,
       asset_label: assetMap.get(r.asset_id) ?? null,
-      repair_date: r.repair_date.toISOString().slice(0, 10),
+      repair_date:
+        r.repair_date instanceof Date
+          ? r.repair_date.toISOString().slice(0, 10)
+          : new Date(r.repair_date).toISOString().slice(0, 10),
     }))
   } catch (e) {
     console.error('[getRecentRepairs]', e)
@@ -274,7 +349,12 @@ export interface RecentIssuanceRow {
 
 export async function getRecentIssuances(limit = 5): Promise<RecentIssuanceRow[]> {
   try {
-    const rows = await prisma.$queryRaw<
+    // Own-data only for personnel; super_admin sees all.
+    const scope = await getPersonnelScope()
+    if (scope.isEmpty || !scope.userId) return []
+    const me = scope.userId
+    const rows = scope.isSuperAdmin
+      ? await prisma.$queryRaw<
       {
         id: string
         doc_type: string
@@ -286,6 +366,18 @@ export async function getRecentIssuances(limit = 5): Promise<RecentIssuanceRow[]
       SELECT id::text AS id, doc_type, doc_no,
              employee_id::text AS employee_id, created_at
       FROM issuance_records ORDER BY created_at DESC LIMIT ${limit}`
+      : await prisma.$queryRaw<
+      {
+        id: string
+        doc_type: string
+        doc_no: string | null
+        employee_id: string
+        created_at: Date | string | null
+      }[]
+    >`
+      SELECT id::text AS id, doc_type, doc_no,
+             employee_id::text AS employee_id, created_at
+      FROM issuance_records WHERE created_by = ${me}::uuid ORDER BY created_at DESC LIMIT ${limit}`
     const names = new Map<string, string>()
     if (rows.length > 0) {
       const profiles = await prisma.profile

@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import prisma from '@/lib/prisma'
 import { writeAuditLog } from '@/lib/audit'
+import { generateQrDataUrl } from '@/lib/qrcode'
 import { getAllUnifiedAssets } from '../assets/actions'
 import {
   REQUEST_STATUSES,
@@ -31,6 +32,8 @@ export interface RequestRow {
   date_resolved: string | null
   employee_id: string
   employee_name: string
+  recipient_id: string | null
+  recipient_name: string | null
   asset_id: string | null
   asset_label: string | null
   /** Structured line items (new) — legacy rows synthesize one from asset_id. */
@@ -52,11 +55,37 @@ function assetLabel(a: {
   return bits.length > 0 ? bits.join(' — ').slice(0, 80) : 'Asset'
 }
 
-/** Every employee request, newest first, with employee + asset labels. */
-export async function getRequests(): Promise<RequestRow[]> {
+/** Every employee request, newest first, with employee + asset labels.
+ * Pass `{ forRecipient: true }` and personnel only see requests sent to them
+ * (plus legacy rows filed before recipients existed). Fails closed: without
+ * an authenticated user it returns nothing instead of the whole queue. */
+export async function getRequests(filter?: {
+  forRecipient?: boolean
+}): Promise<RequestRow[]> {
   try {
+    let recipientId: string | null = null
+    if (filter?.forRecipient) {
+      try {
+        const supabase = await createClient()
+        const {
+          data: { user },
+        } = await supabase.auth.getUser()
+        recipientId = user?.id ?? null
+      } catch {
+        recipientId = null
+      }
+      // Fail closed — an unauthenticated caller must not fall through to
+      // the unfiltered queue and leak other personnel's requests.
+      if (recipientId === null) return []
+    }
     const [requests, profiles, assets] = await Promise.all([
-      prisma.request.findMany({ orderBy: { date_requested: 'desc' } }),
+      prisma.request.findMany({
+        where:
+          recipientId !== null
+            ? { OR: [{ recipient_id: recipientId }, { recipient_id: null }] }
+            : undefined,
+        orderBy: { date_requested: 'desc' },
+      }),
       prisma.profile.findMany({
         select: { id: true, full_name: true },
       }),
@@ -102,6 +131,8 @@ export async function getRequests(): Promise<RequestRow[]> {
         date_resolved: r.date_resolved?.toISOString() ?? null,
         employee_id: r.employee_id,
         employee_name: names.get(r.employee_id) ?? 'Unknown employee',
+        recipient_id: r.recipient_id,
+        recipient_name: r.recipient_id ? (names.get(r.recipient_id) ?? 'Unknown') : null,
         asset_id: r.asset_id,
         asset_label: label,
         lines,
@@ -286,6 +317,9 @@ export interface CreateRequestInput {
   newLocation?: string
   itemNeeded?: string
   reason: string
+  /** Personnel recipient. Employees must pick one; personnel filing on
+   *  behalf default to themselves so the request stays in their inbox. */
+  recipientId?: string
   /** New-assignment line items (multi-item requests). Falls back to the
    *  legacy single assetId/itemNeeded/quantity fields when omitted. */
   items?: CreateRequestLineInput[]
@@ -299,7 +333,7 @@ export interface RequestState {
 export async function createRequest(
   input: CreateRequestInput
 ): Promise<RequestState> {
-  const employeeId = input.employeeId?.trim() ?? ''
+  let employeeId = input.employeeId?.trim() ?? ''
   const requestType = input.requestType?.trim() ?? ''
   const assetId = input.assetId?.trim() || null
   const quantity = Math.floor(Number(input.quantity) || 0)
@@ -308,29 +342,105 @@ export async function createRequest(
   const itemNeeded = input.itemNeeded?.trim() ?? ''
   const reason = input.reason?.trim() ?? ''
 
-  if (!employeeId) return { error: 'Select the requesting employee.' }
   if (!REQUEST_TYPES.includes(requestType as RequestType))
     return { error: 'Select a valid request type.' }
   if (!reason) return { error: 'A reason is required.' }
 
+  // Recipient: the personnel this request is sent to. An explicit pick must
+  // be an active personnel member; otherwise the signed-in filer becomes the
+  // recipient so the request lands in their own inbox.
+  let recipientId = input.recipientId?.trim() || null
+  if (recipientId) {
+    const recipient = await prisma.profile.findUnique({
+      where: { id: recipientId },
+      select: { id: true, role: true, status: true },
+    })
+    if (!recipient || recipient.role !== 'pgso_personnel' || recipient.status !== 'active')
+      return { error: 'Select the personnel to send this request to.' }
+  } else {
+    try {
+      const supabase = await createClient()
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
+      recipientId = user?.id ?? null
+    } catch {
+      recipientId = null
+    }
+    // Fail closed — never file a recipient-less row that would be visible
+    // to every personnel inbox.
+    if (!recipientId) return { error: 'You must be signed in to file a request.' }
+  }
+
+  // Stock replenishment is filed BY personnel FOR stocks (add stock /
+  // restock low items). Requester defaults to the signed-in personnel user
+  // so the admin can see who asked.
+  if (requestType === 'stock_replenishment') {
+    try {
+      const supabase = await createClient()
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
+      if (!user) return { error: 'You must be signed in to file a request.' }
+      employeeId = user.id
+    } catch {
+      return { error: 'You must be signed in to file a request.' }
+    }
+    if (!assetId) return { error: 'Select the stock item to replenish.' }
+    if (!Number.isInteger(quantity) || quantity < 1)
+      return { error: 'Enter a quantity of at least 1.' }
+    return createStockReplenishment({
+      requesterId: employeeId,
+      stockId: assetId,
+      quantity,
+      reason,
+    })
+  }
+
+  if (!employeeId) return { error: 'Select the requesting employee.' }
+
   // Resolve whether the picked item is an asset or a stock (inventory) item.
   // (Legacy single-item path — transfer / repair / old clients.)
+  // Every delivered item is an asset; "stock" is just its quantity on hand.
   let pickedKind: 'asset' | 'stock' | null = null
   let stockOnHand = 0
+  let pickedFromHolder: string | null = null
   if (assetId) {
     const [asset, stock] = await Promise.all([
       prisma.asset.findUnique({
         where: { id: assetId },
-        select: { id: true },
+        select: { id: true, assigned_to: true, end_user: true, location: true },
       }),
       prisma.inventoryItem.findUnique({
         where: { id: assetId },
-        select: { id: true, quantity: true },
+        select: { id: true, quantity: true, location: true, item_name: true },
       }),
     ])
     if (!asset && !stock) return { error: 'Selected item no longer exists.' }
     pickedKind = asset ? 'asset' : 'stock'
     stockOnHand = stock?.quantity ?? 0
+    if (requestType === 'transfer') {
+      if (asset) {
+        // Previous holder before this transfer: assigned employee → end_user.
+        let holder: string | null = asset.end_user?.trim() || null
+        if (asset.assigned_to) {
+          try {
+            const holderProfile = await prisma.profile.findUnique({
+              where: { id: asset.assigned_to },
+              select: { full_name: true },
+            })
+            if (holderProfile?.full_name?.trim()) holder = holderProfile.full_name.trim()
+          } catch {
+            // best-effort only
+          }
+        }
+        pickedFromHolder = holder
+      } else if (stock) {
+        pickedFromHolder = stock.location?.trim()
+          ? `PGSO stock — ${stock.location.trim()}`
+          : 'PGSO stock'
+      }
+    }
   }
 
   // New-assignment line items (multi-item). Each line: free-text description
@@ -435,16 +545,27 @@ export async function createRequest(
 
   let description: string
   if (requestType === 'transfer') {
-    if (!assetId || pickedKind !== 'asset')
-      return { error: 'Select the asset to transfer.' }
-    if (!transferTo) return { error: 'Enter who the asset transfers to.' }
+    // Every delivered item is an asset; "stock" is just its quantity on hand.
+    // Transfers accept an assets-table row or an inventory (stock) lot.
+    if (!assetId || !pickedKind)
+      return { error: 'Select the item to transfer.' }
+    if (!transferTo) return { error: 'Enter who the item transfers to.' }
+    if (pickedKind === 'stock') {
+      if (!Number.isInteger(quantity) || quantity < 1)
+        return { error: 'Enter a quantity of at least 1.' }
+      if (stockOnHand <= 0) return { error: 'This stock item is out of stock.' }
+      if (quantity > stockOnHand)
+        return { error: `Only ${stockOnHand} on hand for this stock item.` }
+    }
     description =
       `Transfer to ${transferTo}` +
       (newLocation ? ` — ${newLocation}` : '') +
+      (pickedFromHolder ? `\nFrom: ${pickedFromHolder}` : '') +
+      (pickedKind === 'stock' ? `\nQty: ${quantity}` : '') +
       `\n${reason}`
   } else if (requestType === 'repair') {
-    if (!assetId || pickedKind !== 'asset')
-      return { error: 'Select the asset needing repair.' }
+    if (!assetId || !pickedKind)
+      return { error: 'Select the item needing repair.' }
     description = `Repair needed\n${reason}`
   } else {
     const summary = validLines
@@ -473,6 +594,7 @@ export async function createRequest(
     const created = await prisma.request.create({
       data: {
         employee_id: employeeId,
+        recipient_id: recipientId,
         request_type: requestType,
         asset_id: firstPicked,
         description,
@@ -505,7 +627,7 @@ export async function createRequest(
         module: 'requests',
         details: {
           purpose: reason,
-          summary: `${requestType} request for employee ${employeeId}`,
+          summary: `${requestType} request for employee ${employeeId}${recipientId ? ` to personnel ${recipientId}` : ''}`,
           reference_id: createdId,
           request_type: requestType,
         },
@@ -517,6 +639,111 @@ export async function createRequest(
 
   revalidatePath('/personnel/requests')
   return { success: true }
+}
+
+// ─── Stock replenishment (personnel → admin) ───────────────────────────────
+// Personnel files an add-stock / restock request for an inventory item.
+// The requester is the personnel user themselves (employee_id = personnel
+// id). Admin reviews it on the Requests page; approval is a status change
+// only — actual procurement is logged later as a delivery.
+
+export interface StockReplenishmentInput {
+  requesterId: string
+  stockId: string
+  quantity: number
+  reason: string
+}
+
+export async function createStockReplenishment(
+  input: StockReplenishmentInput
+): Promise<RequestState> {
+  const requesterId = input.requesterId?.trim() ?? ''
+  const stockId = input.stockId?.trim() ?? ''
+  const quantity = Math.floor(Number(input.quantity) || 0)
+  const reason = input.reason?.trim() ?? ''
+
+  if (!requesterId) return { error: 'You must be signed in to file a request.' }
+  if (!stockId) return { error: 'Select the stock item to replenish.' }
+  if (!Number.isInteger(quantity) || quantity < 1)
+    return { error: 'Enter a quantity of at least 1.' }
+  if (!reason) return { error: 'A reason is required.' }
+
+  try {
+    const [requester, stock] = await Promise.all([
+      prisma.profile.findUnique({
+        where: { id: requesterId },
+        select: { id: true, role: true, status: true },
+      }),
+      prisma.inventoryItem.findUnique({
+        where: { id: stockId },
+        select: { id: true, item_name: true, quantity: true, unit: true, unit_cost: true },
+      }),
+    ])
+    if (!requester) return { error: 'Your account was not found.' }
+    if (requester.status !== 'active')
+      return { error: 'Only active accounts can file requests.' }
+    if (requester.role !== 'pgso_personnel' && requester.role !== 'employee')
+      return { error: 'Only personnel can file stock requests.' }
+    if (!stock) return { error: 'Selected stock item no longer exists.' }
+
+    const unitCost =
+      stock.unit_cost != null && Number.isFinite(Number(stock.unit_cost))
+        ? Number(stock.unit_cost)
+        : null
+    const description =
+      `Restock request: ${stock.item_name} — Qty: ${quantity}` +
+      (stock.unit ? ` ${stock.unit}` : '') +
+      ` (on hand: ${stock.quantity})\n${reason}`
+
+    const { randomUUID } = await import('crypto')
+    const created = await prisma.request.create({
+      data: {
+        employee_id: requesterId,
+        request_type: 'stock_replenishment',
+        asset_id: stockId,
+        description,
+        status: 'pending',
+      },
+      select: { id: true },
+    })
+    try {
+      await prisma.$executeRaw`
+        INSERT INTO request_items (id, request_id, asset_id, description, quantity, unit_cost)
+        VALUES (${randomUUID()}::uuid, ${created.id}::uuid, ${stockId}::uuid, ${stock.item_name}, ${quantity}, ${unitCost})`
+    } catch (e) {
+      console.error('[createStockReplenishment:line]', e)
+    }
+
+    try {
+      const supabase = await createClient()
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
+      if (user) {
+        await writeAuditLog({
+          userId: user.id,
+          action: 'request:create',
+          module: 'requests',
+          details: {
+            purpose: reason,
+            summary: `Stock replenishment: ${stock.item_name} ×${quantity}`,
+            reference_id: created.id,
+            request_type: 'stock_replenishment',
+          },
+        })
+      }
+    } catch {
+      // best-effort only
+    }
+
+    revalidatePath('/personnel/requests')
+    revalidatePath('/personnel/inventory')
+    revalidatePath('/super-admin/requests')
+    return { success: true }
+  } catch (e) {
+    console.error('[createStockReplenishment]', e)
+    return { error: 'Failed to submit the request. Please try again.' }
+  }
 }
 
 // ─── Status workflow ─────────────────────────────────────────────────────────
@@ -546,6 +773,12 @@ function parseTransferLine(description: string): {
     newLocation: (m?.[2] ?? '').trim(),
   }
 }
+/** Previous holder line for transfers: "From: NAME". Absent on old rows. */
+function parseFromLine(description: string): string | null {
+  const m = description.match(/^From: (.+)$/m)
+  const s = (m?.[1] ?? '').trim()
+  return s ? s : null
+}
 
 /** Repair descriptions are stored as "Repair needed\n<issue>". */
 function parseRepairDescription(description: string): string {
@@ -566,6 +799,10 @@ export async function setRequestStatus(
   if (!remarks) return { error: 'Enter remarks for this action.' }
 
   try {
+    const supabaseEarly = await createClient()
+    const {
+      data: { user: actingUser },
+    } = await supabaseEarly.auth.getUser()
     const current = await prisma.request.findUnique({ where: { id } })
     if (!current) return { error: 'Request not found.' }
 
@@ -601,13 +838,36 @@ export async function setRequestStatus(
         const { transferTo, newLocation } = parseTransferLine(
           current.description
         )
-        await prisma.asset.update({
+        const asset = await prisma.asset.findUnique({
           where: { id: current.asset_id },
-          data: {
-            ...(transferTo ? { end_user: transferTo } : {}),
-            ...(newLocation ? { location: newLocation } : {}),
-          },
+          select: { id: true },
         })
+        if (asset) {
+          await prisma.asset.update({
+            where: { id: current.asset_id },
+            data: {
+              ...(transferTo ? { end_user: transferTo } : {}),
+              ...(newLocation ? { location: newLocation } : {}),
+            },
+          })
+        } else {
+          // Stock (inventory) lot — transfer means issuing the requested
+          // quantity out of stock (same convention as new assignments).
+          const stock = await prisma.inventoryItem.findUnique({
+            where: { id: current.asset_id },
+            select: { quantity: true },
+          })
+          if (stock) {
+            const qty = Math.min(
+              await parseQtyLine(current.description),
+              stock.quantity
+            )
+            await prisma.inventoryItem.update({
+              where: { id: current.asset_id },
+              data: { quantity: stock.quantity - qty },
+            })
+          }
+        }
       } else if (current.request_type === 'new_assignment') {
         const employee = await prisma.profile.findUnique({
           where: { id: current.employee_id },
@@ -643,20 +903,35 @@ export async function setRequestStatus(
           }
         }
       } else if (current.request_type === 'repair') {
-        const asset = await prisma.asset.findUnique({
-          where: { id: current.asset_id },
-          select: { id: true },
-        })
-        if (asset) {
-          await prisma.repair.create({
-            data: {
-              asset_id: current.asset_id,
-              reported_by: current.employee_id,
-              repair_date: new Date(),
-              description: parseRepairDescription(current.description),
-              status: 'pending',
-            },
-          })
+        const [asset, stock] = await Promise.all([
+          prisma.asset.findUnique({
+            where: { id: current.asset_id },
+            select: { id: true },
+          }),
+          prisma.inventoryItem.findUnique({
+            where: { id: current.asset_id },
+            select: { id: true },
+          }),
+        ])
+        if (asset || stock) {
+          const repairDesc = parseRepairDescription(current.description)
+          // created_by = approver so the auto ticket shows under their own repairs.
+          try {
+            const { randomUUID } = await import('crypto')
+            await prisma.$executeRaw`
+              INSERT INTO repairs (id, asset_id, reported_by, repair_date, description, status, created_by)
+              VALUES (${randomUUID()}::uuid, ${current.asset_id}::uuid, ${current.employee_id}::uuid, NOW()::date, ${repairDesc}, 'pending', ${actingUser?.id ?? null}::uuid)`
+          } catch {
+            await prisma.repair.create({
+              data: {
+                asset_id: current.asset_id,
+                reported_by: current.employee_id,
+                repair_date: new Date(),
+                description: repairDesc,
+                status: 'pending',
+              },
+            })
+          }
         }
       }
     }
@@ -690,4 +965,154 @@ export async function setRequestStatus(
   revalidatePath('/personnel/requests')
   revalidatePath('/personnel/repairs')
   return { success: true }
+}
+
+// ─── Completed-request QR ────────────────────────────────────────────────────
+// Every request that reaches `completed` (transfer / assignment / repair /
+// stock replenishment, asset or stock lot) gets a scannable QR record so
+// personnel, the employee, and the admin can verify that transaction.
+// Sanitized on purpose: identity + item + dates only — never costs.
+
+export interface CompletedRequestQrLine {
+  description: string
+  quantity: number
+}
+
+export interface CompletedRequestQr {
+  success?: boolean
+  error?: string
+  payload?: string
+  dataUrl?: string
+  meta?: {
+    ref: string
+    request_type: string
+    employee_name: string
+    recipient_name: string | null
+    asset_label: string | null
+    item_count: number
+    /** Total quantity (sum of lines; single-item qty otherwise). */
+    quantity: number
+    /** Transfer target ("Transfer to …"). Null unless transfer. */
+    transfer_to: string | null
+    /** Previous holder before a transfer ("From: …"). Null otherwise/unknown. */
+    from_holder: string | null
+    lines: CompletedRequestQrLine[]
+    date_requested: string | null
+    date_resolved: string | null
+  }
+}
+
+export async function getCompletedRequestQr(
+  requestId: string
+): Promise<CompletedRequestQr> {
+  try {
+    const supabase = await createClient()
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+    if (!user) return { error: 'You must be signed in to view this QR.' }
+
+    const current = await prisma.request.findUnique({
+      where: { id: requestId },
+    })
+    if (!current) return { error: 'Request not found.' }
+    if ((current.status ?? 'pending') !== 'completed')
+      return { error: 'QR is available only for completed requests.' }
+
+    const [profiles, assets] = await Promise.all([
+      prisma.profile.findMany({ select: { id: true, full_name: true } }),
+      getAllUnifiedAssets(),
+    ])
+    const names = new Map(profiles.map((p) => [p.id, p.full_name ?? '—']))
+    const labels = new Map(assets.map((a) => [a.id, assetLabel(a)]))
+    const lineMap = await listRequestLines([current.id])
+    const stored = lineMap.get(current.id) ?? []
+    const lines: RequestLine[] =
+      stored.length > 0
+        ? stored
+        : current.asset_id
+          ? [
+              {
+                id: '',
+                asset_id: current.asset_id,
+                description: '',
+                quantity: await parseQtyLine(current.description),
+                unit_cost: null,
+              },
+            ]
+          : []
+    const asset_label =
+      lines.length > 1
+        ? `${lines.length} items — ${lineLabel(lines[0], labels)}`
+        : lines.length === 1
+          ? lineLabel(lines[0], labels)
+          : current.asset_id
+            ? (labels.get(current.asset_id) ?? '—')
+            : null
+
+    const employee_name = names.get(current.employee_id) ?? 'Unknown employee'
+    const recipient_name = current.recipient_id
+      ? (names.get(current.recipient_id) ?? 'Unknown')
+      : null
+    const ref = current.id.slice(0, 8).toUpperCase()
+    // Quantity + transfer parties. Transfers store "Transfer to …" on the
+    // first line, "From: …" (previous holder) and "Qty: N" (stock lots) below.
+    const { transferTo } = parseTransferLine(current.description)
+    const transfer_to =
+      current.request_type === 'transfer' && transferTo ? transferTo : null
+    const from_holder =
+      current.request_type === 'transfer'
+        ? parseFromLine(current.description)
+        : null
+    const qrLines: CompletedRequestQrLine[] = lines.map((l) => ({
+      description: l.description.trim() || lineLabel(l, labels),
+      quantity: l.quantity ?? 1,
+    }))
+    const quantity =
+      qrLines.length > 0
+        ? qrLines.reduce((sum, l) => sum + (l.quantity || 0), 0)
+        : await parseQtyLine(current.description)
+    const payload = JSON.stringify({
+      v: 1,
+      kind: 'PGSO-REQUEST',
+      ref,
+      id: current.id,
+      type: current.request_type,
+      employee: employee_name,
+      recipient: recipient_name,
+      item: asset_label,
+      items: lines.length,
+      qty: quantity,
+      from: from_holder,
+      to: transfer_to,
+      lines: qrLines,
+      requested: current.date_requested?.toISOString() ?? null,
+      resolved: current.date_resolved?.toISOString() ?? null,
+      status: 'completed',
+    })
+    const dataUrl = await generateQrDataUrl(payload)
+    if (!dataUrl) return { error: 'Failed to generate the QR. Please try again.' }
+    return {
+      success: true,
+      payload,
+      dataUrl,
+      meta: {
+        ref,
+        request_type: current.request_type,
+        employee_name,
+        recipient_name,
+        asset_label,
+        item_count: lines.length,
+        quantity,
+        transfer_to,
+        from_holder,
+        lines: qrLines,
+        date_requested: current.date_requested?.toISOString() ?? null,
+        date_resolved: current.date_resolved?.toISOString() ?? null,
+      },
+    }
+  } catch (e) {
+    console.error('[getCompletedRequestQr]', e)
+    return { error: 'Failed to generate the QR. Please try again.' }
+  }
 }

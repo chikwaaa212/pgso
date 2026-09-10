@@ -49,9 +49,8 @@
 }
 
 .logo {
-  font-weight: 700;
-  font-size: 1.25rem;
-  color: var(--color-navy-900);
+  display: inline-flex;
+  align-items: center;
   text-decoration: none;
 }
 
@@ -123,15 +122,24 @@
 }
 
 .link {
+  display: inline-flex;
+  align-items: center;
   font-size: 0.875rem;
   color: var(--color-navy-600);
   text-decoration: none;
-  transition-property: color;
-  transition-timing-function: ease;
+  transition: color 0.15s ease;
 }
 
 .link:hover {
   color: var(--color-navy-900);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.link:focus-visible {
+  outline: 2px solid var(--color-navy-900);
+  outline-offset: 2px;
+  border-radius: 0.25rem;
 }
 
 .badge {

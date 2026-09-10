@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import ExcelJS from "exceljs";
 import prisma from "@/lib/prisma";
-import { generateQrDataUrl } from "@/lib/qrcode";
+import { generateAssetQrDataUrl, generateStockQrDataUrl } from "@/lib/qrcode";
 import { ASSET_EXCEL_HEADERS, ASSET_TEMPLATE_SHEET } from "@/lib/asset-excel";
 import { findCatalogEntry, getActiveCatalogEntries, resolveUnitName } from "@/lib/master-data";
 
@@ -178,9 +178,7 @@ export async function getAssets(): Promise<AssetRow[]> {
         qr_code: a.qr_code,
         created_at: a.created_at?.toISOString() ?? null,
         assigned_to: a.assigned_to,
-        qr_data_url: await generateQrDataUrl(
-          a.qr_code ?? a.account_code ?? a.id,
-        ),
+        qr_data_url: await generateAssetQrDataUrl(a.id),
       })),
     );
 
@@ -348,9 +346,7 @@ export async function getStocks(): Promise<StockRow[]> {
         reorder_threshold: item.reorder_threshold,
         location: item.location,
         updated_at: item.updated_at?.toISOString() ?? null,
-        qr_data_url: await generateQrDataUrl(
-          item.item_name ?? item.id,
-        ),
+        qr_data_url: await generateStockQrDataUrl(item.id),
       })),
     )
 
@@ -446,9 +442,7 @@ export async function getAsset(id: string): Promise<AssetRow | null> {
       qr_code: a.qr_code,
       created_at: a.created_at?.toISOString() ?? null,
       assigned_to: a.assigned_to,
-      qr_data_url: await generateQrDataUrl(
-        a.qr_code ?? a.account_code ?? a.id,
-      ),
+      qr_data_url: await generateAssetQrDataUrl(a.id),
     }
   } catch (e) {
     console.error("[getAsset]", e)
@@ -488,9 +482,7 @@ export async function getStock(id: string): Promise<StockRow | null> {
       reorder_threshold: item.reorder_threshold,
       location: item.location,
       updated_at: item.updated_at?.toISOString() ?? null,
-      qr_data_url: await generateQrDataUrl(
-        item.item_name ?? item.id,
-      ),
+      qr_data_url: await generateStockQrDataUrl(item.id),
     }
   } catch (e) {
     console.error("[getStock]", e)
@@ -1187,6 +1179,71 @@ export interface ImportAssetsState {
   updated?: number;
   skipped?: number;
   errors?: string[];
+  /** Template columns matched in the uploaded file (any order; extras ignored). */
+  matched?: string[];
+}
+
+/**
+ * Asset columns compared for duplicate detection, in model-field terms.
+ * A row counts as a duplicate only when every column it provides matches
+ * the existing record (blank cells are "no info" — they neither match nor
+ * overwrite). Comparison is case-insensitive for text, exact for numbers,
+ * and by calendar day for dates.
+ */
+const ASSET_COMPARE_FIELDS = [
+  "property_number",
+  "account_code",
+  "identifier",
+  "account_title",
+  "account_name",
+  "category",
+  "article",
+  "quantity",
+  "unit",
+  "description",
+  "date_acquired",
+  "location",
+  "total_cost",
+  "remarks",
+  "condition",
+  "unit_cost",
+  "end_user",
+  "brand",
+  "cylinders",
+  "engine_displacement",
+  "fuel_type",
+  "engine_number",
+  "chassis_number",
+  "color",
+  "plate_number",
+  "fund",
+  "status",
+  "dv_tracking_number",
+  "supplier_payee",
+  "account_name_charge",
+  "account_number",
+  "obr_number",
+  "dv_number",
+  "date_received",
+  "qr_code",
+] as const;
+
+function valuesEqual(a: unknown, b: unknown): boolean {
+  if (a === null || a === undefined) return b === null || b === undefined;
+  if (b === null || b === undefined) return false;
+  if (a instanceof Date || b instanceof Date) {
+    const da = a instanceof Date ? a : new Date(String(a));
+    const db = b instanceof Date ? b : new Date(String(b));
+    if (Number.isNaN(da.getTime()) || Number.isNaN(db.getTime())) return false;
+    return da.toISOString().slice(0, 10) === db.toISOString().slice(0, 10);
+  }
+  if (typeof a === "number" || typeof b === "number" || typeof a === "bigint") {
+    const na = Number(a);
+    const nb = Number(b);
+    if (!Number.isFinite(na) || !Number.isFinite(nb)) return false;
+    return na === nb;
+  }
+  return String(a).trim().toLowerCase() === String(b).trim().toLowerCase();
 }
 
 function cellToValue(value: unknown): unknown {
@@ -1255,19 +1312,27 @@ export async function importAssetsFromExcel(
   if (!ws) return { success: false, error: "No worksheet found in that file." };
 
   // Map normalized (trimmed) header -> column index. Tolerant of Excel
-  // trimming the two trailing-space headers on re-save.
+  // trimming the two trailing-space headers on re-save. Only columns
+  // matching the template headers are read — any order, extra columns
+  // in the client's own file are ignored, missing optionals default.
   const colByHeader = new Map<string, number>();
+  const foundHeaders: string[] = [];
   ws.getRow(1).eachCell({ includeEmpty: true }, (cell, col) => {
     const raw = cellToValue(cell.value);
     const key = raw === null ? "" : String(raw).trim();
-    if (key && !colByHeader.has(key)) colByHeader.set(key, col);
+    if (key) {
+      foundHeaders.push(key);
+      if (!colByHeader.has(key)) colByHeader.set(key, col);
+    }
   });
 
   if (!colByHeader.has("ACCOUNT CODE"))
     return {
       success: false,
-      error: `Header row not recognized — download the template and keep its ${ASSET_EXCEL_HEADERS.length} headers unchanged.`,
+      error: `No "ACCOUNT CODE" column found — the import reads only columns matching the asset template headers. Columns seen: ${foundHeaders.join(", ") || "(none)"}.`,
     };
+
+  const matched = ASSET_EXCEL_HEADERS.filter((h) => colByHeader.has(h.trim()));
 
   const at = (row: ExcelJS.Row, header: string): unknown => {
     const col = colByHeader.get(header);
@@ -1286,6 +1351,65 @@ export async function importAssetsFromExcel(
     (await getActiveCatalogEntries()).map((e) => [e.code, e])
   );
 
+  // Existing assets, loaded once. Each row is handled independently:
+  // - triple (code + title + type) must exist in Master Data, else skipped;
+  // - row identical to the existing record on every provided column →
+  //   duplicate, skipped with a message;
+  // - row differs → the existing record is updated;
+  // - brand-new verified row → added.
+  // Imports never touch records unrelated to the file.
+  const assetByKey = new Map<string, { id: string; fields: Record<string, unknown> }>();
+  const existingQrCodes = new Set<string>();
+  try {
+    const rows = await prisma.asset.findMany();
+    for (const r of rows) {
+      const fields: Record<string, unknown> = {
+        property_number: r.property_number,
+        account_code: r.account_code,
+        identifier: r.identifier,
+        account_title: r.account_title,
+        account_name: r.account_name,
+        category: r.category,
+        article: r.article,
+        quantity: r.quantity,
+        unit: r.unit,
+        description: r.description,
+        date_acquired: r.date_acquired,
+        location: r.location,
+        total_cost: r.total_cost,
+        remarks: r.remarks,
+        condition: r.condition,
+        unit_cost: r.unit_cost,
+        end_user: r.end_user,
+        brand: r.brand,
+        cylinders: r.cylinders,
+        engine_displacement: r.engine_displacement,
+        fuel_type: r.fuel_type,
+        engine_number: r.engine_number,
+        chassis_number: r.chassis_number,
+        color: r.color,
+        plate_number: r.plate_number,
+        fund: r.fund,
+        status: r.status,
+        dv_tracking_number: r.dv_tracking_number,
+        supplier_payee: r.supplier_payee,
+        account_name_charge: r.account_name_charge,
+        account_number: r.account_number,
+        obr_number: r.obr_number,
+        dv_number: r.dv_number,
+        date_received: r.date_received,
+        qr_code: r.qr_code,
+      };
+      const entry = { id: r.id, fields };
+      if (r.property_number && !assetByKey.has(r.property_number)) assetByKey.set(r.property_number, entry);
+      if (r.account_code && !assetByKey.has(r.account_code)) assetByKey.set(r.account_code, entry);
+      if (r.qr_code) existingQrCodes.add(r.qr_code);
+    }
+  } catch (e) {
+    console.error("[importAssetsFromExcel] preload assets", e);
+    return { success: false, error: "Could not read the current assets. Try again." };
+  }
+
   const last = ws.lastRow?.number ?? ws.rowCount;
   for (let i = 2; i <= last; i++) {
     const row = ws.getRow(i);
@@ -1300,8 +1424,7 @@ export async function importAssetsFromExcel(
       continue;
     }
 
-    // Strict mode: unknown codes are skipped (listed below); unknown units
-    // are nulled with a warning so the row itself is not lost.
+    // The code must exist in the admin's Master Data…
     const catalogHit = catalogByCode.get(accountCode);
     if (!catalogHit) {
       skipped++;
@@ -1310,13 +1433,29 @@ export async function importAssetsFromExcel(
       );
       continue;
     }
+
+    // …and the row's title + type must match that catalog entry. Rows whose
+    // triple (code + title + asset type) is not in Master Data are not imported.
+    const rowTitle = (strVal(at(row, "ACCOUNT TITLE")) ?? "").trim();
+    const rowType = (strVal(at(row, "ASSET TYPE")) ?? "").trim();
+    const titleOk = rowTitle.toUpperCase() === (catalogHit.title ?? "").trim().toUpperCase();
+    const typeOk = rowType.toLowerCase() === (catalogHit.type ?? "").trim().toLowerCase();
+    if (!titleOk || !typeOk) {
+      skipped++;
+      errors.push(
+        `Row ${i} (${accountCode}): ACCOUNT TITLE / ASSET TYPE does not match Master Data (expected "${catalogHit.title}" / "${catalogHit.type}") — skipped.`
+      );
+      continue;
+    }
+
+    // Unknown units are left blank with a warning so the row itself is not lost.
     const unitRaw = strVal(at(row, "UNIT"));
     let unit: string | null = null;
     if (unitRaw) {
       const canonical = await resolveUnitName(unitRaw);
       if (!canonical) {
         errors.push(
-          `Row ${i} (${accountCode}): unknown UNIT "${unitRaw}" — saved without a unit. Ask your Super Admin to add it to Master Data.`
+          `Row ${i} (${accountCode}): unknown UNIT "${unitRaw}" — unit not saved. Ask your Super Admin to add it to Master Data.`
         );
       } else {
         unit = canonical;
@@ -1337,24 +1476,21 @@ export async function importAssetsFromExcel(
         ? "retired"
         : "available";
 
-    let qrCode = strVal(at(row, "PROPERTY No."));
-    if (qrCode && seenQr.has(qrCode)) {
-      errors.push(`Row ${i} (${accountCode}): duplicate PROPERTY No. "${qrCode}" in file — saved without it.`);
-      qrCode = null;
-    } else if (qrCode) {
-      seenQr.add(qrCode);
-      try {
-        const clash = await prisma.asset.findUnique({
-          where: { qr_code: qrCode },
-          select: { property_number: true },
-        });
-        if (clash && clash.property_number !== accountCode) {
-          errors.push(`Row ${i} (${accountCode}): PROPERTY No. "${qrCode}" already in use — saved without it.`);
-          qrCode = null;
-        }
-      } catch {
-        qrCode = null;
+    // PROPERTY No. must stay unique — a repeated or already-used tag
+    // skips the whole row with a message (first occurrence wins).
+    const qrCode = strVal(at(row, "PROPERTY No."));
+    if (qrCode) {
+      if (seenQr.has(qrCode)) {
+        skipped++;
+        errors.push(`Row ${i} (${accountCode}): duplicate PROPERTY No. "${qrCode}" in this file — skipped.`);
+        continue;
       }
+      if (existingQrCodes.has(qrCode)) {
+        skipped++;
+        errors.push(`Row ${i} (${accountCode}): PROPERTY No. "${qrCode}" already in use — skipped.`);
+        continue;
+      }
+      seenQr.add(qrCode);
     }
 
     const data = {
@@ -1394,32 +1530,60 @@ export async function importAssetsFromExcel(
       qr_code: qrCode,
     };
 
+    // Full-row duplicate check: only when every column the row provides
+    // matches the existing record is it a duplicate → skipped with a message.
+    // Blank cells carry no info — they are excluded from both the comparison
+    // and the update, so re-imports never wipe stored values. Differing rows
+    // update the existing record; verified new rows are added.
+    const parsed: Record<string, unknown> = { property_number: accountCode, ...data };
+    const provided = (ASSET_COMPARE_FIELDS as readonly string[]).filter(
+      (f) => parsed[f] !== null && parsed[f] !== undefined
+    );
+    const prior = assetByKey.get(accountCode);
+    if (prior && provided.every((f) => valuesEqual(prior.fields[f], parsed[f]))) {
+      skipped++;
+      errors.push(`Row ${i} (${accountCode}): identical to the existing record — skipped.`);
+      continue;
+    }
+
     try {
-      const existing = await prisma.asset.findUnique({
-        where: { property_number: accountCode },
-        select: { id: true },
-      });
-      if (existing) {
-        await prisma.asset.update({ where: { property_number: accountCode }, data });
+      if (prior) {
+        const updateData: Record<string, unknown> = {};
+        for (const f of provided) updateData[f] = parsed[f];
+        await prisma.asset.update({
+          where: { id: prior.id },
+          // Keys are all scalar Asset fields (see ASSET_COMPARE_FIELDS).
+          data: updateData as Record<string, string | number | Date | null>,
+        });
+        assetByKey.set(accountCode, {
+          id: prior.id,
+          fields: { ...prior.fields, ...updateData },
+        });
         updated++;
       } else {
-        await prisma.asset.create({ data: { property_number: accountCode, ...data } });
+        const createdRow = await prisma.asset.create({
+          data: { property_number: accountCode, ...data },
+        });
+        assetByKey.set(accountCode, { id: createdRow.id, fields: parsed });
         created++;
       }
+      if (qrCode) existingQrCodes.add(qrCode);
     } catch (e) {
       console.error(`[importAssetsFromExcel] row ${i}`, e);
       errors.push(`Row ${i} (${accountCode}): could not save (${e instanceof Error ? e.message.slice(0, 120) : "unknown error"}).`);
+      skipped++;
     }
   }
 
   if (created === 0 && updated === 0)
     return {
       success: false,
-      error: "No rows imported — fill the template starting at row 2 with an ACCOUNT CODE per row.",
+      error: "No rows imported — every row was skipped (exact duplicates, unmatched catalog triple, unknown codes, or blank).",
       skipped,
       errors: errors.slice(0, 20),
+      matched,
     };
 
   revalidatePath("/personnel/assets");
-  return { success: true, created, updated, skipped, errors: errors.slice(0, 20) };
+  return { success: true, created, updated, skipped, errors: errors.slice(0, 20), matched };
 }

@@ -61,9 +61,11 @@ export function SuperAdminSidebar({
         { label: "Documents", href: "/super-admin/documents", badge: totalDocuments },
         { label: "PAR / ICS", href: "/super-admin/issuances" },
         { label: "Issues", href: "/super-admin/issues" },
+        { label: "QR Scanner", href: "/super-admin/scan" },
         { label: "Requests", href: "/super-admin/requests", badge: pendingRequests },
         { label: "Repairs", href: "/super-admin/repairs", badge: pendingRepairs },
         { label: "Logs", href: "/super-admin/logs" },
+        { label: "Download Templates", href: "/super-admin/templates" },
       ],
     },
     {

@@ -11,6 +11,10 @@ export interface InventoryRow {
   id: string
   item_name: string
   account_code: string | null
+  /** Asset type auto-filled from the account code (Master Data catalog). */
+  category: string | null
+  /** Account title auto-filled from the account code (display-only; no column). */
+  account_title: string | null
   quantity: number
   unit: string | null
   unit_cost: number | null
@@ -31,6 +35,7 @@ export async function getInventoryItems(): Promise<InventoryRow[]> {
         id: true,
         item_name: true,
         account_code: true,
+        category: true,
         quantity: true,
         unit: true,
         unit_cost: true,
@@ -38,8 +43,21 @@ export async function getInventoryItems(): Promise<InventoryRow[]> {
         location: true,
       },
     })
+    // Account title is display-only (no inventory column) — resolve it from
+    // the active catalog so the UI can show it next to the code.
+    let titleByCode = new Map<string, string>()
+    try {
+      const { getActiveCatalogEntries } = await import('@/lib/master-data')
+      const entries = await getActiveCatalogEntries()
+      titleByCode = new Map(entries.map((e) => [e.code, e.title]))
+    } catch {
+      titleByCode = new Map()
+    }
     return rows.map((r) => ({
       ...r,
+      account_title: r.account_code
+        ? (titleByCode.get(r.account_code) ?? null)
+        : null,
       unit_cost: r.unit_cost != null ? Number(r.unit_cost) : null,
     }))
   } catch (e) {
@@ -86,14 +104,18 @@ export async function saveInventoryItem(
   if (!user) return { error: 'You must be signed in to manage stocks.' }
 
   // Strict mode: codes and units must come from Master Data.
+  // The account code drives the asset type — same as the delivery modal:
+  // picking a code snaps the stock's category to the catalog entry's type.
   const codeRaw = input.account_code?.trim() || null
   let account_code: string | null = null
+  let category: string | null = null
   if (codeRaw) {
     const hit = await findCatalogEntry(codeRaw)
     if (!hit) {
       return { error: `Unknown account code "${codeRaw}" — ask your Super Admin to add it to Master Data.` }
     }
     account_code = hit.code
+    category = hit.type
   }
   const unitRaw = input.unit?.trim() || null
   let unit: string | null = null
@@ -108,6 +130,7 @@ export async function saveInventoryItem(
   const data = {
     item_name: name,
     account_code,
+    category,
     quantity: input.quantity,
     unit,
     unit_cost: input.unit_cost,
@@ -190,11 +213,23 @@ export async function syncUnstockedInspections(): Promise<SyncState> {
   if (!user) return { error: 'You must be signed in to manage stocks.' }
 
   try {
+    // Own-data only for personnel; super_admin syncs all.
+    const { getPersonnelScope } = await import('@/lib/personnel-scope')
+    const scope = await getPersonnelScope()
     const pending = await prisma.inspection.findMany({
-      where: {
-        result: { in: ['passed', 'partial'] },
-        iar_records: { some: {} },
-      },
+      where: scope.isSuperAdmin
+        ? {
+            result: { in: ['passed', 'partial'] },
+            iar_records: { some: {} },
+          }
+        : {
+            result: { in: ['passed', 'partial'] },
+            iar_records: { some: {} },
+            OR: [
+              { inspector_id: user.id },
+              { delivery: { received_by: user.id } },
+            ],
+          },
       select: { id: true },
     })
 

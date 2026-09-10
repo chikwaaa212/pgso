@@ -1,7 +1,7 @@
+import Image from 'next/image'
+import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
-import { SubmitButton } from '@/components/ui/submit-button'
 import { Card } from '@/components/ui/card'
-import { logout } from '@/app/(auth)/auth'
 import styles from './page.module.css'
 
 export default async function EmployeeDashboard() {
@@ -10,31 +10,52 @@ export default async function EmployeeDashboard() {
 
   return (
     <section className={styles.section}>
+      <p className={styles.crumb}>Employee / Dashboard</p>
       <h1 className={styles.title}>Welcome, Employee</h1>
       <p className={styles.subtitle}>
         Signed in as {user?.email}
       </p>
 
       <div className={styles.grid}>
-        <Card>
-          <h2 className="text-lg font-semibold">My Assets</h2>
-          <p className="text-sm text-zinc-600 dark:text-zinc-400">
-            View assigned and archived assets
-          </p>
-        </Card>
-        <Card>
-          <h2 className="text-lg font-semibold">My Requests</h2>
-          <p className="text-sm text-zinc-600 dark:text-zinc-400">
-            Submit and track transfer or supply requests
-          </p>
-        </Card>
+        <Link href="/employee/assets" className={styles.bannerLink}>
+          <Card className={styles.banner}>
+            <div>
+              <h2 className={styles.bannerTitle}>My Assets</h2>
+              <p className={styles.bannerText}>
+                View assigned assets and PAR / ICS documents
+              </p>
+              <span className={styles.bannerCta}>Open assets →</span>
+            </div>
+            <Image
+              src="/favicon.png"
+              alt="Eagle mascot with telescope"
+              width={160}
+              height={160}
+              priority
+              className={styles.bannerImg}
+            />
+          </Card>
+        </Link>
+        <Link href="/employee/requests" className={styles.bannerLink}>
+          <Card className={styles.banner}>
+            <div>
+              <h2 className={styles.bannerTitle}>My Requests</h2>
+              <p className={styles.bannerText}>
+                Submit and track transfer or supply requests
+              </p>
+              <span className={styles.bannerCta}>Open requests →</span>
+            </div>
+            <Image
+              src="/salute.png"
+              alt="Saluting eagle mascot"
+              width={160}
+              height={160}
+              priority
+              className={styles.bannerImg}
+            />
+          </Card>
+        </Link>
       </div>
-
-      <form action={logout} className={styles.form}>
-        <SubmitButton variant="outline" pendingLabel="Signing out…">
-          Sign Out
-        </SubmitButton>
-      </form>
     </section>
   )
 }

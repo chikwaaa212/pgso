@@ -59,9 +59,11 @@ export function PersonnelSidebar({
         { label: "Documents", href: "/personnel/documents", badge: totalDocuments },
         { label: "PAR / ICS", href: "/personnel/issuances" },
         { label: "Issues", href: "/personnel/issues" },
+        { label: "QR Scanner", href: "/personnel/scan" },
         { label: "Requests", href: "/personnel/requests", badge: pendingRequests },
         { label: "Repairs", href: "/personnel/repairs", badge: pendingRepairs },
         { label: "Logs", href: "/personnel/logs" },
+        { label: "Download Templates", href: "/personnel/templates" },
       ],
     },
   ];

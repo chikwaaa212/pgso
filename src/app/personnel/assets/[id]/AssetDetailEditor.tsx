@@ -168,7 +168,7 @@ function QrCard({ asset }: { asset: UnifiedAssetRow }) {
       ) : (
         <span className={assetStyles.qrPlaceholder}>No QR code</span>
       )}
-      <p className={assetStyles.qrLabel}>QR Data</p>
+      <p className={assetStyles.qrLabel}>Scan for details + history</p>
       <p className={assetStyles.qrValue}>
         {asset.qr_code ?? asset.account_code ?? asset.id}
       </p>

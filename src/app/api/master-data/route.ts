@@ -25,7 +25,7 @@ export async function GET() {
       prisma.accountCatalog.findMany({
         where: { status: 'active' },
         orderBy: { account_code: 'asc' },
-        select: { account_code: true, account_title: true, asset_type: true },
+        select: { account_code: true, account_title: true, asset_type: true, account_name: true },
       }),
     ])
 

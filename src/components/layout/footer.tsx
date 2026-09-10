@@ -3,43 +3,9 @@
 import Link from "next/link";
 import { GitFork, Rss, Share2, Globe, Send } from "lucide-react";
 import { motion } from "framer-motion";
+import { FOOTER_COLUMNS } from "@/lib/footer-content";
+import { BrandLogo } from "@/components/layout/brand-logo";
 import styles from "./footer.module.css";
-
-interface FooterColumn {
-  title: string;
-  links: { label: string; href: string; badge?: boolean }[];
-}
-
-const columns: FooterColumn[] = [
-  {
-    title: "Products",
-    links: [
-      { label: "Property Tracking", href: "#" },
-      { label: "Supply Management", href: "#" },
-      { label: "Analytics & Reports", href: "#" },
-    ],
-  },
-  {
-    title: "Resources",
-    links: [
-      { label: "Documentation", href: "#" },
-      { label: "API Reference", href: "#" },
-      { label: "Support", href: "#" },
-      { label: "Blog", href: "#" },
-      { label: "Roadmap", href: "#" },
-    ],
-  },
-  {
-    title: "Company",
-    links: [
-      { label: "About", href: "#" },
-      { label: "Careers", href: "#", badge: true },
-      { label: "Privacy Policy", href: "#" },
-      { label: "Terms of Service", href: "#" },
-      { label: "Contact Us", href: "#" },
-    ],
-  },
-];
 
 const socialLinks: {
   href: string;
@@ -90,12 +56,12 @@ export function Footer() {
             }}
             transition={{ duration: 0.6, ease: "easeOut" }}
           >
-            <Link href="/" className={styles.logo}>
-              PGSO
+            <Link href="/" className={styles.logo} aria-label="PGSO EYE home">
+              <BrandLogo size={36} />
             </Link>
             <p className={styles.description}>
-              An integrated web-based property and supply management system with
-              business analytics for operational monitoring and asset
+              An integrated web-based property and supply management system
+              with business analytics for operational monitoring and asset
               accountability.
             </p>
             <motion.div
@@ -115,7 +81,11 @@ export function Footer() {
                   target={
                     social.href.startsWith("http") ? "_blank" : undefined
                   }
-                  rel={social.href.startsWith("http") ? "noopener noreferrer" : undefined}
+                  rel={
+                    social.href.startsWith("http")
+                      ? "noopener noreferrer"
+                      : undefined
+                  }
                   className={styles.socialLink}
                   aria-label={social.label}
                   variants={{
@@ -139,7 +109,7 @@ export function Footer() {
             }}
             transition={{ duration: 0.6, ease: "easeOut" }}
           >
-            {columns.map((column) => (
+            {FOOTER_COLUMNS.map((column) => (
               <motion.div
                 key={column.title}
                 className={styles.column}
@@ -153,12 +123,17 @@ export function Footer() {
                 <ul className={styles.linkList}>
                   {column.links.map((link) => (
                     <li key={link.label}>
-                      <Link href={link.href} className={styles.link}>
+                      <a
+                        href={`/info/${link.slug}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className={styles.link}
+                      >
                         {link.label}
                         {link.badge && (
                           <span className={styles.badge}>HIRING</span>
                         )}
-                      </Link>
+                      </a>
                     </li>
                   ))}
                 </ul>

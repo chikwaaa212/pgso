@@ -50,3 +50,35 @@ export async function getSuperAdminSession(): Promise<SuperAdminSession | null> 
     return null
   }
 }
+
+export interface EmployeeSession {
+  userId: string
+  email: string | null
+  fullName: string | null
+}
+
+/**
+ * Throws if the caller is not an active employee.
+ * Use as the first line of every employee server action / page.
+ */
+export async function requireEmployee(): Promise<EmployeeSession> {
+  const supabase = await createClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+
+  if (!user) {
+    throw new Error('Not authenticated.')
+  }
+
+  const profile = await prisma.profile.findUnique({
+    where: { id: user.id },
+    select: { full_name: true, role: true, status: true },
+  })
+
+  if (!profile || profile.role !== 'employee' || profile.status !== 'active') {
+    throw new Error('Forbidden: Employee only.')
+  }
+
+  return { userId: user.id, email: user.email ?? null, fullName: profile.full_name }
+}

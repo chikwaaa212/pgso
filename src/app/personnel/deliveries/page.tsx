@@ -1,4 +1,5 @@
 import prisma from "@/lib/prisma";
+import { getPersonnelScope } from "@/lib/personnel-scope";
 import { Card } from "@/components/ui/card";
 import { DeliveryTable, type DeliveryRow } from "./delivery-table";
 import { LogDeliveryModal } from "./log-delivery-modal";
@@ -19,24 +20,33 @@ export default async function PersonnelDeliveriesPage() {
   let total = 0;
 
   try {
-    const deliveries = await prisma.delivery.findMany({
-      orderBy: { created_at: "desc" },
-      include: { _count: { select: { items: true } } },
-    });
+    // Own-data only for personnel; super_admin (browse reuse) sees all.
+    const scope = await getPersonnelScope();
+    if (scope.isEmpty || !scope.userId) {
+      rows = [];
+      total = 0;
+    } else {
+      const where = scope.isSuperAdmin ? {} : { received_by: scope.userId };
+      const deliveries = await prisma.delivery.findMany({
+        where,
+        orderBy: { created_at: "desc" },
+        include: { _count: { select: { items: true } } },
+      });
 
-    total = await prisma.delivery.count();
+      total = await prisma.delivery.count({ where });
 
-    rows = deliveries.map((d) => ({
-      id: d.id.slice(0, 8).toUpperCase(),
-      deliveryId: d.id,
-      supplier: d.supplier ?? "—",
-      po: d.po_reference ?? "—",
-      date: formatDate(d.date_delivered),
-      status: d.delivery_status === "partial" ? "Partial" : "Complete",
-      itemCount: d._count.items,
-      inspectionStatus: (d.inspection_status as DeliveryRow["inspectionStatus"]) ?? "pending",
-      inspectionRef: d.id.slice(0, 8).toUpperCase(),
-    }));
+      rows = deliveries.map((d) => ({
+        id: d.id.slice(0, 8).toUpperCase(),
+        deliveryId: d.id,
+        supplier: d.supplier ?? "—",
+        po: d.po_reference ?? "—",
+        date: formatDate(d.date_delivered),
+        status: d.delivery_status === "partial" ? "Partial" : "Complete",
+        itemCount: d._count.items,
+        inspectionStatus: (d.inspection_status as DeliveryRow["inspectionStatus"]) ?? "pending",
+        inspectionRef: d.id.slice(0, 8).toUpperCase(),
+      }));
+    }
   } catch (e) {
     console.error("[PersonnelDeliveriesPage]", e);
   }
@@ -61,7 +71,7 @@ export default async function PersonnelDeliveriesPage() {
         <div>
           <h2 className={styles.panelTitle}>Delivery log</h2>
           <p className={styles.panelSub}>
-            Live records from the database — search and filter below.
+            Your logged deliveries only — other personnel&apos;s records are hidden.
           </p>
         </div>
         <DeliveryTable rows={rows} />

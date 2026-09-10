@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
+import { BrandLogo } from "@/components/layout/brand-logo";
 import styles from "./Navbar.module.css";
 
 const navLinks = [
@@ -52,8 +53,8 @@ export function Navbar() {
           animate={{ opacity: 1, x: 0 }}
           transition={{ duration: 0.6, ease: "easeOut", delay: 0.3 }}
         >
-          <Link href="/" className={styles.logo}>
-            PGSO
+          <Link href="/" className={styles.logo} aria-label="PGSO EYE home">
+            <BrandLogo size={32} />
           </Link>
         </motion.div>
 

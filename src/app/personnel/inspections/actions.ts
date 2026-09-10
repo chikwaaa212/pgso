@@ -1,11 +1,13 @@
 'use server'
 
+import { cache } from 'react'
 import { notFound } from 'next/navigation'
 import { revalidatePath } from 'next/cache'
 import { Prisma } from '@prisma/client'
 import { createClient } from '@/lib/supabase/server'
 import { writeAuditLog } from '@/lib/audit'
 import { stockInspectionItems } from '@/lib/stock'
+import { getPersonnelScope } from '@/lib/personnel-scope'
 import prisma from '@/lib/prisma'
 
 // ─── Types returned to the client ────────────────────────────────────────────
@@ -84,6 +86,10 @@ export async function getDeliveryForInspection(
   deliveryId: string
 ): Promise<DeliveryForInspection> {
   try {
+    const scope = await getPersonnelScope()
+    // Fail closed: signed-out callers see nothing (previously fell through
+    // to the unfiltered row, costs included).
+    if (scope.isEmpty || !scope.userId) notFound()
     const delivery = await prisma.delivery.findUnique({
       where: { id: deliveryId },
       include: {
@@ -113,6 +119,14 @@ export async function getDeliveryForInspection(
     })
 
     if (!delivery) notFound()
+
+    // Own-data only for personnel; super_admin sees all.
+    if (!scope.isSuperAdmin && scope.userId) {
+      const inspectedByMe = delivery.inspections.some(
+        (i) => i.inspector_id === scope.userId
+      )
+      if (delivery.received_by !== scope.userId && !inspectedByMe) notFound()
+    }
 
     const latestInspection = delivery.inspections[0] ?? null
 
@@ -193,7 +207,19 @@ export interface UnifiedInspectionRow {
 
 export async function getInspectionsList(): Promise<UnifiedInspectionRow[]> {
   try {
+    const scope = await getPersonnelScope()
+    if (scope.isEmpty || !scope.userId) return []
+    // Own-data only for personnel; super_admin sees all.
+    const where: Prisma.DeliveryWhereInput = scope.isSuperAdmin
+      ? {}
+      : {
+          OR: [
+            { received_by: scope.userId },
+            { inspections: { some: { inspector_id: scope.userId } } },
+          ],
+        };
     const deliveries = await prisma.delivery.findMany({
+      where,
       orderBy: { created_at: 'desc' },
       include: {
         _count: { select: { items: true } },
@@ -262,6 +288,23 @@ export async function getInspectionHistory(
   deliveryId: string
 ): Promise<InspectionHistoryRecord[]> {
   try {
+    // Own-data only for personnel; super_admin sees all.
+    const scope = await getPersonnelScope()
+    if (scope.isEmpty) return []
+    if (!scope.isSuperAdmin && scope.userId) {
+      const owner = await prisma.delivery.findUnique({
+        where: { id: deliveryId },
+        select: {
+          received_by: true,
+          inspections: { select: { inspector_id: true }, take: 10 },
+        },
+      })
+      if (!owner) return []
+      const mine =
+        owner.received_by === scope.userId ||
+        owner.inspections.some((i) => i.inspector_id === scope.userId)
+      if (!mine) return []
+    }
     const inspections = await prisma.inspection.findMany({
       where: { delivery_id: deliveryId },
       orderBy: { created_at: 'desc' },
@@ -312,7 +355,9 @@ export interface DashboardStats {
   totalDocuments: number
 }
 
-export async function getDashboardStats(): Promise<DashboardStats> {
+// Per-request memoized: layout + page render in one request and both need
+// these badges, so share a single execution instead of doubling the queries.
+export const getDashboardStats = cache(async function getDashboardStats(): Promise<DashboardStats> {
   const zeros: DashboardStats = {
     totalDeliveries: 0,
     pendingInspections: 0,
@@ -323,10 +368,79 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     totalDocuments: 0,
   }
   try {
-    const issuanceDocs = await prisma
-      .$queryRaw<Array<{ count: bigint }>>`SELECT COUNT(*)::bigint AS count FROM issuance_records`
-      .then((r) => Number(r[0]?.count ?? 0))
-      .catch(() => 0)
+    // Own-data only for personnel sidebar badges; super_admin sees all.
+    const scope = await getPersonnelScope()
+    if (scope.isEmpty || !scope.userId) return zeros
+    const all = scope.isSuperAdmin
+    const me = scope.userId
+    const myDeliveryFilter = all ? {} : { received_by: me }
+    const myInspectionFilter = all ? {} : { inspector_id: me }
+    const myDeliveriesOrInspected = all
+      ? {}
+      : {
+          OR: [
+            { received_by: me },
+            { inspections: { some: { inspector_id: me } } },
+          ],
+        }
+    const issuanceDocs = all
+      ? await prisma
+          .$queryRaw<Array<{ count: bigint }>>`SELECT COUNT(*)::bigint AS count FROM issuance_records`
+          .then((r) => Number(r[0]?.count ?? 0))
+          .catch(() => 0)
+      : await prisma
+          .$queryRaw<Array<{ count: bigint }>>`SELECT COUNT(*)::bigint AS count FROM issuance_records WHERE created_by = ${me}::uuid`
+          .then((r) => Number(r[0]?.count ?? 0))
+          .catch(() => 0)
+    // Repairs own-data uses created_by when present (legacy NULL rows count as mine
+    // so old tickets don't vanish; new tickets always carry the creator).
+    // Raw SQL keeps working whether or not the generated client knows the column.
+    const countMyRepairs = async (status: string): Promise<number> => {
+      try {
+        if (all) return await prisma.repair.count({ where: { status } })
+        const rows = await prisma.$queryRaw<Array<{ count: bigint }>>`
+          SELECT COUNT(*)::bigint AS count FROM repairs
+          WHERE status = ${status} AND (created_by = ${me}::uuid OR created_by IS NULL)`
+        return Number(rows[0]?.count ?? 0)
+      } catch {
+        // Column missing (migration not applied yet) → fall back to global count.
+        try {
+          return await prisma.repair.count({ where: { status } })
+        } catch {
+          return 0
+        }
+      }
+    }
+    const countMyCompletedRepairs = () => countMyRepairs('completed')
+    const countMyPendingRepairs = () => countMyRepairs('pending')
+    // Two sequential batches of 6 (was one 12-way fan-out): the dashboard
+    // shares one pooler connection pool, and a 12-wide burst plus the page's
+    // own queries was tripping the connection timeout.
+    const countBatch = async (which: 'core' | 'docs') => {
+      if (which === 'core') {
+        return await Promise.all([
+          prisma.delivery.count({ where: myDeliveryFilter }),
+          prisma.delivery.count({ where: { ...myDeliveryFilter, inspection_status: 'pending' } }),
+          prisma.inspection.count({ where: myInspectionFilter }),
+          prisma.deliveryItem.count({ where: { delivery: myDeliveryFilter } }),
+          prisma.request.count({ where: myRequestFilter }),
+          countMyPendingRepairs(),
+        ])
+      }
+      return await Promise.all([
+        prisma.delivery.count({ where: myDeliveryFilter }),
+        prisma.inventoryItem.count(),
+        prisma.asset.count(),
+        countMyCompletedRepairs(),
+        prisma.iarRecord.count({ where: { delivery: myDeliveriesOrInspected } }),
+        prisma.documentView.count(),
+      ])
+    }
+    // Requests badge matches the personnel inbox (recipient = me + legacy NULL).
+    // Super admin keeps the global queue count.
+    const myRequestFilter = all
+      ? { status: 'pending' }
+      : { status: 'pending', OR: [{ recipient_id: me }, { recipient_id: null }] }
     const [
       totalDeliveries,
       pendingInspections,
@@ -334,26 +448,15 @@ export async function getDashboardStats(): Promise<DashboardStats> {
       totalItems,
       pendingRequests,
       pendingRepairs,
+    ] = await countBatch('core')
+    const [
       deliveryDocs,
       stockDocs,
       assetDocs,
       repairDocs,
       iarDocs,
       viewedDocs,
-    ] = await Promise.all([
-      prisma.delivery.count(),
-      prisma.delivery.count({ where: { inspection_status: 'pending' } }),
-      prisma.inspection.count(),
-      prisma.deliveryItem.count(),
-      prisma.request.count({ where: { status: 'pending' } }),
-      prisma.repair.count({ where: { status: 'pending' } }),
-      prisma.delivery.count(),
-      prisma.inventoryItem.count(),
-      prisma.asset.count(),
-      prisma.repair.count({ where: { status: 'completed' } }),
-      prisma.iarRecord.count(),
-      prisma.documentView.count(),
-    ])
+    ] = await countBatch('docs')
     return {
       totalDeliveries,
       pendingInspections,
@@ -370,7 +473,7 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     console.error('[getDashboardStats]', e)
     return zeros
   }
-}
+})
 
 export interface MonthlyPoint {
   month: string   // e.g. "Jan", "Feb"
@@ -381,31 +484,59 @@ export interface MonthlyPoint {
 export async function getMonthlyOverview(): Promise<MonthlyPoint[]> {
   const now = new Date()
   const months: MonthlyPoint[] = []
+  // Own-data only for personnel; super_admin sees all.
+  const scope = await getPersonnelScope()
+  const windowStart = new Date(now.getFullYear(), now.getMonth() - 5, 1)
+
+  // One grouped query per table (was 12 per-month counts): keeps the
+  // dashboard from flooding the pooler with concurrent connections.
+  interface MonthCount {
+    month: Date
+    count: bigint
+  }
+  let deliveryBuckets: MonthCount[] = []
+  let inspectionBuckets: MonthCount[] = []
+  try {
+    if (scope.isSuperAdmin) {
+      ;[deliveryBuckets, inspectionBuckets] = await Promise.all([
+        prisma.$queryRaw<MonthCount[]>`
+          SELECT date_trunc('month', created_at) AS month, COUNT(*)::bigint AS count
+          FROM deliveries WHERE created_at >= ${windowStart} GROUP BY 1`,
+        prisma.$queryRaw<MonthCount[]>`
+          SELECT date_trunc('month', created_at) AS month, COUNT(*)::bigint AS count
+          FROM inspections WHERE created_at >= ${windowStart} GROUP BY 1`,
+      ])
+    } else if (scope.userId) {
+      const me = scope.userId
+      ;[deliveryBuckets, inspectionBuckets] = await Promise.all([
+        prisma.$queryRaw<MonthCount[]>`
+          SELECT date_trunc('month', created_at) AS month, COUNT(*)::bigint AS count
+          FROM deliveries WHERE created_at >= ${windowStart} AND received_by = ${me}::uuid GROUP BY 1`,
+        prisma.$queryRaw<MonthCount[]>`
+          SELECT date_trunc('month', created_at) AS month, COUNT(*)::bigint AS count
+          FROM inspections WHERE created_at >= ${windowStart} AND inspector_id = ${me}::uuid GROUP BY 1`,
+      ])
+    }
+  } catch (e) {
+    console.error('[getMonthlyOverview]', e)
+  }
+  const keyOf = (d: Date) => `${d.getUTCFullYear()}-${d.getUTCMonth()}`
+  const deliveryMap = new Map(
+    deliveryBuckets.map((r) => [keyOf(new Date(r.month)), Number(r.count)])
+  )
+  const inspectionMap = new Map(
+    inspectionBuckets.map((r) => [keyOf(new Date(r.month)), Number(r.count)])
+  )
 
   for (let i = 5; i >= 0; i--) {
     const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
-    const start = new Date(d.getFullYear(), d.getMonth(), 1)
-    const end   = new Date(d.getFullYear(), d.getMonth() + 1, 1)
-
-    let deliveries = 0
-    let inspections = 0
-    try {
-      [deliveries, inspections] = await Promise.all([
-        prisma.delivery.count({
-          where: { created_at: { gte: start, lt: end } },
-        }),
-        prisma.inspection.count({
-          where: { created_at: { gte: start, lt: end } },
-        }),
-      ])
-    } catch (e) {
-      console.error('[getMonthlyOverview]', e)
-    }
-
+    const key = `${d.getFullYear()}-${d.getMonth()}`
+    // date_trunc buckets are UTC; local month keys coincide except for rows
+    // stamped in the first/last hours of a month — negligible for a trend.
     months.push({
       month: d.toLocaleString('en-PH', { month: 'short' }),
-      deliveries,
-      inspections,
+      deliveries: deliveryMap.get(key) ?? 0,
+      inspections: inspectionMap.get(key) ?? 0,
     })
   }
 
@@ -423,9 +554,16 @@ export interface RecentDeliveryRow {
 
 export async function getRecentDeliveries(limit = 5): Promise<RecentDeliveryRow[]> {
   try {
+    const scope = await getPersonnelScope()
+    if (scope.isEmpty) return []
+    // Clamp client-controlled take: huge/negative values scanned or flipped rows.
+    const take = Number.isFinite(limit)
+      ? Math.min(Math.max(Math.floor(limit), 1), 100)
+      : 5
     const rows = await prisma.delivery.findMany({
+      where: scope.isSuperAdmin ? {} : { received_by: scope.userId! },
       orderBy: { created_at: 'desc' },
-      take: limit,
+      take,
       select: {
         id: true,
         supplier: true,
@@ -503,9 +641,22 @@ export async function saveAir(
   try {
     const delivery = await prisma.delivery.findUnique({
       where: { id: deliveryId },
-      select: { id: true },
+      select: {
+        id: true,
+        received_by: true,
+        inspections: {
+          orderBy: { created_at: 'desc' },
+          take: 5,
+          select: { id: true, inspector_id: true },
+        },
+      },
     })
     if (!delivery) return { error: 'Delivery not found.' }
+    // Own-data only.
+    const mine =
+      delivery.received_by === user.id ||
+      delivery.inspections.some((i) => i.inspector_id === user.id)
+    if (!mine) return { error: 'You can only manage your own deliveries.' }
 
     const inspection = await prisma.inspection.findFirst({
       where: { delivery_id: deliveryId },
@@ -603,6 +754,23 @@ export async function attachIarImage(
   if (!user) return { error: 'You must be signed in to attach an IAR.' }
 
   try {
+    // Own-data only.
+    const ownerAttach = await prisma.delivery.findUnique({
+      where: { id: deliveryId },
+      select: {
+        received_by: true,
+        inspections: {
+          orderBy: { created_at: 'desc' },
+          take: 5,
+          select: { id: true, inspector_id: true },
+        },
+      },
+    })
+    if (!ownerAttach) return { error: 'Delivery not found.' }
+    const mineAttach =
+      ownerAttach.received_by === user.id ||
+      ownerAttach.inspections.some((i) => i.inspector_id === user.id)
+    if (!mineAttach) return { error: 'You can only manage your own deliveries.' }
     const inspectionId = await latestInspectionId(deliveryId)
     if (!inspectionId) {
       return { error: 'Record the inspection first before attaching an IAR.' }
@@ -651,6 +819,23 @@ export async function removeIarImage(
   if (!user) return { error: 'You must be signed in to remove an IAR.' }
 
   try {
+    // Own-data only.
+    const ownerRemove = await prisma.delivery.findUnique({
+      where: { id: deliveryId },
+      select: {
+        received_by: true,
+        inspections: {
+          orderBy: { created_at: 'desc' },
+          take: 5,
+          select: { id: true, inspector_id: true },
+        },
+      },
+    })
+    if (!ownerRemove) return { error: 'Delivery not found.' }
+    const mineRemove =
+      ownerRemove.received_by === user.id ||
+      ownerRemove.inspections.some((i) => i.inspector_id === user.id)
+    if (!mineRemove) return { error: 'You can only manage your own deliveries.' }
     const inspectionId = await latestInspectionId(deliveryId)
     if (!inspectionId) return { error: 'No inspection record found.' }
     if (recordId) {
@@ -738,6 +923,23 @@ export interface IarRecordRow {
 /** Every generated / attached AIR for a delivery, newest first. */
 export async function getIarRecords(deliveryId: string): Promise<IarRecordRow[]> {
   try {
+    // Own-data only for personnel; super_admin sees all.
+    const scope = await getPersonnelScope()
+    if (scope.isEmpty) return []
+    if (!scope.isSuperAdmin && scope.userId) {
+      const owner = await prisma.delivery.findUnique({
+        where: { id: deliveryId },
+        select: {
+          received_by: true,
+          inspections: { select: { inspector_id: true }, take: 10 },
+        },
+      })
+      if (!owner) return []
+      const mine =
+        owner.received_by === scope.userId ||
+        owner.inspections.some((i) => i.inspector_id === scope.userId)
+      if (!mine) return []
+    }
     const rows = await prisma.iarRecord.findMany({
       where: { delivery_id: deliveryId },
       orderBy: { created_at: 'desc' },

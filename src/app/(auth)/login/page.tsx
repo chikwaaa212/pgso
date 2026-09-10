@@ -1,14 +1,50 @@
 'use client'
 
-import { useState, useActionState, useEffect } from 'react'
+import { Suspense, useState, useActionState, useEffect } from 'react'
 import Link from 'next/link'
+import { useSearchParams } from 'next/navigation'
 import { Eye, EyeOff } from 'lucide-react'
 import { motion } from 'framer-motion'
 import { login } from '../auth'
+import { OAuthButton } from '../oauth-button'
 import type { LoginState } from '@/types'
 import { SubmitButton } from '@/components/ui/submit-button'
 import { Card } from '@/components/ui/card'
 import styles from './page.module.css'
+
+const NOTICES: Record<string, string> = {
+  pending: 'Your account is awaiting admin approval. You can sign in after approval.',
+  inactive: 'Your account is inactive. Contact your administrator.',
+  'oauth-error': 'Google sign-in failed. Try again or sign in with email.',
+}
+
+function LoginNotice() {
+  const params = useSearchParams()
+  const next = params.get('next')
+  const message = NOTICES[params.get('notice') ?? '']
+  return (
+    <>
+      {next && !message && (
+        <p className={styles.notice} role="status">
+          Please sign in to continue. You&apos;ll be taken to your requested
+          page after login.
+        </p>
+      )}
+      {message && (
+        <p className={styles.notice} role="status">
+          {message}
+        </p>
+      )}
+    </>
+  )
+}
+
+function NextField() {
+  const params = useSearchParams()
+  const next = params.get('next')
+  if (!next || !next.startsWith('/') || next.startsWith('//')) return null
+  return <input type="hidden" name="next" value={next} />
+}
 
 export default function LoginPage() {
   const [state, formAction] = useActionState<LoginState, FormData>(login, {
@@ -39,8 +75,17 @@ export default function LoginPage() {
           </p>
         </div>
 
+        <Suspense fallback={null}>
+          <LoginNotice />
+        </Suspense>
+
+        <OAuthButton mode="signin" />
+
         <form action={formAction} className={styles.form}>
           <input type="hidden" name="idempotencyKey" value={idempotencyKey} />
+          <Suspense fallback={null}>
+            <NextField />
+          </Suspense>
           <div className={styles.field}>
             <label htmlFor="email" className={styles.label}>
               Email address

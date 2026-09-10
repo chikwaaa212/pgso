@@ -2,6 +2,7 @@
 
 import prisma from '@/lib/prisma'
 import { generateQrDataUrl } from '@/lib/qrcode'
+import { getPersonnelScope } from '@/lib/personnel-scope'
 
 // ─── Sanitized (non-sensitive) issue registry ────────────────────────────────
 // Exposes ONLY: doc ref, receiving employee, account_code, article,
@@ -122,13 +123,24 @@ function qrPayloadFor(args: {
 export async function getPublicIssues(): Promise<PublicIssueLine[]> {
   let rows: IssuanceDbRow[] = []
   try {
-    rows = await prisma.$queryRaw<IssuanceDbRow[]>`
+    // Own-data only for personnel; super_admin sees all.
+    const scope = await getPersonnelScope()
+    if (scope.isEmpty || !scope.userId) return []
+    rows = scope.isSuperAdmin
+      ? await prisma.$queryRaw<IssuanceDbRow[]>`
       SELECT id::text AS id, doc_type, doc_no, doc_date,
              asset_id::text AS asset_id, inventory_id::text AS inventory_id,
              employee_id::text AS employee_id, request_id::text AS request_id,
              quantity, issuance_data, created_at,
              created_by::text AS created_by
       FROM issuance_records ORDER BY created_at DESC`
+      : await prisma.$queryRaw<IssuanceDbRow[]>`
+      SELECT id::text AS id, doc_type, doc_no, doc_date,
+             asset_id::text AS asset_id, inventory_id::text AS inventory_id,
+             employee_id::text AS employee_id, request_id::text AS request_id,
+             quantity, issuance_data, created_at,
+             created_by::text AS created_by
+      FROM issuance_records WHERE created_by = ${scope.userId}::uuid ORDER BY created_at DESC`
   } catch (e) {
     console.error('[getPublicIssues:list]', e)
     return []
@@ -316,4 +328,47 @@ export async function getPublicIssues(): Promise<PublicIssueLine[]> {
     }
   }
   return out
+}
+
+// ─── Completed requests as QR records ────────────────────────────────────────
+// Every request that reaches `completed` (transfer / assignment / repair /
+// stock replenishment, asset or stock lot) also lives in the Issues QR store.
+// Scope: personnel see only requests they actioned (recipient = me, legacy
+// NULL, or an approve/complete audit entry under their id); super_admin sees
+// all — same rule as the issuance lines above.
+
+export type { RequestRow as CompletedRequestIssue } from '@/app/personnel/requests/actions'
+
+export async function getCompletedRequestIssues(): Promise<
+  import('@/app/personnel/requests/actions').RequestRow[]
+> {
+  try {
+    const scope = await getPersonnelScope()
+    if (scope.isEmpty || !scope.userId) return []
+    const { getRequests } = await import('@/app/personnel/requests/actions')
+    const all = await getRequests()
+    const completed = all.filter((r) => (r.status ?? 'pending') === 'completed')
+    if (scope.isSuperAdmin) return completed
+    const me = scope.userId
+    // Requests this personnel actioned: approve/complete audit entries.
+    let acted = new Set<string>()
+    try {
+      const rows = await prisma.$queryRaw<Array<{ ref: string | null }>>`
+        SELECT details->>'reference_id' AS ref FROM audit_logs
+        WHERE user_id = ${me}::uuid
+          AND action IN ('request:approved', 'request:completed')`
+      acted = new Set(
+        rows.map((r) => r.ref).filter((v): v is string => !!v)
+      )
+    } catch {
+      acted = new Set()
+    }
+    return completed.filter(
+      (r) =>
+        r.recipient_id === me || r.recipient_id == null || acted.has(r.id)
+    )
+  } catch (e) {
+    console.error('[getCompletedRequestIssues]', e)
+    return []
+  }
 }

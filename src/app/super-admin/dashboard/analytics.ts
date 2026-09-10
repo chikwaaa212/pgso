@@ -86,6 +86,7 @@ export async function getAnalytics(): Promise<Analytics | null> {
     monthStarts.push(new Date(now.getFullYear(), now.getMonth() - i, 1))
   }
   const monthLabel = (d: Date) => d.toLocaleString('en-PH', { month: 'short' })
+  const windowStart = monthStarts[0]
 
   try {
     const [
@@ -95,7 +96,7 @@ export async function getAnalytics(): Promise<Analytics | null> {
       assetStatus,
       stocks,
       issuanceRows,
-      monthlyCounts,
+      monthlyBuckets,
       documentsByType,
     ] = await Promise.all([
       prisma.delivery.groupBy({ by: ['inspection_status'], _count: true }).catch(() => [] as { inspection_status: string | null; _count: number }[]),
@@ -109,21 +110,27 @@ export async function getAnalytics(): Promise<Analytics | null> {
         SELECT doc_type, COUNT(*)::bigint AS count FROM issuance_records GROUP BY doc_type ORDER BY count DESC`.catch(
         () => [] as Array<{ doc_type: string; count: bigint }>
       ),
-      Promise.all(
-        monthStarts.map(async (start) => {
-          const end = new Date(start.getFullYear(), start.getMonth() + 1, 1)
-          try {
-            const rows = await prisma.$queryRaw<Array<{ count: bigint }>>`
-              SELECT COUNT(*)::bigint AS count FROM issuance_records
-              WHERE created_at >= ${start} AND created_at < ${end}`
-            return { month: monthLabel(start), issuances: Number(rows[0]?.count ?? 0) }
-          } catch {
-            return { month: monthLabel(start), issuances: 0 }
-          }
-        })
+      // Single grouped query (was 6 sequential per-month counts).
+      prisma.$queryRaw<Array<{ month: Date; count: bigint }>>`
+        SELECT date_trunc('month', created_at) AS month, COUNT(*)::bigint AS count
+        FROM issuance_records WHERE created_at >= ${windowStart} GROUP BY 1`.catch(
+        () => [] as Array<{ month: Date; count: bigint }>
       ),
       groupCount('document'),
     ])
+
+    // Map UTC month buckets onto the local month labels.
+    const bucketMap = new Map(
+      monthlyBuckets.map((r) => {
+        const d = new Date(r.month)
+        return [`${d.getUTCFullYear()}-${d.getUTCMonth()}`, Number(r.count)]
+      })
+    )
+    const monthlyCounts = monthStarts.map((start) => ({
+      month: monthLabel(start),
+      issuances:
+        bucketMap.get(`${start.getFullYear()}-${start.getMonth()}`) ?? 0,
+    }))
 
     // Largest-first so the hero yellow slice always marks the biggest share.
     const inspectionOutcome: Slice[] = deliveryInspection

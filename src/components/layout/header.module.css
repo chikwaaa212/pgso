@@ -25,9 +25,9 @@
 }
 
 .logo {
-  font-weight: 700;
-  font-size: 1.25rem;
-  color: var(--color-navy-900);
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
 }
 
 .navLinks {

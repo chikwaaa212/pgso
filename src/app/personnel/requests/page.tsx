@@ -30,6 +30,7 @@ import {
   type RequestRow,
 } from "./actions";
 import { IssuanceEvaluateDialog } from "@/components/personnel/IssuanceDialog";
+import { RequestQrButton } from "@/components/personnel/RequestQrButton";
 import {
   requestTypeLabel,
   type RequestStatus,
@@ -72,6 +73,7 @@ const TYPE_FILTERS = [
   { value: "transfer", label: "Transfer" },
   { value: "new_assignment", label: "New Assignment" },
   { value: "repair", label: "Repair" },
+  { value: "stock_replenishment", label: "Stock Replenishment" },
 ] as const;
 
 interface ReqLine {
@@ -111,10 +113,19 @@ export default function PersonnelRequestsPage() {
   const [employeeId, setEmployeeId] = useState("");
   const [requestType, setRequestType] = useState("transfer");
   const [assetId, setAssetId] = useState("");
+  const [restockQty, setRestockQty] = useState("10");
+  const [transferQty, setTransferQty] = useState("1");
   const [transferTo, setTransferTo] = useState("");
+  // Transfer target defaults to picking an existing employee; manual typing
+  // stays available for names outside the system (offices, guests).
+  const [transferToMode, setTransferToMode] = useState<"select" | "manual">(
+    "select"
+  );
+  const [transferToId, setTransferToId] = useState("");
   const [newLocation, setNewLocation] = useState("");
   const [reason, setReason] = useState("");
-  // Multi-item lines for new_assignment (transfer/repair stay single-asset).
+  // Multi-item lines for new_assignment (transfer/repair stay single-item,
+  // which may be an assets-table row or an inventory stock lot).
   const [lines, setLines] = useState<ReqLine[]>([blankLine(1)]);
   const [lineSeq, setLineSeq] = useState(2);
   const [saving, setSaving] = useState(false);
@@ -122,14 +133,14 @@ export default function PersonnelRequestsPage() {
 
   const reload = () => {
     setLoading(true);
-    void getRequests().then((data) => {
+    void getRequests({ forRecipient: true }).then((data) => {
       setRows(data);
       setLoading(false);
     });
   };
 
   useEffect(() => {
-    void getRequests().then((data) => {
+    void getRequests({ forRecipient: true }).then((data) => {
       setRows(data);
       setLoading(false);
     });
@@ -218,7 +229,11 @@ export default function PersonnelRequestsPage() {
     setEmployeeId("");
     setRequestType("transfer");
     setAssetId("");
+    setRestockQty("10");
+    setTransferQty("1");
     setTransferTo("");
+    setTransferToMode("select");
+    setTransferToId("");
     setNewLocation("");
     setReason("");
     setLines([blankLine(1)]);
@@ -246,11 +261,24 @@ export default function PersonnelRequestsPage() {
   async function onSubmit() {
     setSaving(true);
     setFormError("");
+    const transferIsStock =
+      requestType === "transfer" &&
+      (assets.find((a) => a.id === assetId)?.kind === "stock");
+    const effectiveTransferTo =
+      transferToMode === "select"
+        ? (employees.find((e) => e.id === transferToId)?.full_name ?? "")
+        : transferTo;
     const res = await createRequest({
       employeeId,
       requestType,
       assetId: assetId === "" ? undefined : assetId,
-      transferTo,
+      quantity:
+        requestType === "stock_replenishment"
+          ? Number(restockQty)
+          : transferIsStock
+            ? Number(transferQty)
+            : undefined,
+      transferTo: effectiveTransferTo,
       newLocation,
       reason,
       ...(requestType === "new_assignment"
@@ -273,12 +301,17 @@ export default function PersonnelRequestsPage() {
     reload();
   }
 
+  // Every delivered item is an asset; "stock" is just its quantity on hand —
+  // so transfer / assignment / repair can all pick either kind.
   const assetChoices =
-    requestType === "transfer" || requestType === "repair"
-      ? assets.filter((a) => a.kind === "asset")
+    requestType === "stock_replenishment"
+      ? assets.filter((a) => a.kind === "stock")
       : assets.filter((a) => a.kind === "stock" || a.kind === "asset");
 
   const pickedAsset = assets.find((a) => a.id === assetId) ?? null;
+  const restockQtyNum = Math.floor(Number(restockQty) || 0);
+  const transferQtyNum = Math.floor(Number(transferQty) || 0);
+  const transferStockMax = pickedAsset?.quantity ?? 0;
 
   const newAssignmentValid =
     lines.length > 0 &&
@@ -295,13 +328,24 @@ export default function PersonnelRequestsPage() {
     });
 
   const canSubmit =
-    employeeId !== "" &&
     reason.trim() !== "" &&
-    (requestType === "transfer"
-      ? assetId !== "" && transferTo.trim() !== ""
-      : requestType === "repair"
-        ? assetId !== ""
-        : newAssignmentValid);
+    (requestType === "stock_replenishment"
+      ? assetId !== "" &&
+        Number.isInteger(restockQtyNum) &&
+        restockQtyNum >= 1
+      : employeeId !== "" &&
+        (requestType === "transfer"
+          ? assetId !== "" &&
+            (transferToMode === "select"
+              ? transferToId !== ""
+              : transferTo.trim() !== "") &&
+            (pickedAsset?.kind !== "stock" ||
+              (Number.isInteger(transferQtyNum) &&
+                transferQtyNum >= 1 &&
+                transferQtyNum <= transferStockMax))
+          : requestType === "repair"
+            ? assetId !== ""
+            : newAssignmentValid));
 
   return (
     <section className={styles.section}>
@@ -314,7 +358,8 @@ export default function PersonnelRequestsPage() {
             {rows.length === 1 ? "request" : "requests"} shown
             {pendingCount > 0
               ? ` · ${pendingCount} pending`
-              : ""}
+              : ""}{" "}
+            · only requests sent to you
           </p>
         </div>
         <div className={styles.actions}>
@@ -406,6 +451,7 @@ export default function PersonnelRequestsPage() {
               <thead>
                 <tr>
                   <th>Employee</th>
+                  <th>To</th>
                   <th>Type</th>
                   <th>Asset</th>
                   <th>Description</th>
@@ -422,6 +468,7 @@ export default function PersonnelRequestsPage() {
                   return (
                     <tr key={r.id}>
                       <td>{r.employee_name}</td>
+                      <td>{r.recipient_name ?? "—"}</td>
                       <td>{requestTypeLabel(r.request_type)}</td>
                       <td>{r.asset_label ?? "—"}</td>
                       <td className="whitespace-pre-wrap">
@@ -484,6 +531,8 @@ export default function PersonnelRequestsPage() {
                             >
                               {busy ? "…" : "Complete"}
                             </button>
+                          ) : status === "completed" ? (
+                            <RequestQrButton requestId={r.id} />
                           ) : (
                             <span className={styles.pagerInfo}>—</span>
                           )}
@@ -511,15 +560,16 @@ export default function PersonnelRequestsPage() {
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle>New employee request</DialogTitle>
+            <DialogTitle>New request</DialogTitle>
             <DialogDescription>
               File a transfer, new-asset assignment, or repair request for an
-              employee. Approving applies it to the asset record — repair
-              approvals create a repair ticket.
+              employee — or a stock replenishment request for the admin to
+              restock inventory. Repair approvals create a repair ticket.
             </DialogDescription>
           </DialogHeader>
 
           <div className="grid gap-4 py-1 sm:grid-cols-2">
+            {requestType !== "stock_replenishment" ? (
             <div className="grid gap-1.5 sm:col-span-2">
               <Label htmlFor="req-employee">
                 Requesting employee <span className="text-red-600">*</span>
@@ -537,6 +587,13 @@ export default function PersonnelRequestsPage() {
                 </SelectContent>
               </Select>
             </div>
+            ) : (
+            <div className="grid gap-1.5 sm:col-span-2">
+              <p className="rounded-md border border-dashed border-navy-200 px-3 py-2 text-sm text-navy-700">
+                Filed as you — the admin will see your name as the requester.
+              </p>
+            </div>
+            )}
 
             <div className="grid gap-1.5 sm:col-span-2">
               <Label htmlFor="req-type">
@@ -547,6 +604,9 @@ export default function PersonnelRequestsPage() {
                 onValueChange={(v) => {
                   setRequestType(v);
                   setAssetId("");
+                  setTransferQty("1");
+                  setTransferToMode("select");
+                  setTransferToId("");
                   setLines([blankLine(1)]);
                   setLineSeq(2);
                 }}
@@ -564,9 +624,79 @@ export default function PersonnelRequestsPage() {
                   <SelectItem value="repair">
                     Repair — report an asset for repair
                   </SelectItem>
+                  <SelectItem value="stock_replenishment">
+                    Stock replenishment — request add stock / restock from admin
+                  </SelectItem>
                 </SelectContent>
               </Select>
             </div>
+
+            {requestType === "stock_replenishment" ? (
+              <>
+                <div className="grid gap-1.5 sm:col-span-2">
+                  <Label htmlFor="req-stock">
+                    Stock item <span className="text-red-600">*</span>
+                  </Label>
+                  <Select value={assetId} onValueChange={setAssetId}>
+                    <SelectTrigger id="req-stock">
+                      <SelectValue placeholder="Select stock to restock" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {assetChoices.map((a) => (
+                        <SelectItem key={a.id} value={a.id}>
+                          {a.label} ·{" "}
+                          {a.quantity != null ? `${a.quantity} on hand` : "Stock"}
+                          {a.account_code ? ` · ${a.account_code}` : ""}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {pickedAsset ? (
+                  <div className="grid gap-3 rounded-md border bg-zinc-50 px-3 py-2.5 text-sm sm:col-span-2 sm:grid-cols-2">
+                    <div>
+                      <p className="text-xs font-medium text-zinc-500">
+                        On hand
+                      </p>
+                      <p>
+                        {pickedAsset.quantity != null
+                          ? pickedAsset.quantity
+                          : "—"}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-xs font-medium text-zinc-500">
+                        Account code
+                      </p>
+                      <p>{pickedAsset.account_code ?? "—"}</p>
+                    </div>
+                  </div>
+                ) : null}
+
+                <div className="grid gap-1.5">
+                  <Label htmlFor="req-restock-qty">
+                    Quantity needed <span className="text-red-600">*</span>
+                  </Label>
+                  <Input
+                    id="req-restock-qty"
+                    type="number"
+                    min={1}
+                    step={1}
+                    value={restockQty}
+                    onChange={(e) => setRestockQty(e.target.value)}
+                    placeholder="e.g. 50"
+                  />
+                </div>
+                <div className="grid gap-1.5">
+                  <Label>Where it goes</Label>
+                  <p className="rounded-md border border-dashed border-navy-200 px-3 py-2 text-sm text-navy-700">
+                    Sent to admin — approval is a status change; actual
+                    procurement is logged later as a delivery.
+                  </p>
+                </div>
+              </>
+            ) : null}
 
             {requestType === "new_assignment" ? (
               <div className="grid gap-3 sm:col-span-2">
@@ -702,15 +832,15 @@ export default function PersonnelRequestsPage() {
                   </Button>
                 </div>
               </div>
-            ) : (
+            ) : requestType === "stock_replenishment" ? null : (
               <>
                 <div className="grid gap-1.5 sm:col-span-2">
                   <Label htmlFor="req-asset">
-                    Asset <span className="text-red-600">*</span>
+                    Item (asset / stock) <span className="text-red-600">*</span>
                   </Label>
                   <Select value={assetId} onValueChange={setAssetId}>
                     <SelectTrigger id="req-asset">
-                      <SelectValue placeholder="Select asset" />
+                      <SelectValue placeholder="Select item — every delivery is an asset; stock is its quantity" />
                     </SelectTrigger>
                     <SelectContent>
                       {assetChoices.map((a) => (
@@ -745,7 +875,7 @@ export default function PersonnelRequestsPage() {
                     </div>
                     <div>
                       <p className="text-xs font-medium text-zinc-500">
-                        Stock available
+                        Stock / quantity on hand
                       </p>
                       <p>
                         {pickedAsset.quantity != null
@@ -753,6 +883,26 @@ export default function PersonnelRequestsPage() {
                           : "—"}
                       </p>
                     </div>
+                  </div>
+                ) : null}
+                {requestType === "transfer" && pickedAsset?.kind === "stock" ? (
+                  <div className="grid gap-1.5 sm:col-span-2">
+                    <Label htmlFor="req-transfer-qty">
+                      Quantity <span className="text-red-600">*</span>
+                    </Label>
+                    <Input
+                      id="req-transfer-qty"
+                      type="number"
+                      min={1}
+                      max={transferStockMax}
+                      step={1}
+                      value={transferQty}
+                      onChange={(e) => setTransferQty(e.target.value)}
+                      placeholder={`Max ${transferStockMax} on hand`}
+                    />
+                    <p className="text-xs text-zinc-500">
+                      {transferStockMax} on hand — enter 1 to {transferStockMax}.
+                    </p>
                   </div>
                 ) : null}
               </>
@@ -764,13 +914,43 @@ export default function PersonnelRequestsPage() {
                   <Label htmlFor="req-transfer-to">
                     Transfer to <span className="text-red-600">*</span>
                   </Label>
-                  <Input
-                    id="req-transfer-to"
-                    type="text"
-                    value={transferTo}
-                    onChange={(e) => setTransferTo(e.target.value)}
-                    placeholder="e.g. Juan Dela Cruz"
-                  />
+                  <Select
+                    value={
+                      transferToMode === "manual" ? "__manual" : transferToId || undefined
+                    }
+                    onValueChange={(v) => {
+                      if (v === "__manual") {
+                        setTransferToMode("manual");
+                        setTransferToId("");
+                      } else {
+                        setTransferToMode("select");
+                        setTransferToId(v);
+                      }
+                    }}
+                  >
+                    <SelectTrigger id="req-transfer-to">
+                      <SelectValue placeholder="Select employee" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {employees.map((e) => (
+                        <SelectItem key={e.id} value={e.id}>
+                          {e.full_name}
+                        </SelectItem>
+                      ))}
+                      <SelectItem value="__manual">
+                        Type name manually…
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {transferToMode === "manual" ? (
+                    <Input
+                      type="text"
+                      value={transferTo}
+                      onChange={(e) => setTransferTo(e.target.value)}
+                      placeholder="e.g. Juan Dela Cruz — Accounting"
+                      aria-label="Transfer to (manual name)"
+                    />
+                  ) : null}
                 </div>
                 <div className="grid gap-1.5">
                   <Label htmlFor="req-location">New location</Label>
@@ -787,7 +967,11 @@ export default function PersonnelRequestsPage() {
 
             <div className="grid gap-1.5 sm:col-span-2">
               <Label htmlFor="req-reason">
-                {requestType === "repair" ? "Issue description" : "Reason"}{" "}
+                {requestType === "repair"
+                  ? "Issue description"
+                  : requestType === "stock_replenishment"
+                    ? "Justification"
+                    : "Reason"}{" "}
                 <span className="text-red-600">*</span>
               </Label>
               <textarea
@@ -797,7 +981,9 @@ export default function PersonnelRequestsPage() {
                 placeholder={
                   requestType === "repair"
                     ? "Describe the damage or issue — e.g. Screen flickering, won't power on…"
-                    : "Why is this request needed?"
+                    : requestType === "stock_replenishment"
+                      ? "Why is restocking needed? e.g. Only 5 reams left, classes start next week…"
+                      : "Why is this request needed?"
                 }
                 rows={2}
                 className="border-input placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-ring/50 flex w-full rounded-md border bg-transparent px-3 py-2 text-sm shadow-xs outline-none focus-visible:ring-[3px]"

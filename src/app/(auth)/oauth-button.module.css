@@ -1,0 +1,32 @@
+.oauthBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.oauthButton {
+  width: 100%;
+  font-weight: 600;
+  color: var(--color-navy-900);
+}
+
+.icon {
+  width: 1.125rem;
+  height: 1.125rem;
+  flex-shrink: 0;
+}
+
+.divider {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-size: 0.75rem;
+  color: var(--color-navy-500);
+}
+
+.divider::before,
+.divider::after {
+  content: "";
+  flex: 1;
+  border-top: 1px solid var(--color-navy-200);
+}

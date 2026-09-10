@@ -1,0 +1,23 @@
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  padding-bottom: 3rem;
+}
+
+.crumb {
+  font-size: 0.75rem;
+  color: var(--color-navy-500);
+}
+
+.title {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--color-navy-900);
+}
+
+.subtitle {
+  font-size: 0.875rem;
+  color: var(--color-navy-600);
+  margin-top: 0.25rem;
+}

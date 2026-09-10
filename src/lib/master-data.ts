@@ -6,6 +6,7 @@ export interface CatalogEntry {
   code: string
   title: string
   type: string
+  name?: string | null
 }
 
 /**
@@ -19,12 +20,13 @@ export async function getActiveCatalogEntries(): Promise<CatalogEntry[]> {
     const rows = await prisma.accountCatalog.findMany({
       where: { status: 'active' },
       orderBy: { account_code: 'asc' },
-      select: { account_code: true, account_title: true, asset_type: true },
+      select: { account_code: true, account_title: true, asset_type: true, account_name: true },
     })
     return rows.map((r) => ({
       code: r.account_code,
       title: r.account_title,
       type: r.asset_type,
+      name: r.account_name,
     }))
   } catch (e) {
     console.error('[getActiveCatalogEntries]', e)
@@ -38,10 +40,10 @@ export async function findCatalogEntry(code: string): Promise<CatalogEntry | nul
   try {
     const row = await prisma.accountCatalog.findFirst({
       where: { account_code: c, status: 'active' },
-      select: { account_code: true, account_title: true, asset_type: true },
+      select: { account_code: true, account_title: true, asset_type: true, account_name: true },
     })
     if (!row) return null
-    return { code: row.account_code, title: row.account_title, type: row.asset_type }
+    return { code: row.account_code, title: row.account_title, type: row.asset_type, name: row.account_name }
   } catch (e) {
     console.error('[findCatalogEntry]', e)
     return null

@@ -328,7 +328,7 @@ export default function PersonnelRepairsPage() {
           <h1 className={styles.title}>Repairs</h1>
           <p className={styles.subtitle}>
             {filtered.length} of {rows.length}{" "}
-            {rows.length === 1 ? "ticket" : "tickets"} shown
+            {rows.length === 1 ? "ticket" : "tickets"} shown · your tickets only
             {stats.pending > 0 ? ` · ${stats.pending} pending` : ""}
           </p>
         </div>

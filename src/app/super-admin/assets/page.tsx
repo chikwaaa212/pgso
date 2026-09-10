@@ -199,9 +199,6 @@ export default function SuperAdminAssetsPage() {
         <div className={styles.actions}>
           <AddAssetDialog categories={categories} onSuccess={reload} />
           <ImportAssetsDialog onSuccess={reload} />
-          <a href="/api/personnel/assets/template-xlsx" download className={styles.actionSecondary}>
-            Download template
-          </a>
         </div>
       </div>
 

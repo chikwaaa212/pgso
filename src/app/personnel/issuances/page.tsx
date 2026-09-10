@@ -33,8 +33,8 @@ export default async function PersonnelIssuancesPage() {
         <div>
           <h1 className={styles.title}>PAR / ICS Issuances</h1>
           <p className={styles.subtitle}>
-            {rows.length} {rows.length === 1 ? "record" : "records"} · value
-            over ₱50,000 → PAR, ₱50,000 or less → ICS
+            {rows.length} {rows.length === 1 ? "record" : "records"} · your issuances only
+            · value over ₱50,000 → PAR, ₱50,000 or less → ICS
           </p>
         </div>
       </div>

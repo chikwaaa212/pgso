@@ -312,8 +312,8 @@ export default function PersonnelInventoryPage() {
             .
           </p>
           <p className="mt-1">
-            Recommendation: file a supply request so Super Admin can replenish
-            these stocks before they run out.{' '}
+            File a stock replenishment request so the admin can add stock /
+            restock these items before they run out.{' '}
             <Link href="/personnel/requests" className="font-semibold underline">
               Go to Requests
             </Link>
@@ -485,8 +485,10 @@ export default function PersonnelInventoryPage() {
                 placeholder="e.g. Bond paper A4"
               />
             </div>
-            <div className="grid gap-1.5">
-              <Label htmlFor="stock-code">Account code</Label>
+            <div className="grid gap-1.5 sm:col-span-2">
+              <Label htmlFor="stock-code">
+                Account code <span className="font-normal text-navy-500">(start here)</span>
+              </Label>
               {master.loaded && master.catalog.length > 0 ? (
                 <Select
                   value={draft.account_code || undefined}
@@ -525,7 +527,78 @@ export default function PersonnelInventoryPage() {
                   </datalist>
                 </>
               )}
+              {(() => {
+                const code = draft.account_code.trim()
+                if (!code) {
+                  return (
+                    <p className="text-xs text-navy-500">
+                      Start by picking the account code — asset type and account title
+                      fill in automatically.
+                    </p>
+                  )
+                }
+                const hit = master.catalog.find((c) => c.account_code === code)
+                if (hit) {
+                  return (
+                    <p className="text-xs font-medium text-emerald-700">
+                      Known code — asset type and account title filled in automatically.
+                    </p>
+                  )
+                }
+                return (
+                  <p className="text-xs text-amber-700">
+                    Unknown code — ask your Super Admin to add it to Master Data.
+                  </p>
+                )
+              })()}
             </div>
+            {(() => {
+              const hit = master.catalog.find(
+                (c) => c.account_code === draft.account_code.trim()
+              )
+              return (
+                <>
+                  <div className="grid gap-1.5">
+                    <Label htmlFor="stock-asset-type">
+                      Asset type{' '}
+                      {hit ? (
+                        <span className="font-normal text-emerald-700">(auto-filled)</span>
+                      ) : (
+                        <span className="font-normal text-navy-500">(from code)</span>
+                      )}
+                    </Label>
+                    <Input
+                      id="stock-asset-type"
+                      type="text"
+                      value={hit?.asset_type ?? ''}
+                      placeholder={hit ? 'Auto-filled from code' : 'Pick a code above'}
+                      disabled
+                      readOnly
+                      aria-readonly="true"
+                    />
+                  </div>
+                  <div className="grid gap-1.5">
+                    <Label htmlFor="stock-account-title">
+                      Account title{' '}
+                      {hit ? (
+                        <span className="font-normal text-emerald-700">(auto-filled)</span>
+                      ) : (
+                        <span className="font-normal text-navy-500">(from code)</span>
+                      )}
+                    </Label>
+                    <Input
+                      id="stock-account-title"
+                      type="text"
+                      value={hit?.account_title ?? ''}
+                      placeholder={hit ? 'Auto-filled from code' : 'Pick a code above'}
+                      disabled
+                      readOnly
+                      aria-readonly="true"
+                    />
+                  </div>
+                </>
+              )
+            })()}
             <div className="grid gap-1.5">
               <Label htmlFor="stock-unit">Unit</Label>
               {master.loaded && master.units.length > 0 ? (
