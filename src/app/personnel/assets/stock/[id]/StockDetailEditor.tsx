@@ -24,9 +24,17 @@ const EDIT_FIELDS: {
   { label: "Account Code", key: "account_code", type: "text" },
   { label: "Quantity", key: "quantity", type: "number" },
   { label: "Unit", key: "unit", type: "text" },
-  { label: "Reorder Threshold", key: "reorder_threshold", type: "number" },
   { label: "Location", key: "location", type: "text" },
   { label: "Updated At", key: "updated_at", type: "date" },
+];
+
+// Display-only: personnel cannot edit the threshold — Super Admin sets it.
+const READONLY_FIELDS: {
+  key: keyof StockRow;
+  label: string;
+  note: string;
+}[] = [
+  { label: "Reorder Threshold", key: "reorder_threshold", note: "Set by Super Admin" },
 ];
 
 const inputCls = cn(
@@ -125,8 +133,9 @@ function EditField({ field, stock }: { field: (typeof EDIT_FIELDS)[number]; stoc
   );
 }
 
-function ReadOnlyField({ field, stock }: { field: (typeof EDIT_FIELDS)[number]; stock: StockRow }) {
+function ReadOnlyField({ field, stock }: { field: { key: keyof StockRow; label: string; note?: string }; stock: StockRow }) {
   const { key, label } = field;
+  const note = "note" in field ? (field as { note?: string }).note : undefined;
 
   return (
     <div className={assetStyles.detailField}>
@@ -134,11 +143,29 @@ function ReadOnlyField({ field, stock }: { field: (typeof EDIT_FIELDS)[number]; 
       <span className={assetStyles.detailValue}>
         {fmtDisplayValue(key, stock[key])}
       </span>
+      {note ? (
+        <span className={assetStyles.detailLabel} style={{ fontSize: "0.6875rem" }}>
+          {note}
+        </span>
+      ) : null}
     </div>
   );
 }
 
-export function StockDetailEditor({ stock }: { stock: StockRow }) {
+export function StockDetailEditor({
+  stock,
+  readOnly = false,
+  backHref,
+  crumbBase = "Personnel / Assets / Stocks",
+}: {
+  stock: StockRow;
+  /** Hides the Edit action for oversight (read-only) views. */
+  readOnly?: boolean;
+  /** Overrides the back link (defaults to the personnel list). */
+  backHref?: string;
+  /** Overrides the leading crumb segments (defaults to the personnel trail). */
+  crumbBase?: string;
+}) {
   const router = useRouter();
   const { toast } = useToast();
   const [isEditing, setIsEditing] = useState(false);
@@ -169,7 +196,7 @@ export function StockDetailEditor({ stock }: { stock: StockRow }) {
   return (
     <section className={styles.section}>
       <p className={styles.crumb}>
-        Personnel / Assets / Stocks / {stock.item_name ?? stock.id}
+        {crumbBase} / {stock.item_name ?? stock.id}
       </p>
 
       <div className={styles.headerRow}>
@@ -181,31 +208,32 @@ export function StockDetailEditor({ stock }: { stock: StockRow }) {
         </div>
         <div className={styles.actions}>
           {!isEditing && (
-            <Link href="/personnel/assets">
+            <Link href={backHref ?? "/personnel/assets"}>
               <Button type="button" variant="outline" size="sm">
                 Back to Assets
               </Button>
             </Link>
           )}
-          {isEditing ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => setIsEditing(false)}
-            >
-              Cancel
-            </Button>
-          ) : (
-            <Button
-              type="button"
-              variant="primary"
-              size="sm"
-              onClick={() => setIsEditing(true)}
-            >
-              Edit
-            </Button>
-          )}
+          {!readOnly &&
+            (isEditing ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => setIsEditing(false)}
+              >
+                Cancel
+              </Button>
+            ) : (
+              <Button
+                type="button"
+                variant="primary"
+                size="sm"
+                onClick={() => setIsEditing(true)}
+              >
+                Edit
+              </Button>
+            ))}
         </div>
       </div>
 
@@ -216,6 +244,9 @@ export function StockDetailEditor({ stock }: { stock: StockRow }) {
             <div className={assetStyles.detailFields}>
               {EDIT_FIELDS.map((f) => (
                 <EditField key={f.key} field={f} stock={stock} />
+              ))}
+              {READONLY_FIELDS.map((f) => (
+                <ReadOnlyField key={f.key} field={f} stock={stock} />
               ))}
             </div>
             <div className="mt-4 flex justify-end gap-2">
@@ -250,6 +281,9 @@ export function StockDetailEditor({ stock }: { stock: StockRow }) {
             <QrCard stock={stock} />
             <div className={assetStyles.detailFields}>
               {EDIT_FIELDS.map((f) => (
+                <ReadOnlyField key={f.key} field={f} stock={stock} />
+              ))}
+              {READONLY_FIELDS.map((f) => (
                 <ReadOnlyField key={f.key} field={f} stock={stock} />
               ))}
             </div>

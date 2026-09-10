@@ -201,7 +201,7 @@ export async function createRepair(
   }
 
   try {
-    const supabase = createClient()
+    const supabase = await createClient()
     const {
       data: { user },
     } = await supabase.auth.getUser()
@@ -287,7 +287,7 @@ export async function updateRepair(
   }
 
   try {
-    const supabase = createClient()
+    const supabase = await createClient()
     const {
       data: { user },
     } = await supabase.auth.getUser()
@@ -347,7 +347,7 @@ export async function setRepairStatus(
   }
 
   try {
-    const supabase = createClient()
+    const supabase = await createClient()
     const {
       data: { user },
     } = await supabase.auth.getUser()

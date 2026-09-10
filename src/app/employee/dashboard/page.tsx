@@ -5,7 +5,7 @@ import { logout } from '@/app/(auth)/auth'
 import styles from './page.module.css'
 
 export default async function EmployeeDashboard() {
-  const supabase = createClient()
+  const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
 
   return (

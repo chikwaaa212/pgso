@@ -102,6 +102,7 @@
 .receipt {
   width: 100%;
   max-width: 52rem;
+  margin-inline: auto;
   background-color: #fff;
   border-radius: 0.5rem;
   box-shadow: 0 14px 38px rgb(27 42 74 / 0.14);

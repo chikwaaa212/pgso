@@ -14,7 +14,7 @@ const ROLE_LABELS: Record<string, string> = {
 async function getSidebarUser(): Promise<{ name: string; detail: string }> {
   const fallback = { name: "PGSO Personnel", detail: "Staff" };
   try {
-    const supabase = createClient();
+    const supabase = await createClient();
     const {
       data: { user },
     } = await supabase.auth.getUser();

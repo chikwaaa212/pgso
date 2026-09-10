@@ -8,6 +8,7 @@ import type { Prisma } from '@prisma/client'
 import { withIdempotency } from '@/lib/idempotency'
 import { writeAuditLog } from '@/lib/audit'
 import { stockInspectionItems } from '@/lib/stock'
+import { findCatalogEntry, getActiveCatalogEntries, resolveUnitName } from '@/lib/master-data'
 import type { SignupState } from '@/types'
 
 const statuses = ['complete', 'partial'] as const
@@ -25,9 +26,7 @@ export async function logDelivery(
   _prevState: SignupState,
   formData: FormData
 ): Promise<SignupState> {
-  const assetType = (formData.get('assetType') as string)?.trim()
   const accountCode = (formData.get('accountCode') as string)?.trim()
-  const accountTitle = (formData.get('accountTitle') as string)?.trim()
   const dateSupplied = formData.get('dateSupplied') as string
   const supplierName = (formData.get('supplierName') as string)?.trim()
   const poReference = (formData.get('poReference') as string)?.trim()
@@ -37,9 +36,18 @@ export async function logDelivery(
   const recipientRole = (formData.get('recipientRole') as string)?.trim()
   const recipientName = (formData.get('recipientName') as string)?.trim()
 
-  if (!assetType || !accountCode || !accountTitle) {
-    return { error: 'Asset type, account code, and account title are required.' }
+  if (!accountCode) {
+    return { error: 'Account code is required — pick one from Master Data.' }
   }
+
+  // Strict mode: the catalog is authoritative. Unknown/inactive codes are
+  // rejected; type + title always come from the catalog entry.
+  const catalogEntry = await findCatalogEntry(accountCode)
+  if (!catalogEntry) {
+    return { error: `Unknown account code "${accountCode}" — ask your Super Admin to add it to Master Data.` }
+  }
+  const assetType = catalogEntry.type
+  const accountTitle = catalogEntry.title
 
   if (!dateSupplied || Number.isNaN(Date.parse(dateSupplied))) {
     return { error: 'A valid date received is required.' }
@@ -90,9 +98,17 @@ export async function logDelivery(
     if (item.costRaw && (Number.isNaN(Number(item.costRaw)) || Number(item.costRaw) < 0)) {
       return { error: 'Unit costs must be zero or more.' }
     }
+    if (!item.unit) {
+      return { error: `Item "${item.description}" needs a unit — pick one from Master Data.` }
+    }
+    const canonicalUnit = await resolveUnitName(item.unit)
+    if (!canonicalUnit) {
+      return { error: `Unknown unit "${item.unit}" for "${item.description}" — ask your Super Admin to add it to Master Data.` }
+    }
+    item.unit = canonicalUnit
   }
 
-  const supabase = createClient()
+  const supabase = await createClient()
   const {
     data: { user },
   } = await supabase.auth.getUser()
@@ -204,7 +220,7 @@ export async function recordInspection(
     return { error: 'Invalid item checks payload.' }
   }
 
-  const supabase = createClient()
+  const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
 
   if (!user) {
@@ -310,6 +326,8 @@ export interface DeliveryDetails {
   account_title: string | null
   recipient_role: string | null
   recipient_name: string | null
+  received_by: string | null
+  logged_by_name: string | null
   created_at: string | null
   items: DeliveryDetailItem[]
 }
@@ -327,6 +345,19 @@ export async function getDeliveryDetails(
 
     if (!delivery) notFound()
 
+    let loggedByName: string | null = null
+    try {
+      if (delivery.received_by) {
+        const profile = await prisma.profile.findUnique({
+          where: { id: delivery.received_by },
+          select: { full_name: true },
+        })
+        loggedByName = profile?.full_name ?? null
+      }
+    } catch {
+      loggedByName = null
+    }
+
     return {
       id: delivery.id,
       delivery_ref: delivery.id.slice(0, 8).toUpperCase(),
@@ -340,6 +371,8 @@ export async function getDeliveryDetails(
       account_title: delivery.account_title,
       recipient_role: delivery.recipient_role,
       recipient_name: delivery.recipient_name,
+      received_by: delivery.received_by ?? null,
+      logged_by_name: loggedByName,
       created_at: delivery.created_at?.toISOString() ?? null,
       items: delivery.items.map((item) => ({
         id: item.id,
@@ -369,30 +402,19 @@ export interface DeliveryFormOptions {
 
 /**
  * Chart-of-accounts options for the Log delivery form, sourced from the
- * assets table (the canonical asset type / account code / account title
- * reference). Each account code maps to exactly one asset type + title,
- * so picking a code auto-fills the other two fields.
+ * Super Admin–managed account catalog (strict mode). Each account code maps
+ * to exactly one asset type + title, so picking a code auto-fills the other
+ * two fields. No custom codes — unknown codes must be added in Master Data.
  */
 export async function getDeliveryFormOptions(): Promise<DeliveryFormOptions> {
   const empty: DeliveryFormOptions = { assetTypes: [], accountTitles: [], codes: [] }
   try {
-    const assets = await prisma.asset.findMany({
-      where: { account_code: { not: null } },
-      select: { category: true, account_code: true, account_title: true },
-    })
-
-    const byCode = new Map<string, DeliveryFormCode>()
-    for (const a of assets) {
-      const code = a.account_code?.trim() ?? ''
-      if (!code || byCode.has(code.toLowerCase())) continue
-      byCode.set(code.toLowerCase(), {
-        code,
-        assetType: a.category?.trim() ?? '',
-        accountTitle: a.account_title?.trim() ?? '',
-      })
-    }
-
-    const codes = [...byCode.values()].sort((x, y) => x.code.localeCompare(y.code))
+    const entries = await getActiveCatalogEntries()
+    const codes: DeliveryFormCode[] = entries.map((e) => ({
+      code: e.code,
+      assetType: e.type,
+      accountTitle: e.title,
+    }))
     const assetTypes = [...new Set(codes.map((c) => c.assetType).filter(Boolean))].sort((a, b) =>
       a.localeCompare(b)
     )

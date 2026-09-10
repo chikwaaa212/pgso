@@ -20,6 +20,7 @@ interface IssuanceDbRow {
   quantity: number
   issuance_data: Record<string, unknown> | null
   created_at: Date | string | null
+  created_by: string | null
 }
 
 interface StoredLine {
@@ -42,6 +43,8 @@ export interface PublicIssueLine {
   doc_no: string | null
   doc_date: string | null
   employee_name: string
+  /** System user who processed the issuance (may differ from the recipient). */
+  logged_by: string | null
   account_code: string | null
   article: string | null
   account_title: string | null
@@ -123,7 +126,8 @@ export async function getPublicIssues(): Promise<PublicIssueLine[]> {
       SELECT id::text AS id, doc_type, doc_no, doc_date,
              asset_id::text AS asset_id, inventory_id::text AS inventory_id,
              employee_id::text AS employee_id, request_id::text AS request_id,
-             quantity, issuance_data, created_at
+             quantity, issuance_data, created_at,
+             created_by::text AS created_by
       FROM issuance_records ORDER BY created_at DESC`
   } catch (e) {
     console.error('[getPublicIssues:list]', e)
@@ -131,10 +135,15 @@ export async function getPublicIssues(): Promise<PublicIssueLine[]> {
   }
   if (rows.length === 0) return []
 
-  // Employee names (receiving employee per issue).
+  // Employee names (receiving employee per issue) + issuers (logged by).
   const names = new Map<string, string>()
   try {
-    const ids = [...new Set(rows.map((r) => r.employee_id))]
+    const ids = [
+      ...new Set([
+        ...rows.map((r) => r.employee_id),
+        ...rows.map((r) => r.created_by).filter((v): v is string => Boolean(v)),
+      ]),
+    ]
     const profiles = await prisma.profile.findMany({
       where: { id: { in: ids } },
       select: { id: true, full_name: true },
@@ -207,6 +216,7 @@ export async function getPublicIssues(): Promise<PublicIssueLine[]> {
   const out: PublicIssueLine[] = []
   for (const r of rows) {
     const employee = names.get(r.employee_id) ?? 'Unknown employee'
+    const loggedBy = (r.created_by ? names.get(r.created_by) : undefined) ?? null
     const doc_date = isoDate(r.doc_date)
     const created_at = isoDateTime(r.created_at)
     const multi = parsedLines.get(r.id)
@@ -249,6 +259,7 @@ export async function getPublicIssues(): Promise<PublicIssueLine[]> {
           doc_no: r.doc_no,
           doc_date: doc_date,
           employee_name: employee,
+          logged_by: loggedBy,
           account_code,
           article,
           account_title,
@@ -292,6 +303,7 @@ export async function getPublicIssues(): Promise<PublicIssueLine[]> {
         doc_no: r.doc_no,
         doc_date: doc_date,
         employee_name: employee,
+        logged_by: loggedBy,
         account_code,
         article,
         account_title,

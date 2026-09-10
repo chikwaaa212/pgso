@@ -37,7 +37,7 @@ function asText(value: unknown): string | null {
  */
 export async function getMyLogs(): Promise<LogRow[]> {
   try {
-    const supabase = createClient()
+    const supabase = await createClient()
     const {
       data: { user },
     } = await supabase.auth.getUser()

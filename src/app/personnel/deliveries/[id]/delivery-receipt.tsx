@@ -42,14 +42,14 @@ function StatusPill({ value }: { value: string | null }) {
   );
 }
 
-export function DeliveryReceiptToolbar() {
+export function DeliveryReceiptToolbar({ backHref = "/personnel/deliveries", backLabel = "Back to deliveries" }: { backHref?: string; backLabel?: string } = {}) {
   return (
     <div className={receiptStyles.toolbar}>
       <Link
-        href="/personnel/deliveries"
+        href={backHref}
         className={cn(receiptStyles.toolbarBtn, receiptStyles.toolbarGhost)}
       >
-        Back to deliveries
+        {backLabel}
       </Link>
       <button
         type="button"
@@ -108,6 +108,7 @@ export function DeliveryReceipt({ delivery }: { delivery: DeliveryDetails }) {
                 : (delivery.delivery_status ?? "—").toUpperCase(),
             ],
             ["Received By", recipient],
+            ["Logged By", delivery.logged_by_name ?? "—"],
             [
               "Account Code",
               delivery.account_code ?? "—",

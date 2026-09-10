@@ -494,7 +494,7 @@ export async function createRequest(
   }
 
   try {
-    const supabase = createClient()
+    const supabase = await createClient()
     const {
       data: { user },
     } = await supabase.auth.getUser()
@@ -666,7 +666,7 @@ export async function setRequestStatus(
   }
 
   try {
-    const supabase = createClient()
+    const supabase = await createClient()
     const {
       data: { user },
     } = await supabase.auth.getUser()

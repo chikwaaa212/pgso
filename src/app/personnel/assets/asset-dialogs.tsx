@@ -27,6 +27,7 @@ import {
   type CreateAssetState,
   type ImportAssetsState,
 } from "./actions";
+import { useMasterData } from "@/hooks/use-master-data";
 import { cn } from "@/lib/utils";
 
 const CONDITION_OPTIONS = ["serviceable", "unserviceable"];
@@ -107,14 +108,35 @@ export function AddAssetDialog({
   const [error, setError] = useState("");
   const formRef = useRef<HTMLFormElement>(null);
   const { toast } = useToast();
+  // Strict mode: code + unit come from Master Data; title + type auto-fill.
+  const master = useMasterData();
+  const [code, setCode] = useState<string | undefined>(undefined);
+  const [unit, setUnit] = useState<string | undefined>(undefined);
+  const selected = master.catalog.find((c) => c.account_code === code);
+  const catalogMode = master.loaded && master.catalog.length > 0;
+
+  function handleOpenChange(v: boolean) {
+    setOpen(v);
+    if (!v) {
+      setCode(undefined);
+      setUnit(undefined);
+      setError("");
+    }
+  }
 
   function submit(formData: FormData) {
     setError("");
+    if (catalogMode && !code) {
+      setError("Pick an ACCOUNT CODE from Master Data.");
+      return;
+    }
     startTransition(async () => {
       const res: CreateAssetState = await createAsset({} as CreateAssetState, formData);
       if (res.success) {
         toast({ title: "Asset added", description: "The new asset is now in the registry.", variant: "success" });
         formRef.current?.reset();
+        setCode(undefined);
+        setUnit(undefined);
         setOpen(false);
         onSuccess?.();
       } else {
@@ -128,29 +150,55 @@ export function AddAssetDialog({
       <Button type="button" onClick={() => setOpen(true)}>
         Add asset
       </Button>
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog open={open} onOpenChange={handleOpenChange}>
         <DialogContent className="max-h-[90vh] overflow-y-auto bg-white sm:max-w-3xl dark:bg-white">
           <DialogHeader>
             <DialogTitle>Add asset</DialogTitle>
             <DialogDescription>
-              ACCOUNT CODE and ARTICLE are required. PROPERTY No. becomes the QR code — leave it blank to assign later.
+              ACCOUNT CODE and ARTICLE are required. Pick the code from Master Data — title and type fill in automatically. PROPERTY No. becomes the QR code — leave it blank to assign later.
             </DialogDescription>
           </DialogHeader>
           <form ref={formRef} action={submit}>
             <div className="grid gap-4 sm:grid-cols-2">
               <Field label="ACCOUNT CODE" required>
-                <Input name="account_code" required placeholder="e.g. 1-07-05-010" className={inputCls} />
+                {catalogMode ? (
+                  <>
+                    <Select value={code} onValueChange={setCode}>
+                      <SelectTrigger className={inputCls}>
+                        <SelectValue placeholder="Select account code" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {master.catalog.map((c) => (
+                          <SelectItem key={c.account_code} value={c.account_code}>
+                            {c.account_code} — {c.account_title}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <input type="hidden" name="account_code" value={code ?? ""} />
+                  </>
+                ) : (
+                  <Input name="account_code" required placeholder="e.g. 1-07-05-010" className={inputCls} />
+                )}
               </Field>
               <Field label="PROPERTY No. (QR)">
                 <Input name="qr_code" placeholder="e.g. OFFICE-ITEM 001" className={inputCls} />
               </Field>
               <Field label="ASSET TYPE">
-                <Input
-                  name="category"
-                  placeholder={categories.length > 0 ? `e.g. ${categories[0]}` : "e.g. Machinery and Equipment"}
-                  className={inputCls}
-                  list="asset-category-options"
-                />
+                {selected ? (
+                  <>
+                    <Input value={selected.asset_type} disabled className={inputCls} />
+                    <input type="hidden" name="category" value={selected.asset_type} />
+                  </>
+                ) : (
+                  <Input
+                    name="category"
+                    placeholder={categories.length > 0 ? `e.g. ${categories[0]}` : "e.g. Machinery and Equipment"}
+                    className={inputCls}
+                    list="asset-category-options"
+                    disabled={catalogMode}
+                  />
+                )}
                 <datalist id="asset-category-options">
                   {categories.map((c) => (
                     <option key={c} value={c} />
@@ -161,7 +209,14 @@ export function AddAssetDialog({
                 <Input name="article" required placeholder="e.g. TRACTOR" className={inputCls} />
               </Field>
               <Field label="ACCOUNT TITLE">
-                <Input name="account_title" placeholder="e.g. MACHINERIES" className={inputCls} />
+                {selected ? (
+                  <>
+                    <Input value={selected.account_title} disabled className={inputCls} />
+                    <input type="hidden" name="account_title" value={selected.account_title} />
+                  </>
+                ) : (
+                  <Input name="account_title" placeholder="e.g. MACHINERIES" className={inputCls} disabled={catalogMode} />
+                )}
               </Field>
               <Field label="ACCOUNT NAME">
                 <Input name="account_name" placeholder="e.g. MACHINERY" className={inputCls} />
@@ -173,7 +228,25 @@ export function AddAssetDialog({
                 <Input name="quantity" type="number" min={0} step={1} defaultValue="1" className={inputCls} />
               </Field>
               <Field label="UNIT">
-                <Input name="unit" placeholder="unit / pc / set" className={inputCls} />
+                {master.loaded && master.units.length > 0 ? (
+                  <>
+                    <Select value={unit} onValueChange={setUnit}>
+                      <SelectTrigger className={inputCls}>
+                        <SelectValue placeholder="Select unit" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {master.units.map((u) => (
+                          <SelectItem key={u} value={u}>
+                            {u}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <input type="hidden" name="unit" value={unit ?? ""} />
+                  </>
+                ) : (
+                  <Input name="unit" placeholder="unit / pc / set" className={inputCls} />
+                )}
               </Field>
               <Field label="CONDITION">
                 <OptionSelect name="condition" placeholder="Select condition" options={CONDITION_OPTIONS} defaultValue="serviceable" />
@@ -325,7 +398,7 @@ export function ImportAssetsDialog({ onSuccess }: { onSuccess?: () => void }) {
           <DialogHeader>
             <DialogTitle>Import assets from Excel</DialogTitle>
             <DialogDescription>
-              Fill the template, then upload it here. Existing ACCOUNT CODEs are updated; new ones are added.
+              Fill the template, then upload it here. Existing ACCOUNT CODEs are updated; new ones are added. Rows with unknown ACCOUNT CODEs are skipped — those codes must come from Master Data.
             </DialogDescription>
           </DialogHeader>
 

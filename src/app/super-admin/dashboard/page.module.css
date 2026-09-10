@@ -1,8 +1,7 @@
 .section {
-  margin-inline: auto;
-  padding-top: 3rem;
+  width: 100%;
+  padding-top: 1rem;
   padding-bottom: 3rem;
-  width: min(90% + (100% - 64rem) / 2, 64rem);
 }
 
 .title {
@@ -109,4 +108,141 @@
 .addSuccess {
   font-size: 0.875rem;
   color: var(--color-yellow-600);
+}
+
+.crumb {
+  font-size: 0.75rem;
+  color: var(--color-navy-500);
+}
+
+.stats {
+  margin-top: 1.5rem;
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: repeat(2, 1fr);
+}
+
+@media (min-width: 768px) {
+  .stats {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+.statCard {
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  text-decoration: none;
+}
+
+.statLabel {
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-navy-500);
+}
+
+.statValue {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--color-navy-900);
+}
+
+.statDelta {
+  font-size: 0.75rem;
+  color: var(--color-navy-600);
+}
+
+.panel {
+  margin-top: 1.25rem;
+  padding: 1.25rem;
+}
+
+.panelTitle {
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.panelSub {
+  font-size: 0.8125rem;
+  color: var(--color-navy-500);
+  margin-top: 0.25rem;
+}
+
+.auditList {
+  margin-top: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  list-style: none;
+  padding: 0;
+}
+
+.auditItem {
+  font-size: 0.8125rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--color-navy-100);
+  border-radius: 0.5rem;
+}
+
+.auditMeta {
+  font-size: 0.6875rem;
+  color: var(--color-navy-500);
+}
+
+.cardLink {
+  text-decoration: none;
+  color: inherit;
+}
+
+.twoCol {
+  margin-top: 1.25rem;
+  display: grid;
+  gap: 1.25rem;
+  grid-template-columns: 1fr;
+  align-items: start;
+}
+
+@media (min-width: 1024px) {
+  .twoCol {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.twoCol > .panel,
+.twoCol > .addSection {
+  margin-top: 0;
+  height: 100%;
+}
+
+.chartWrap {
+  margin-top: 1.25rem;
+}
+
+.chartWrap > * {
+  margin-top: 0;
+}
+
+.analyticsGrid {
+  display: grid;
+  gap: 1.25rem;
+  grid-template-columns: 1fr;
+}
+
+@media (min-width: 1024px) {
+  .analyticsGrid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.chartCaption {
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  color: var(--color-navy-700);
+  background: var(--color-navy-50, #f1f5f9);
+  border: 1px solid var(--color-navy-100);
+  border-radius: 0.5rem;
+  padding: 0.625rem 0.75rem;
+  margin: 0.75rem 0 0;
 }

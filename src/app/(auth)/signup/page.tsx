@@ -78,9 +78,10 @@ export default function SignupPage() {
 
         {state?.success && (
           <p className={styles.success}>
-            Account created! You can now{' '}
+            Submitted for approval. You can sign in after an admin approves
+            your account.{' '}
             <a href="/login" className={styles.link}>
-              sign in
+              Go to sign in
             </a>
             .
           </p>

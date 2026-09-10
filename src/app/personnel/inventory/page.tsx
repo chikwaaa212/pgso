@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
+import Link from 'next/link'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -29,6 +30,7 @@ import {
 } from './actions'
 import { TablePager } from '@/components/personnel/TablePager'
 import { usePageSize } from '@/hooks/use-page-size'
+import { useMasterData } from '@/hooks/use-master-data'
 import styles from '../dashboard/page.module.css'
 import air from '../inspections/air-section.module.css'
 
@@ -72,7 +74,6 @@ interface Draft {
   quantity: string
   unit: string
   unit_cost: string
-  reorder_threshold: string
   location: string
 }
 
@@ -82,7 +83,6 @@ const EMPTY_DRAFT: Draft = {
   quantity: '0',
   unit: '',
   unit_cost: '',
-  reorder_threshold: '',
   location: '',
 }
 
@@ -99,6 +99,8 @@ export default function PersonnelInventoryPage() {
   const [syncing, setSyncing] = useState(false)
   const [syncMsg, setSyncMsg] = useState('')
   const [error, setError] = useState('')
+  // Strict mode: code + unit come from Master Data.
+  const master = useMasterData()
 
   const reload = () => {
     void getInventoryItems().then(setRows)
@@ -119,14 +121,16 @@ export default function PersonnelInventoryPage() {
   const stats = useMemo(() => {
     let low = 0
     let critical = 0
+    let out = 0
     let units = 0
     for (const r of rows) {
       units += r.quantity
       const lv = levelOf(r)
       if (lv === 'low') low += 1
       if (lv === 'critical') critical += 1
+      if (lv === 'out') out += 1
     }
-    return { skus: rows.length, units, low, critical }
+    return { skus: rows.length, units, low, critical, out }
   }, [rows])
 
   const filtered = useMemo(() => {
@@ -170,8 +174,6 @@ export default function PersonnelInventoryPage() {
       quantity: String(item.quantity),
       unit: item.unit ?? '',
       unit_cost: item.unit_cost != null ? String(item.unit_cost) : '',
-      reorder_threshold:
-        item.reorder_threshold != null ? String(item.reorder_threshold) : '',
       location: item.location ?? '',
     })
     setError('')
@@ -189,10 +191,6 @@ export default function PersonnelInventoryPage() {
       unit: draft.unit,
       unit_cost:
         draft.unit_cost.trim() === '' ? null : Number(draft.unit_cost),
-      reorder_threshold:
-        draft.reorder_threshold.trim() === ''
-          ? null
-          : Number(draft.reorder_threshold),
       location: draft.location,
     })
     setSaving(false)
@@ -247,10 +245,7 @@ export default function PersonnelInventoryPage() {
     Number(draft.quantity) >= 0 &&
     (draft.unit_cost.trim() === '' ||
       (!Number.isNaN(Number(draft.unit_cost)) &&
-        Number(draft.unit_cost) >= 0)) &&
-    (draft.reorder_threshold.trim() === '' ||
-      (Number.isInteger(Number(draft.reorder_threshold)) &&
-        Number(draft.reorder_threshold) >= 0))
+        Number(draft.unit_cost) >= 0))
 
   return (
     <section className={styles.section}>
@@ -301,6 +296,30 @@ export default function PersonnelInventoryPage() {
           <p className={air.statLabel}>Low / critical items</p>
         </div>
       </div>
+
+      {stats.out + stats.low + stats.critical > 0 ? (
+        <div
+          role="alert"
+          className="rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900"
+        >
+          <p className="font-semibold">
+            Replenishment needed: {stats.out + stats.low + stats.critical}{' '}
+            item{stats.out + stats.low + stats.critical !== 1 ? 's' : ''} at or
+            below threshold
+            {stats.out > 0
+              ? ` (${stats.out} out of stock${stats.low + stats.critical > 0 ? `, ${stats.low + stats.critical} low/critical` : ''})`
+              : ` (${stats.low + stats.critical} low/critical)`}
+            .
+          </p>
+          <p className="mt-1">
+            Recommendation: file a supply request so Super Admin can replenish
+            these stocks before they run out.{' '}
+            <Link href="/personnel/requests" className="font-semibold underline">
+              Go to Requests
+            </Link>
+          </p>
+        </div>
+      ) : null}
 
       <Card className={styles.panel}>
         <div className={air.controls}>
@@ -468,33 +487,77 @@ export default function PersonnelInventoryPage() {
             </div>
             <div className="grid gap-1.5">
               <Label htmlFor="stock-code">Account code</Label>
-              <Input
-                id="stock-code"
-                type="text"
-                value={draft.account_code}
-                onChange={(e) =>
-                  setDraft((d) => ({ ...d, account_code: e.target.value }))
-                }
-                placeholder="e.g. 213 (account code from delivery)"
-                list="stock-codes"
-              />
-              <datalist id="stock-codes">
-                {accountCodes.map((c) => (
-                  <option key={c} value={c} />
-                ))}
-              </datalist>
+              {master.loaded && master.catalog.length > 0 ? (
+                <Select
+                  value={draft.account_code || undefined}
+                  onValueChange={(v) =>
+                    setDraft((d) => ({ ...d, account_code: v === '__none__' ? '' : v }))
+                  }
+                >
+                  <SelectTrigger id="stock-code">
+                    <SelectValue placeholder="Select code (Master Data)" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">— No code —</SelectItem>
+                    {master.catalog.map((c) => (
+                      <SelectItem key={c.account_code} value={c.account_code}>
+                        {c.account_code} — {c.account_title}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <>
+                  <Input
+                    id="stock-code"
+                    type="text"
+                    value={draft.account_code}
+                    onChange={(e) =>
+                      setDraft((d) => ({ ...d, account_code: e.target.value }))
+                    }
+                    placeholder="e.g. 213 (account code from delivery)"
+                    list="stock-codes"
+                  />
+                  <datalist id="stock-codes">
+                    {accountCodes.map((c) => (
+                      <option key={c} value={c} />
+                    ))}
+                  </datalist>
+                </>
+              )}
             </div>
             <div className="grid gap-1.5">
               <Label htmlFor="stock-unit">Unit</Label>
-              <Input
-                id="stock-unit"
-                type="text"
-                value={draft.unit}
-                onChange={(e) =>
-                  setDraft((d) => ({ ...d, unit: e.target.value }))
-                }
-                placeholder="e.g. ream, pc, box"
-              />
+              {master.loaded && master.units.length > 0 ? (
+                <Select
+                  value={draft.unit || undefined}
+                  onValueChange={(v) =>
+                    setDraft((d) => ({ ...d, unit: v === '__none__' ? '' : v }))
+                  }
+                >
+                  <SelectTrigger id="stock-unit">
+                    <SelectValue placeholder="Select unit" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">— No unit —</SelectItem>
+                    {master.units.map((u) => (
+                      <SelectItem key={u} value={u}>
+                        {u}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <Input
+                  id="stock-unit"
+                  type="text"
+                  value={draft.unit}
+                  onChange={(e) =>
+                    setDraft((d) => ({ ...d, unit: e.target.value }))
+                  }
+                  placeholder="e.g. ream, pc, box"
+                />
+              )}
             </div>
             <div className="grid gap-1.5">
               <Label htmlFor="stock-qty">
@@ -526,18 +589,17 @@ export default function PersonnelInventoryPage() {
               />
             </div>
             <div className="grid gap-1.5">
-              <Label htmlFor="stock-threshold">Reorder threshold</Label>
-              <Input
-                id="stock-threshold"
-                type="number"
-                min={0}
-                step={1}
-                value={draft.reorder_threshold}
-                onChange={(e) =>
-                  setDraft((d) => ({ ...d, reorder_threshold: e.target.value }))
-                }
-                placeholder="Optional"
-              />
+              <Label>Reorder threshold</Label>
+              <p className="rounded-md border border-dashed border-navy-200 px-3 py-2 text-sm text-navy-700">
+                {(() => {
+                  const current = draft.id
+                    ? rows.find((r) => r.id === draft.id)?.reorder_threshold
+                    : undefined
+                  return current != null
+                    ? `${current} (set by Super Admin)`
+                    : 'Not set — Super Admin sets this'
+                })()}
+              </p>
             </div>
             <div className="grid gap-1.5 sm:col-span-2">
               <Label htmlFor="stock-location">Location</Label>

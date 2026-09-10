@@ -61,7 +61,14 @@ function initials(name: string) {
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
-export function IssuesTable({ rows }: { rows: PublicIssueLine[] }) {
+export function IssuesTable({
+  rows,
+  showLoggedBy = false,
+}: {
+  rows: PublicIssueLine[];
+  /** Shows the "Logged By" (issuing user) column — used by Super Admin oversight. */
+  showLoggedBy?: boolean;
+}) {
   const [query, setQuery] = useState("");
   const [docFilter, setDocFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
@@ -89,6 +96,7 @@ export function IssuesTable({ rows }: { rows: PublicIssueLine[] }) {
         const hay = [
           r.doc_no,
           r.employee_name,
+          r.logged_by,
           r.account_code,
           r.article,
           r.account_title,
@@ -219,6 +227,7 @@ export function IssuesTable({ rows }: { rows: PublicIssueLine[] }) {
                 <th>Doc</th>
                 <th>No.</th>
                 <th>Employee (received by)</th>
+                {showLoggedBy ? <th>Logged By</th> : null}
                 <th>Account Code</th>
                 <th>Article</th>
                 <th>Account Title</th>
@@ -243,6 +252,7 @@ export function IssuesTable({ rows }: { rows: PublicIssueLine[] }) {
                     </td>
                     <td>{r.doc_no ?? "—"}</td>
                     <td>{r.employee_name}</td>
+                    {showLoggedBy ? <td>{r.logged_by ?? "—"}</td> : null}
                     <td>{text(r.account_code)}</td>
                     <td>{text(r.article)}</td>
                     <td>{label(r.account_title)}</td>
@@ -250,7 +260,10 @@ export function IssuesTable({ rows }: { rows: PublicIssueLine[] }) {
                     <td>{r.quantity}</td>
                     <td>{fmtDate(r.doc_date)}</td>
                     <td>
-                      <span className="inline-flex items-center gap-2">
+                      <span
+                        className="inline-flex items-center gap-2"
+                        style={{ whiteSpace: "nowrap", flexWrap: "nowrap" }}
+                      >
                         {r.qr_data_url ? (
                           <span className={qr.thumb}>
                             {/* eslint-disable-next-line @next/next/no-img-element */}

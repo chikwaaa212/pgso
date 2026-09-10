@@ -5,6 +5,7 @@ import ExcelJS from "exceljs";
 import prisma from "@/lib/prisma";
 import { generateQrDataUrl } from "@/lib/qrcode";
 import { ASSET_EXCEL_HEADERS, ASSET_TEMPLATE_SHEET } from "@/lib/asset-excel";
+import { findCatalogEntry, getActiveCatalogEntries, resolveUnitName } from "@/lib/master-data";
 
 export interface EditState {
   success?: boolean;
@@ -192,6 +193,11 @@ export async function getAssets(): Promise<AssetRow[]> {
 
 export async function getCategories(): Promise<string[]> {
   try {
+    // Strict mode: distinct asset types from the active catalog.
+    const entries = await getActiveCatalogEntries();
+    const types = [...new Set(entries.map((e) => e.type).filter(Boolean))].sort();
+    if (types.length > 0) return types;
+    // Fallback for a fresh DB before any catalog seeding.
     const result = await prisma.asset.findMany({
       where: { category: { not: null } },
       select: { category: true },
@@ -545,7 +551,7 @@ const STOCK_EDITABLE_KEYS = [
   "quantity",
   "unit",
   "unit_cost",
-  "reorder_threshold",
+  // NOTE: "reorder_threshold" is intentionally excluded — only Super Admin sets it.
   "location",
   "updated_at",
 ] as const;
@@ -568,7 +574,7 @@ export async function updateStock(
       continue;
     }
     const val = raw as string;
-    if (key === "quantity" || key === "reorder_threshold") {
+    if (key === "quantity") {
       const n = Number(val);
       data[key] = Number.isNaN(n) ? null : n;
     } else if (key === "unit_cost") {
@@ -579,6 +585,34 @@ export async function updateStock(
       data[key] = Number.isNaN(d.getTime()) ? null : d;
     } else {
       data[key] = val;
+    }
+  }
+
+  // Strict mode: stock account codes and units must come from Master Data.
+  if (data["account_code"] !== undefined && data["account_code"] !== null) {
+    const code = String(data["account_code"]).trim();
+    if (code) {
+      const hit = await findCatalogEntry(code);
+      if (!hit) {
+        return {
+          success: false,
+          error: `Unknown ACCOUNT CODE "${code}" — ask your Super Admin to add it to Master Data.`,
+        };
+      }
+      data["account_code"] = hit.code;
+    }
+  }
+  if (data["unit"] !== undefined && data["unit"] !== null) {
+    const unitRaw = String(data["unit"]).trim();
+    if (unitRaw) {
+      const canonical = await resolveUnitName(unitRaw);
+      if (!canonical) {
+        return {
+          success: false,
+          error: `Unknown UNIT "${unitRaw}" — ask your Super Admin to add it to Master Data.`,
+        };
+      }
+      data["unit"] = canonical;
     }
   }
 
@@ -638,6 +672,226 @@ export async function getUnifiedAsset(id: string): Promise<UnifiedAssetRow | nul
   }
 }
 
+// ─── Asset history (assignments, repairs — each with its receipt) ────────────
+
+export interface AssetHistoryRepair {
+  id: string;
+  asset_id: string;
+  asset_label: string | null;
+  account_code: string | null;
+  account_title: string | null;
+  asset_type: string | null;
+  reported_by: string;
+  reporter_name: string;
+  repair_date: string;
+  description: string;
+  status: string | null;
+  cost: number | null;
+  technician: string | null;
+  created_at: string | null;
+}
+
+export interface AssetHistoryIssuance {
+  id: string;
+  doc_type: string;
+  doc_no: string | null;
+  doc_date: string | null;
+  employee_id: string;
+  employee_name: string;
+  quantity: number;
+  total_amount: number | null;
+  created_at: string | null;
+}
+
+export interface AssetHistoryRequest {
+  id: string;
+  request_type: string;
+  status: string | null;
+  date_requested: string | null;
+  employee_id: string;
+  employee_name: string;
+  description: string;
+}
+
+export interface AssetHistory {
+  /** Current holder (assigned_to profile), or null when available. */
+  assignedToName: string | null;
+  repairs: AssetHistoryRepair[];
+  issuances: AssetHistoryIssuance[];
+  requests: AssetHistoryRequest[];
+}
+
+/**
+ * Everything that ever happened to one asset: current assignment, PAR/ICS
+ * issuances, and repair tickets — newest first. Receipts render from these
+ * rows (issuance sheets load on demand via getIssuance).
+ */
+export async function getAssetHistory(id: string): Promise<AssetHistory> {
+  const empty: AssetHistory = {
+    assignedToName: null,
+    repairs: [],
+    issuances: [],
+    requests: [],
+  };
+  if (!id) return empty;
+  try {
+    const asset = await prisma.asset.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        qr_code: true,
+        account_code: true,
+        article: true,
+        description: true,
+        account_title: true,
+        category: true,
+        assigned_to: true,
+      },
+    });
+    if (!asset) return empty;
+
+    const labelBits = [asset.qr_code ?? asset.account_code, asset.article, asset.description].filter(
+      Boolean
+    ) as string[];
+    const assetLabel = labelBits.length > 0 ? labelBits.join(" — ").slice(0, 80) : "Asset";
+
+    const [repairs, issuanceDbRows, requestRows, requestLines, profiles] = await Promise.all([
+      prisma.repair
+        .findMany({
+          where: { asset_id: id },
+          orderBy: { created_at: "desc" },
+        })
+        .catch(() => []),
+      // All issuance rows — multi-line docs keep the asset only inside
+      // issuance_data.lines[].assetId, so matching happens in JS below.
+      prisma.$queryRaw<
+        Array<{
+          id: string;
+          doc_type: string;
+          doc_no: string | null;
+          doc_date: Date | string | null;
+          asset_id: string | null;
+          employee_id: string;
+          quantity: number;
+          total_amount: unknown;
+          issuance_data: Record<string, unknown> | null;
+          created_at: Date | string | null;
+        }>
+      >`SELECT id::text AS id, doc_type, doc_no, doc_date,
+              asset_id::text AS asset_id,
+              employee_id::text AS employee_id, quantity, total_amount,
+              issuance_data, created_at
+       FROM issuance_records ORDER BY created_at DESC`.catch(() => []),
+      // Requests naming this asset (directly or via line items) — approvals
+      // assign assets without necessarily creating an issuance row.
+      prisma.request
+        .findMany({
+          orderBy: { date_requested: "desc" },
+          select: {
+            id: true,
+            request_type: true,
+            status: true,
+            date_requested: true,
+            employee_id: true,
+            asset_id: true,
+            description: true,
+          },
+        })
+        .catch(() => []),
+      prisma.requestItem
+        .findMany({ select: { request_id: true, asset_id: true } })
+        .catch(() => [] as { request_id: string; asset_id: string | null }[]),
+      prisma.profile
+        .findMany({ select: { id: true, full_name: true } })
+        .catch(() => [] as { id: string; full_name: string | null }[]),
+    ]);
+
+    const names = new Map(profiles.map((p) => [p.id, p.full_name ?? "Unknown"]));
+    const isoDate = (v: Date | string | null) => {
+      if (!v) return null;
+      const d = v instanceof Date ? v : new Date(v);
+      return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
+    };
+    const isoDateTime = (v: Date | string | null) => {
+      if (!v) return null;
+      const d = v instanceof Date ? v : new Date(v);
+      return Number.isNaN(d.getTime()) ? null : d.toISOString();
+    };
+    const num = (v: unknown) => {
+      if (v === null || v === undefined) return null;
+      const n = Number(v);
+      return Number.isFinite(n) ? n : null;
+    };
+    const lineAssetIds = (data: Record<string, unknown> | null): string[] => {
+      try {
+        const lines = (data as { lines?: unknown } | null)?.lines;
+        if (!Array.isArray(lines)) return [];
+        return lines
+          .map((l) => (l as { assetId?: unknown } | null)?.assetId)
+          .filter((v): v is string => typeof v === "string" && v.length > 0);
+      } catch {
+        return [];
+      }
+    };
+
+    const matchedIssuances = issuanceDbRows.filter(
+      (r) => r.asset_id === id || lineAssetIds(r.issuance_data).includes(id)
+    );
+
+    const requestIdsForAsset = new Set(
+      requestLines
+        .filter((l) => l.asset_id === id)
+        .map((l) => l.request_id)
+    );
+    const matchedRequests = requestRows.filter(
+      (r) => r.asset_id === id || requestIdsForAsset.has(r.id)
+    );
+
+    return {
+      assignedToName: asset.assigned_to ? (names.get(asset.assigned_to) ?? null) : null,
+      repairs: repairs.map((r) => ({
+        id: r.id,
+        asset_id: id,
+        asset_label: assetLabel,
+        account_code: asset.account_code,
+        account_title: asset.account_title,
+        asset_type: asset.category,
+        reported_by: r.reported_by,
+        reporter_name: names.get(r.reported_by) ?? "Unknown employee",
+        repair_date: r.repair_date.toISOString().slice(0, 10),
+        description: r.description,
+        status: r.status,
+        cost: num(r.cost),
+        technician: r.technician,
+        created_at: r.created_at ? isoDateTime(r.created_at) : null,
+      })),
+      issuances: matchedIssuances.map((r) => ({
+        id: r.id,
+        doc_type: r.doc_type,
+        doc_no: r.doc_no,
+        doc_date: isoDate(r.doc_date),
+        employee_id: r.employee_id,
+        employee_name: names.get(r.employee_id) ?? "Unknown employee",
+        quantity: r.quantity,
+        total_amount: num(r.total_amount),
+        created_at: isoDateTime(r.created_at),
+      })),
+      requests: matchedRequests.map((r) => ({
+        id: r.id,
+        request_type: r.request_type,
+        status: r.status,
+        date_requested: r.date_requested ? isoDateTime(r.date_requested) : null,
+        employee_id: r.employee_id,
+        employee_name: names.get(r.employee_id) ?? "Unknown employee",
+        description: r.description,
+      })),
+    };
+  } catch (e) {
+    console.error("[getAssetHistory]", e);
+    return empty;
+  }
+}
+
 export async function updateUnifiedAsset(
   _prevState: EditState,
   formData: FormData
@@ -672,6 +926,37 @@ export async function updateUnifiedAsset(
     }
   }
 
+  // Strict mode: account codes and units must come from Master Data.
+  // Title + type snap to the catalog entry so edits can't desync the triple.
+  if (data["account_code"] !== undefined && data["account_code"] !== null) {
+    const code = String(data["account_code"]).trim();
+    if (code) {
+      const hit = await findCatalogEntry(code);
+      if (!hit) {
+        return {
+          success: false,
+          error: `Unknown ACCOUNT CODE "${code}" — ask your Super Admin to add it to Master Data.`,
+        };
+      }
+      data["account_code"] = hit.code;
+      data["account_title"] = hit.title;
+      data["category"] = hit.type;
+    }
+  }
+  if (data["unit"] !== undefined && data["unit"] !== null) {
+    const unitRaw = String(data["unit"]).trim();
+    if (unitRaw) {
+      const canonical = await resolveUnitName(unitRaw);
+      if (!canonical) {
+        return {
+          success: false,
+          error: `Unknown UNIT "${unitRaw}" — ask your Super Admin to add it to Master Data.`,
+        };
+      }
+      data["unit"] = canonical;
+    }
+  }
+
   try {
     if (source === "stock") {
       // Sync stock-specific fields back to InventoryItem
@@ -679,7 +964,16 @@ export async function updateUnifiedAsset(
       const itemName = formData.get("article") as string | null;
       if (itemName) stockData["item_name"] = itemName.trim();
       const unit = formData.get("unit") as string | null;
-      if (unit) stockData["unit"] = unit;
+      if (unit) {
+        const canonical = await resolveUnitName(unit);
+        if (!canonical) {
+          return {
+            success: false,
+            error: `Unknown UNIT "${unit.trim()}" — ask your Super Admin to add it to Master Data.`,
+          };
+        }
+        stockData["unit"] = canonical;
+      }
       const qtyRaw = formData.get("quantity");
       if (qtyRaw) stockData["quantity"] = Number(qtyRaw);
       const loc = formData.get("location") as string | null;
@@ -769,8 +1063,28 @@ export async function createAsset(
 
   const accountCode = get("account_code");
   const article = get("article");
-  if (!accountCode) return { success: false, error: "ACCOUNT CODE is required." };
+  if (!accountCode) return { success: false, error: "ACCOUNT CODE is required — pick one from Master Data." };
   if (!article) return { success: false, error: "ARTICLE is required." };
+
+  // Strict mode: code must exist in the active catalog; title + type are
+  // authoritative from the catalog entry, not the submitted form.
+  const catalogEntry = await findCatalogEntry(accountCode);
+  if (!catalogEntry)
+    return {
+      success: false,
+      error: `Unknown ACCOUNT CODE "${accountCode}" — ask your Super Admin to add it to Master Data.`,
+    };
+
+  const unitRaw = get("unit");
+  let unit: string | null = null;
+  if (unitRaw) {
+    unit = await resolveUnitName(unitRaw);
+    if (!unit)
+      return {
+        success: false,
+        error: `Unknown UNIT "${unitRaw}" — ask your Super Admin to add it to Master Data.`,
+      };
+  }
 
   const qtyRaw = get("quantity");
   const cylRaw = get("cylinders");
@@ -820,12 +1134,12 @@ export async function createAsset(
         property_number: accountCode,
         account_code: accountCode,
         identifier: get("identifier"),
-        account_title: get("account_title"),
+        account_title: catalogEntry.title,
         account_name: get("account_name"),
-        category: get("category"),
+        category: catalogEntry.type,
         article,
         quantity,
-        unit: get("unit"),
+        unit,
         description: get("description"),
         date_acquired: parseDate("date_acquired"),
         location: get("location"),
@@ -967,6 +1281,11 @@ export async function importAssetsFromExcel(
   const errors: string[] = [];
   const seenQr = new Set<string>();
 
+  // Strict mode reference data, loaded once for the whole file.
+  const catalogByCode = new Map(
+    (await getActiveCatalogEntries()).map((e) => [e.code, e])
+  );
+
   const last = ws.lastRow?.number ?? ws.rowCount;
   for (let i = 2; i <= last; i++) {
     const row = ws.getRow(i);
@@ -979,6 +1298,29 @@ export async function importAssetsFromExcel(
       });
       if (hasAny) skipped++;
       continue;
+    }
+
+    // Strict mode: unknown codes are skipped (listed below); unknown units
+    // are nulled with a warning so the row itself is not lost.
+    const catalogHit = catalogByCode.get(accountCode);
+    if (!catalogHit) {
+      skipped++;
+      errors.push(
+        `Row ${i} (${accountCode}): unknown ACCOUNT CODE — ask your Super Admin to add it to Master Data, then re-import this row.`
+      );
+      continue;
+    }
+    const unitRaw = strVal(at(row, "UNIT"));
+    let unit: string | null = null;
+    if (unitRaw) {
+      const canonical = await resolveUnitName(unitRaw);
+      if (!canonical) {
+        errors.push(
+          `Row ${i} (${accountCode}): unknown UNIT "${unitRaw}" — saved without a unit. Ask your Super Admin to add it to Master Data.`
+        );
+      } else {
+        unit = canonical;
+      }
     }
 
     const condRaw = strVal(at(row, "CONDITION"));
@@ -1018,12 +1360,12 @@ export async function importAssetsFromExcel(
     const data = {
       account_code: accountCode,
       identifier: strVal(at(row, "IDENTIFIER")),
-      account_title: strVal(at(row, "ACCOUNT TITLE")),
+      account_title: catalogHit.title,
       account_name: strVal(at(row, "ACCOUNT NAME")),
-      category: strVal(at(row, "ASSET TYPE")),
+      category: catalogHit.type,
       article: strVal(at(row, "ARTICLE")),
       quantity: intVal(at(row, "QTY.")),
-      unit: strVal(at(row, "UNIT")),
+      unit,
       description: strVal(at(row, "DESCRIPTION")),
       date_acquired: dateVal(at(row, "DATE ACQUIRED")),
       location: strVal(at(row, "LOCATION")),

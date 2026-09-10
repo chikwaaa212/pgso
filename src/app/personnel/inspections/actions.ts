@@ -178,6 +178,7 @@ export interface UnifiedInspectionRow {
   date_delivered: string | null
   item_count: number
   delivery_status: string | null
+  inspector_id: string | null
   inspector_name: string | null
   inspection_date: string | null
   result: string | null
@@ -186,6 +187,8 @@ export interface UnifiedInspectionRow {
   iar_no: string | null
   iar_image_url: string | null
   stocked_at: string | null
+  /** Resolved system-user name of who logged the inspection (super-admin browse fills this). */
+  logged_by: string | null
 }
 
 export async function getInspectionsList(): Promise<UnifiedInspectionRow[]> {
@@ -198,6 +201,7 @@ export async function getInspectionsList(): Promise<UnifiedInspectionRow[]> {
           orderBy: { created_at: 'desc' },
           take: 1,
           select: {
+            inspector_id: true,
             inspector_name: true,
             result: true,
             inspection_date: true,
@@ -218,6 +222,7 @@ export async function getInspectionsList(): Promise<UnifiedInspectionRow[]> {
       date_delivered:    d.date_delivered?.toISOString().slice(0, 10) ?? null,
       item_count:        d._count.items,
       delivery_status:   d.delivery_status,
+      inspector_id:      d.inspections[0]?.inspector_id ?? null,
       inspector_name:    d.inspections[0]?.inspector_name ?? null,
       inspection_date:   d.inspections[0]?.inspection_date?.toISOString().slice(0, 10) ?? null,
       result:            d.inspections[0]?.result ?? null,
@@ -226,6 +231,7 @@ export async function getInspectionsList(): Promise<UnifiedInspectionRow[]> {
       iar_no:            d.inspections[0]?.iar_no ?? null,
       iar_image_url:     d.inspections[0]?.iar_image_url ?? null,
       stocked_at:        d.inspections[0]?.stocked_at?.toISOString() ?? null,
+      logged_by:         null,
     }))
   } catch (e) {
     console.error('[getInspectionsList]', e)
@@ -485,7 +491,7 @@ export async function saveAir(
     return { error: 'A valid invoice date is required.' }
   }
 
-  const supabase = createClient()
+  const supabase = await createClient()
   const {
     data: { user },
   } = await supabase.auth.getUser()
@@ -590,7 +596,7 @@ export async function attachIarImage(
     return { error: 'A valid image URL is required.' }
   }
 
-  const supabase = createClient()
+  const supabase = await createClient()
   const {
     data: { user },
   } = await supabase.auth.getUser()
@@ -638,7 +644,7 @@ export async function removeIarImage(
 ): Promise<AttachAirState> {
   if (!deliveryId) return { error: 'Delivery ID is required.' }
 
-  const supabase = createClient()
+  const supabase = await createClient()
   const {
     data: { user },
   } = await supabase.auth.getUser()

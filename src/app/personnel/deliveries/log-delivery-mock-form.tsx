@@ -9,6 +9,7 @@ import { SubmitButton } from "@/components/ui/submit-button";
 import { useToast } from "@/components/ui/toaster";
 import { cn } from "@/lib/utils";
 import { logDelivery, getDeliveryFormOptions, type DeliveryFormOptions } from "./actions";
+import { useMasterData } from "@/hooks/use-master-data";
 import type { SignupState } from "@/types";
 
 interface Step1Data {
@@ -47,7 +48,7 @@ export type { PreviewData };
 
 const STEPS = ["Asset Details", "Delivery Details", "Recipient", "Items Delivered"];
 
-const CUSTOM_CODE_VALUE = "__custom__";
+const FALLBACK_UNITS = ["pcs", "box", "set", "ltr", "kg"];
 
 function StepperNav({ currentStep }: { currentStep: number }) {
   return (
@@ -172,43 +173,26 @@ export function LogDeliveryMockForm({
     );
 
   /**
-   * Account Code drives Step 1: picking a known code auto-fills asset type
-   * + account title from the chart of accounts. Unknown/custom codes clear
-   * any previous auto-fill so stale values can't leak into a manual entry.
+   * Strict mode: Account Code drives Step 1. Picking a code auto-fills asset
+   * type + account title from Master Data. Clearing the code clears both —
+   * there is no manual entry; unknown codes must be added by Super Admin.
    */
   const handleAccountCodeChange = (value: string) => {
     const hit = lookupCode(value);
     if (hit) {
-      setStep1((prev) => ({
-        ...prev,
+      setStep1({
         accountCode: value,
-        assetType: hit.assetType || prev.assetType,
-        accountTitle: hit.accountTitle || prev.accountTitle,
-      }));
-    } else {
-      setStep1((prev) => {
-        const prevWasKnown = !!lookupCode(prev.accountCode);
-        if (!value.trim() || prevWasKnown) {
-          return { assetType: "", accountCode: value, accountTitle: "" };
-        }
-        return { ...prev, accountCode: value };
+        assetType: hit.assetType,
+        accountTitle: hit.accountTitle,
       });
+    } else {
+      setStep1({ assetType: "", accountCode: value, accountTitle: "" });
     }
   };
 
-  /**
-   * Switching asset type drops a previously picked code (and its title)
-   * when that code belongs to a different type. Custom codes the user
-   * typed are left alone.
-   */
   const handleAssetTypeChange = (value: string) => {
-    setStep1((prev) => {
-      const current = lookupCode(prev.accountCode);
-      if (prev.accountCode && current && current.assetType !== value) {
-        return { ...prev, assetType: value, accountCode: "", accountTitle: "" };
-      }
-      return { ...prev, assetType: value };
-    });
+    // Only reachable when no catalog is loaded (legacy fallback inputs).
+    setStep1((prev) => ({ ...prev, assetType: value }));
   };
 
   const handleStep2Change = (field: keyof Step2Data, value: Date | string | undefined) => {
@@ -242,7 +226,6 @@ export function LogDeliveryMockForm({
 
   const resetForm = () => {
     reset();
-    setCustomCodeMode(false);
     setIdempotencyKey(crypto.randomUUID());
   };
 
@@ -254,12 +237,13 @@ export function LogDeliveryMockForm({
   );
   const lastSavedId = useRef<string | null>(null);
   const [idempotencyKey, setIdempotencyKey] = useState(() => crypto.randomUUID());
-  const [customCodeMode, setCustomCodeMode] = useState(false);
   const [formOptions, setFormOptions] = useState<DeliveryFormOptions>({
     assetTypes: [],
     accountTitles: [],
     codes: [],
   });
+  const master = useMasterData();
+  const unitOptions = master.loaded && master.units.length > 0 ? master.units : FALLBACK_UNITS;
 
   useEffect(() => {
     void getDeliveryFormOptions().then(setFormOptions);
@@ -312,24 +296,10 @@ export function LogDeliveryMockForm({
   const renderStep1 = () => {
     const matchedCode = lookupCode(step1.accountCode);
     const isAutoFilled = !!matchedCode;
-    const isCustomTyped =
-      !isAutoFilled && step1.accountCode.trim() !== "";
-    const showCustomInput = customCodeMode || isCustomTyped;
-    const accountSelectValue = showCustomInput
-      ? CUSTOM_CODE_VALUE
-      : isAutoFilled
-        ? matchedCode.code
-        : "";
-
-    const handleAccountCodeSelect = (value: string) => {
-      if (value === CUSTOM_CODE_VALUE) {
-        setCustomCodeMode(true);
-        setStep1((prev) => ({ assetType: "", accountCode: "", accountTitle: "" }));
-      } else {
-        setCustomCodeMode(false);
-        handleAccountCodeChange(value);
-      }
-    };
+    // Strict mode: type + title are display-only whenever the catalog is
+    // loaded — they always come from the picked code.
+    const catalogMode = formOptions.codes.length > 0;
+    const locked = isAutoFilled || catalogMode;
 
     return (
       <div className="flex flex-col gap-3">
@@ -337,36 +307,23 @@ export function LogDeliveryMockForm({
           <Label htmlFor="account-code" className="mb-1 block text-sm font-medium">
             Account Code <span className="font-normal text-navy-500">(start here)</span>
           </Label>
-          {formOptions.codes.length > 0 ? (
-            <>
-              <Select value={accountSelectValue} onValueChange={handleAccountCodeSelect}>
-                <SelectTrigger id="account-code" className="w-full">
-                  <SelectValue placeholder="Select account code" />
-                </SelectTrigger>
-                <SelectContent>
-                  {formOptions.codes.map((c) => (
-                    <SelectItem key={c.code} value={c.code}>
-                      {c.code}
-                      {c.accountTitle ? ` — ${c.accountTitle}` : c.assetType ? ` — ${c.assetType}` : ""}
-                    </SelectItem>
-                  ))}
-                  <SelectItem value={CUSTOM_CODE_VALUE}>
-                    Type a custom code…
+          {catalogMode ? (
+            <Select
+              value={isAutoFilled ? matchedCode.code : ""}
+              onValueChange={handleAccountCodeChange}
+            >
+              <SelectTrigger id="account-code" className="w-full">
+                <SelectValue placeholder="Select account code" />
+              </SelectTrigger>
+              <SelectContent>
+                {formOptions.codes.map((c) => (
+                  <SelectItem key={c.code} value={c.code}>
+                    {c.code}
+                    {c.accountTitle ? ` — ${c.accountTitle}` : c.assetType ? ` — ${c.assetType}` : ""}
                   </SelectItem>
-                </SelectContent>
-              </Select>
-              {showCustomInput && (
-                <Input
-                  id="account-code-custom"
-                  name="accountCodeCustom"
-                  value={step1.accountCode}
-                  onChange={(e) => handleAccountCodeChange(e.target.value)}
-                  placeholder="Enter custom account code"
-                  className="mt-2"
-                  autoFocus={customCodeMode}
-                />
-              )}
-            </>
+                ))}
+              </SelectContent>
+            </Select>
           ) : (
             <Input
               id="account-code"
@@ -377,7 +334,7 @@ export function LogDeliveryMockForm({
               autoFocus
             />
           )}
-          {step1.accountCode.trim() === "" && !showCustomInput ? (
+          {step1.accountCode.trim() === "" ? (
             <p className="mt-1 text-xs text-navy-500">
               Start by picking the account code — asset type and account title
               fill in automatically.
@@ -388,7 +345,7 @@ export function LogDeliveryMockForm({
             </p>
           ) : (
             <p className="mt-1 text-xs text-amber-700">
-              Custom code — fill in asset type and account title manually below.
+              Unknown code — ask your Super Admin to add it to Master Data.
             </p>
           )}
         </div>
@@ -403,7 +360,7 @@ export function LogDeliveryMockForm({
             <Select
               value={step1.assetType}
               onValueChange={handleAssetTypeChange}
-              disabled={isAutoFilled}
+              disabled={locked}
             >
               <SelectTrigger
                 id="asset-type"
@@ -415,13 +372,16 @@ export function LogDeliveryMockForm({
                   }
                 />
               </SelectTrigger>
-              <SelectContent>
-                {formOptions.assetTypes.map((t) => (
-                  <SelectItem key={t} value={t}>
-                    {t}
-                  </SelectItem>
-                ))}
-              </SelectContent>
+                <SelectContent>
+                  {(isAutoFilled && matchedCode
+                    ? [matchedCode.assetType]
+                    : formOptions.assetTypes
+                  ).map((t) => (
+                    <SelectItem key={t} value={t}>
+                      {t}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
             </Select>
           ) : (
             <Input
@@ -432,7 +392,7 @@ export function LogDeliveryMockForm({
               placeholder={
                 isAutoFilled ? "Auto-filled from code" : "e.g. Machinery and Equipment"
               }
-              disabled={isAutoFilled}
+              disabled={locked}
             />
           )}
         </div>
@@ -447,7 +407,7 @@ export function LogDeliveryMockForm({
             <Select
               value={step1.accountTitle}
               onValueChange={(v) => handleStep1Change("accountTitle", v)}
-              disabled={isAutoFilled}
+              disabled={locked}
             >
               <SelectTrigger
                 id="account-title"
@@ -459,13 +419,16 @@ export function LogDeliveryMockForm({
                   }
                 />
               </SelectTrigger>
-              <SelectContent>
-                {formOptions.accountTitles.map((t) => (
-                  <SelectItem key={t} value={t}>
-                    {t}
-                  </SelectItem>
-                ))}
-              </SelectContent>
+                <SelectContent>
+                  {(isAutoFilled && matchedCode
+                    ? [matchedCode.accountTitle]
+                    : formOptions.accountTitles
+                  ).map((t) => (
+                    <SelectItem key={t} value={t}>
+                      {t}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
             </Select>
           ) : (
             <Input
@@ -476,7 +439,7 @@ export function LogDeliveryMockForm({
               placeholder={
                 isAutoFilled ? "Auto-filled from code" : "e.g. OFFICE EQUIPMENT"
               }
-              disabled={isAutoFilled}
+              disabled={locked}
             />
           )}
         </div>
@@ -639,11 +602,11 @@ export function LogDeliveryMockForm({
                     <SelectValue placeholder="Unit" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="pcs">Pieces (pcs)</SelectItem>
-                    <SelectItem value="box">Box</SelectItem>
-                    <SelectItem value="set">Set</SelectItem>
-                    <SelectItem value="ltr">Litre</SelectItem>
-                    <SelectItem value="kg">Kilogram</SelectItem>
+                    {unitOptions.map((u) => (
+                      <SelectItem key={u} value={u}>
+                        {u}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>

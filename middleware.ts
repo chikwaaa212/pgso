@@ -2,7 +2,7 @@ import { type NextRequest, NextResponse } from 'next/server'
 import { createServerClient } from '@supabase/ssr'
 
 export async function middleware(request: NextRequest) {
-  const supabaseResponse = NextResponse.next({
+  let supabaseResponse = NextResponse.next({
     request,
   })
 
@@ -15,6 +15,12 @@ export async function middleware(request: NextRequest) {
           return request.cookies.getAll()
         },
         setAll(cookiesToSet) {
+          cookiesToSet.forEach(({ name, value }) =>
+            request.cookies.set(name, value)
+          )
+          supabaseResponse = NextResponse.next({
+            request,
+          })
           cookiesToSet.forEach(({ name, value, options }) => {
             supabaseResponse.cookies.set(name, value, options)
           })
@@ -43,7 +49,7 @@ export async function middleware(request: NextRequest) {
       .eq('id', session.user.id)
       .single()
 
-    if (!profile || profile.status === 'inactive') {
+    if (!profile || profile.status === 'inactive' || profile.status === 'pending') {
       await supabase.auth.signOut()
       const url = request.nextUrl.clone()
       url.pathname = '/login'

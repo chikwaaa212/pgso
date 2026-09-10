@@ -92,6 +92,7 @@ export interface IarReportRow {
   delivery_ref: string
   supplier: string | null
   po_reference: string | null
+  inspector_id: string | null
   inspector_name: string | null
   inspection_result: string | null
   inspection_date: string | null
@@ -111,6 +112,7 @@ export async function getAllIarReports(): Promise<IarReportRow[]> {
           select: {
             result: true,
             inspection_date: true,
+            inspector_id: true,
             inspector_name: true,
           },
         },
@@ -126,6 +128,7 @@ export async function getAllIarReports(): Promise<IarReportRow[]> {
       delivery_ref: r.delivery.id.slice(0, 8).toUpperCase(),
       supplier: r.delivery.supplier,
       po_reference: r.delivery.po_reference,
+      inspector_id: r.inspection.inspector_id,
       inspector_name: r.inspection.inspector_name,
       inspection_result: r.inspection.result,
       inspection_date: r.inspection.inspection_date.toISOString().slice(0, 10),

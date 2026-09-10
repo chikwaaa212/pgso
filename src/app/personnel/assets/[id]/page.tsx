@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { getUnifiedAsset, getCategories, type UnifiedAssetRow } from "../actions";
+import { getUnifiedAsset, getAssetHistory, getCategories, type UnifiedAssetRow } from "../actions";
 import { AssetDetailEditor } from "./AssetDetailEditor";
 
 interface Props {
@@ -8,11 +8,12 @@ interface Props {
 
 export default async function AssetDetailPage({ params }: Props) {
   const { id } = await params;
-  const [asset, categories] = await Promise.all([
+  const [asset, categories, history] = await Promise.all([
     getUnifiedAsset(id),
     getCategories(),
+    getAssetHistory(id),
   ]);
   if (!asset) notFound();
 
-  return <AssetDetailEditor asset={asset} categories={categories} />;
+  return <AssetDetailEditor asset={asset} categories={categories} history={history} />;
 }

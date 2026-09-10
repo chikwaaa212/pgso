@@ -289,3 +289,29 @@ model IssuanceRecord {
   @@index([request_id])
   @@map("issuance_records")
 }
+
+model Unit {
+  id           String    @id @default(uuid()) @db.Uuid
+  name         String    @unique @db.VarChar
+  abbreviation String?   @db.VarChar
+  status       String    @default("active") @db.VarChar
+  created_by   String?   @db.Uuid
+  created_at   DateTime? @default(now()) @db.Timestamptz
+
+  @@map("units")
+}
+
+model AccountCatalog {
+  id            String    @id @default(uuid()) @db.Uuid
+  account_code  String    @unique @db.VarChar
+  account_title String    @db.VarChar
+  asset_type    String    @db.VarChar
+  description   String?
+  status        String    @default("active") @db.VarChar
+  created_by    String?   @db.Uuid
+  created_at    DateTime? @default(now()) @db.Timestamptz
+
+  @@index([asset_type])
+  @@index([status])
+  @@map("account_catalog")
+}

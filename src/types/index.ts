@@ -15,7 +15,7 @@ export type ButtonVariant = "primary" | "secondary" | "outline" | "ghost";
 export type ButtonSize = "sm" | "md" | "lg";
 
 export type UserRole = "super_admin" | "pgso_personnel" | "employee";
-export type UserStatus = "active" | "inactive";
+export type UserStatus = "active" | "inactive" | "pending";
 
 export interface Profile {
   id: string;

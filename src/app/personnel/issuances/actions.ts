@@ -32,6 +32,7 @@ interface IssuanceDbRow {
   issuance_data: Record<string, string> | null
   image_url: string | null
   created_at: Date | string | null
+  created_by: string | null
 }
 
 function isoDate(v: Date | string | null): string | null {
@@ -54,7 +55,8 @@ async function listIssuanceRows(): Promise<IssuanceDbRow[]> {
       SELECT id::text AS id, doc_type, doc_no, doc_date,
              asset_id::text AS asset_id, inventory_id::text AS inventory_id,
              employee_id::text AS employee_id, request_id::text AS request_id,
-             quantity, unit_cost, total_amount, issuance_data, image_url, created_at
+             quantity, unit_cost, total_amount, issuance_data, image_url, created_at,
+             created_by::text AS created_by
       FROM issuance_records ORDER BY created_at DESC`
   } catch (e) {
     console.error('[listIssuanceRows]', e)
@@ -68,7 +70,8 @@ async function getIssuanceRow(id: string): Promise<IssuanceDbRow | null> {
       SELECT id::text AS id, doc_type, doc_no, doc_date,
              asset_id::text AS asset_id, inventory_id::text AS inventory_id,
              employee_id::text AS employee_id, request_id::text AS request_id,
-             quantity, unit_cost, total_amount, issuance_data, image_url, created_at
+             quantity, unit_cost, total_amount, issuance_data, image_url, created_at,
+             created_by::text AS created_by
       FROM issuance_records WHERE id = ${id}::uuid`
     return rows[0] ?? null
   } catch (e) {
@@ -96,6 +99,7 @@ export interface IssuanceRecordRow {
   issuance_data: Record<string, string> | null
   image_url: string | null
   created_at: string | null
+  created_by: string | null
 }
 
 export interface IssuanceDetail extends IssuanceRecordRow {
@@ -295,6 +299,7 @@ export async function getIssuances(): Promise<IssuanceRecordRow[]> {
         issuance_data: (r.issuance_data as Record<string, string> | null) ?? null,
         image_url: r.image_url,
         created_at: isoDateTime(r.created_at),
+        created_by: r.created_by ?? null,
       }
     })
   } catch (e) {
@@ -370,6 +375,7 @@ export async function getIssuance(id: string): Promise<IssuanceDetail | null> {
       issuance_data: (r.issuance_data as Record<string, string> | null) ?? null,
       image_url: r.image_url,
       created_at: isoDateTime(r.created_at),
+      created_by: r.created_by ?? null,
       asset_snapshot: asset
         ? {
             qr_code: asset.qr_code,
@@ -570,7 +576,7 @@ function clean(v: string | undefined): string {
 
 async function requireUserId(): Promise<string | null> {
   try {
-    const supabase = createClient()
+    const supabase = await createClient()
     const {
       data: { user },
     } = await supabase.auth.getUser()

@@ -17,7 +17,8 @@ import {
 } from "@/components/ui/select";
 import { DatePicker } from "@/components/ui/date-picker";
 import { useToast } from "@/components/ui/toaster";
-import { updateUnifiedAsset, type EditState, type UnifiedAssetRow } from "../actions";
+import { updateUnifiedAsset, type AssetHistory, type EditState, type UnifiedAssetRow } from "../actions";
+import { AssetHistorySection } from "./asset-history";
 import styles from "../../dashboard/page.module.css";
 import assetStyles from "../page.module.css";
 import { cn } from "@/lib/utils";
@@ -315,7 +316,25 @@ function ReadOnlyField({ field, asset }: { field: EditFieldType; asset: UnifiedA
   );
 }
 
-export function AssetDetailEditor({ asset, categories }: { asset: UnifiedAssetRow; categories: string[] }) {
+export function AssetDetailEditor({
+  asset,
+  categories,
+  readOnly = false,
+  backHref,
+  crumbBase = "Personnel / Assets",
+  history = null,
+}: {
+  asset: UnifiedAssetRow;
+  categories: string[];
+  /** Hides the Edit action for oversight (read-only) views. */
+  readOnly?: boolean;
+  /** Overrides the back link (defaults to the personnel list). */
+  backHref?: string;
+  /** Overrides the leading crumb segment (defaults to the personnel trail). */
+  crumbBase?: string;
+  /** Assignment + repair timeline; each event opens its receipt. */
+  history?: AssetHistory | null;
+}) {
   const router = useRouter();
   const { toast } = useToast();
   const [isEditing, setIsEditing] = useState(false);
@@ -352,7 +371,7 @@ export function AssetDetailEditor({ asset, categories }: { asset: UnifiedAssetRo
   return (
     <section className={styles.section}>
       <p className={styles.crumb}>
-        Personnel / Assets / {asset.account_code ?? asset.id}
+        {crumbBase} / {asset.account_code ?? asset.id}
       </p>
 
       <div className={styles.headerRow}>
@@ -364,31 +383,32 @@ export function AssetDetailEditor({ asset, categories }: { asset: UnifiedAssetRo
         </div>
         <div className={styles.actions}>
           {!isEditing && (
-            <Link href="/personnel/assets">
+            <Link href={backHref ?? "/personnel/assets"}>
               <Button type="button" variant="outline" size="sm">
                 Back to Assets
               </Button>
             </Link>
           )}
-          {isEditing ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => setIsEditing(false)}
-            >
-              Cancel
-            </Button>
-          ) : (
-            <Button
-              type="button"
-              variant="primary"
-              size="sm"
-              onClick={() => setIsEditing(true)}
-            >
-              Edit
-            </Button>
-          )}
+          {!readOnly &&
+            (isEditing ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => setIsEditing(false)}
+              >
+                Cancel
+              </Button>
+            ) : (
+              <Button
+                type="button"
+                variant="primary"
+                size="sm"
+                onClick={() => setIsEditing(true)}
+              >
+                Edit
+              </Button>
+            ))}
         </div>
       </div>
 
@@ -452,6 +472,12 @@ export function AssetDetailEditor({ asset, categories }: { asset: UnifiedAssetRo
           </div>
         )}
       </Card>
+
+      {history ? (
+        <div style={{ marginTop: "1.25rem" }}>
+          <AssetHistorySection asset={asset} history={history} />
+        </div>
+      ) : null}
     </section>
   );
 }

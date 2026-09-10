@@ -3,14 +3,24 @@
 import { createClient as createAdminClient } from '@supabase/supabase-js'
 import prisma from '@/lib/prisma'
 import { withIdempotency } from '@/lib/idempotency'
+import { writeAuditLog } from '@/lib/audit'
+import { requireSuperAdmin } from '@/lib/auth-guard'
 import type { SignupState } from '@/types'
 
 export async function addPersonnelEmployee(
   _prevState: SignupState,
   formData: FormData
 ): Promise<SignupState> {
-  const full_name = formData.get('full_name') as string
-  const email = formData.get('email') as string
+  let actorId = ''
+  try {
+    const session = await requireSuperAdmin()
+    actorId = session.userId
+  } catch {
+    return { error: 'Forbidden: Super Admin only.' }
+  }
+
+  const full_name = (formData.get('full_name') as string)?.trim()
+  const email = (formData.get('email') as string)?.trim()
   const password = formData.get('password') as string
 
   if (!full_name || !email || !password) {
@@ -58,6 +68,17 @@ export async function addPersonnelEmployee(
           await supabase.auth.admin.deleteUser(data.user.id)
           throw new Error('Failed to create profile. Please try again.')
         }
+
+        await writeAuditLog({
+          userId: actorId,
+          action: 'users:create_personnel',
+          module: 'users',
+          details: {
+            purpose: 'Create PGSO personnel account',
+            summary: `Created personnel ${email}`,
+            reference_id: data.user.id,
+          },
+        })
 
         return { userId: data.user.id }
       }

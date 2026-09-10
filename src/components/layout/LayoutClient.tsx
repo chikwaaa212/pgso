@@ -21,8 +21,9 @@ export function LayoutClient({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const isLanding = LANDING_PATHS.includes(pathname);
   const isPersonnel = pathname.startsWith("/personnel");
+  const isSuperAdmin = pathname.startsWith("/super-admin");
   const isBare = isLanding || isReceiptPath(pathname);
-  const hideHeader = isBare || isPersonnel;
+  const hideHeader = isBare || isPersonnel || isSuperAdmin;
 
   useEffect(() => {
     const html = document.documentElement;

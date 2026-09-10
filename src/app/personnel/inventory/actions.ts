@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import { writeAuditLog } from '@/lib/audit'
 import { stockInspectionItems } from '@/lib/stock'
+import { findCatalogEntry, resolveUnitName } from '@/lib/master-data'
 import prisma from '@/lib/prisma'
 
 export interface InventoryRow {
@@ -54,12 +55,11 @@ export interface SaveItemInput {
   quantity: number
   unit: string
   unit_cost: number | null
-  reorder_threshold: number | null
   location: string
 }
 
 async function requireUser() {
-  const supabase = createClient()
+  const supabase = await createClient()
   const {
     data: { user },
   } = await supabase.auth.getUser()
@@ -76,12 +76,6 @@ export async function saveInventoryItem(
     return { error: 'Quantity must be a whole number of zero or more.' }
   }
   if (
-    input.reorder_threshold != null &&
-    (!Number.isInteger(input.reorder_threshold) || input.reorder_threshold < 0)
-  ) {
-    return { error: 'Reorder threshold must be a whole number of zero or more.' }
-  }
-  if (
     input.unit_cost != null &&
     (!Number.isFinite(input.unit_cost) || input.unit_cost < 0)
   ) {
@@ -91,13 +85,32 @@ export async function saveInventoryItem(
   const user = await requireUser()
   if (!user) return { error: 'You must be signed in to manage stocks.' }
 
+  // Strict mode: codes and units must come from Master Data.
+  const codeRaw = input.account_code?.trim() || null
+  let account_code: string | null = null
+  if (codeRaw) {
+    const hit = await findCatalogEntry(codeRaw)
+    if (!hit) {
+      return { error: `Unknown account code "${codeRaw}" — ask your Super Admin to add it to Master Data.` }
+    }
+    account_code = hit.code
+  }
+  const unitRaw = input.unit?.trim() || null
+  let unit: string | null = null
+  if (unitRaw) {
+    const canonical = await resolveUnitName(unitRaw)
+    if (!canonical) {
+      return { error: `Unknown unit "${unitRaw}" — ask your Super Admin to add it to Master Data.` }
+    }
+    unit = canonical
+  }
+
   const data = {
     item_name: name,
-    account_code: input.account_code?.trim() || null,
+    account_code,
     quantity: input.quantity,
-    unit: input.unit?.trim() || null,
+    unit,
     unit_cost: input.unit_cost,
-    reorder_threshold: input.reorder_threshold,
     location: input.location?.trim() || null,
   }
 
@@ -108,9 +121,12 @@ export async function saveInventoryItem(
         select: { id: true },
       })
       if (!exists) return { error: 'Stock item not found.' }
+      // Personnel cannot change the reorder threshold — only Super Admin sets
+      // it. Omit it here so any existing value is preserved untouched.
       await prisma.inventoryItem.update({ where: { id: input.id }, data })
     } else {
-      await prisma.inventoryItem.create({ data })
+      // New items start without a threshold until Super Admin sets one.
+      await prisma.inventoryItem.create({ data: { ...data, reorder_threshold: null } })
     }
     await writeAuditLog({
       userId: user.id,

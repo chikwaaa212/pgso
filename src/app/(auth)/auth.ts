@@ -30,7 +30,7 @@ export async function login(
       formData.get('idempotencyKey') as string,
       'auth:login',
       async () => {
-        const supabase = createClient()
+        const supabase = await createClient()
         const { error } = await supabase.auth.signInWithPassword({
           email,
           password,
@@ -51,6 +51,11 @@ export async function login(
 
         if (!profile) {
           throw new Error('Profile not found. Contact your administrator.')
+        }
+
+        if (profile.status === 'pending') {
+          await supabase.auth.signOut()
+          throw new Error('Your account is awaiting admin approval.')
         }
 
         if (profile.status === 'inactive') {
@@ -108,17 +113,31 @@ export async function signup(_prevState: SignupState, formData: FormData) {
         try {
           await prisma.profile.upsert({
             where: { id: data.user.id },
-            update: { full_name, role: 'employee', status: 'active' },
+            update: { full_name, role: 'employee', status: 'pending' },
             create: {
               id: data.user.id,
               full_name,
               role: 'employee',
-              status: 'active',
+              status: 'pending',
             },
           })
         } catch {
           await supabase.auth.admin.deleteUser(data.user.id)
           throw new Error('Failed to create profile. Please try again.')
+        }
+
+        try {
+          await writeAuditLog({
+            userId: data.user.id,
+            action: 'auth:signup_request',
+            module: 'auth',
+            details: {
+              purpose: 'Employee self-registration',
+              summary: `Signup requested for ${email}, pending approval`,
+            },
+          })
+        } catch {
+          // audit is best-effort
         }
 
         return { userId: data.user.id }
@@ -132,7 +151,7 @@ export async function signup(_prevState: SignupState, formData: FormData) {
 }
 
 export async function logout() {
-  const supabase = createClient()
+  const supabase = await createClient()
   await supabase.auth.signOut()
   redirect('/login')
 }
