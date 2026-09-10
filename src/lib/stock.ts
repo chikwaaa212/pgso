@@ -20,7 +20,7 @@ const STOCKABLE_RESULTS = ["passed", "partial"] as const;
  */
 export async function stockInspectionItems(
   inspectionId: string
-): Promise<{ stocked: boolean; reason?: string; added?: number }> {
+): Promise<{ stocked: boolean; reason?: string; added?: number; costsFixed?: number }> {
   const inspection = await prisma.inspection.findUnique({
     where: { id: inspectionId },
     select: {
@@ -31,12 +31,13 @@ export async function stockInspectionItems(
       delivery: {
         select: {
           account_code: true,
-          items: {
+        items: {
             select: {
               id: true,
               item_name: true,
               unit: true,
               quantity: true,
+              unit_cost: true,
               stocked_qty: true,
             },
           },
@@ -67,6 +68,7 @@ export async function stockInspectionItems(
   };
 
   let added = 0;
+  let costsFixed = 0;
   const accountCode = inspection.delivery.account_code?.trim() || null;
 
   await prisma.$transaction(async (tx) => {
@@ -75,38 +77,56 @@ export async function stockInspectionItems(
       const addable = Math.max(0, actual - item.stocked_qty);
       const watermark = Math.max(item.stocked_qty, actual);
 
-      if (addable > 0) {
-        const name = item.item_name.trim();
-        if (name) {
-          const existing = await tx.inventoryItem.findFirst({
-            where: {
-              item_name: { equals: name, mode: "insensitive" },
-              unit: item.unit,
-            },
-            select: { id: true, account_code: true },
-          });
+      const name = item.item_name.trim();
+      if (name) {
+        const existing = await tx.inventoryItem.findFirst({
+          where: {
+            item_name: { equals: name, mode: "insensitive" },
+            unit: item.unit,
+          },
+          select: { id: true, account_code: true, unit_cost: true },
+        });
 
-          if (existing) {
+        if (existing) {
+          const patch: Record<string, unknown> = {};
+          if (addable > 0) {
+            patch.quantity = { increment: addable };
+            added += addable;
+          }
+          // fill the delivery account code when the row has none yet
+          if (!existing.account_code && accountCode) {
+            patch.account_code = accountCode;
+          }
+          // Backfill (or refresh to the latest delivery) cost even when
+          // nothing new is added — otherwise rows stocked before the
+          // cost-copy existed keep unit_cost NULL forever and issuance
+          // evaluation shows ₱0.00 for them.
+          if (
+            item.unit_cost != null &&
+            (existing.unit_cost == null ||
+              Number(existing.unit_cost) !== Number(item.unit_cost))
+          ) {
+            patch.unit_cost = item.unit_cost;
+            if (existing.unit_cost == null) costsFixed += 1;
+          }
+          if (Object.keys(patch).length > 0) {
             await tx.inventoryItem.update({
               where: { id: existing.id },
-              data: {
-                quantity: { increment: addable },
-                // fill the delivery account code when the row has none yet
-                ...(existing.account_code || !accountCode
-                  ? {}
-                  : { account_code: accountCode }),
-              },
-            });
-          } else {
-            await tx.inventoryItem.create({
-              data: {
-                item_name: name,
-                unit: item.unit,
-                quantity: addable,
-                account_code: accountCode,
-              },
+              data: patch,
             });
           }
+        } else if (addable > 0) {
+          await tx.inventoryItem.create({
+            data: {
+              item_name: name,
+              unit: item.unit,
+              quantity: addable,
+              account_code: accountCode,
+              ...(item.unit_cost != null
+                ? { unit_cost: item.unit_cost }
+                : {}),
+            },
+          });
           added += addable;
         }
       }
@@ -125,7 +145,7 @@ export async function stockInspectionItems(
     });
   });
 
-  return { stocked: added > 0, added };
+  return { stocked: added > 0, added, costsFixed };
 }
 
 /** Backwards-compatible alias. */

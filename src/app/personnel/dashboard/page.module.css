@@ -264,8 +264,35 @@
 
 .tableWrap {
   overflow-x: auto;
+  overflow-y: auto;
   margin-inline: -0.25rem;
   padding-inline: 0.25rem;
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-navy-300) var(--color-navy-100);
+}
+
+.tableWrap::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.tableWrap::-webkit-scrollbar-track {
+  background: var(--color-navy-100);
+  border-radius: 9999px;
+}
+
+.tableWrap::-webkit-scrollbar-thumb {
+  background: var(--color-navy-300);
+  border-radius: 9999px;
+  border: 2px solid var(--color-navy-100);
+}
+
+.tableWrap::-webkit-scrollbar-thumb:hover {
+  background: var(--color-navy-400);
+}
+
+.tableWrap::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 .table {
@@ -501,15 +528,64 @@
 }
 
 .tableFixed {
-  height: 480px;
+  height: auto;
+  max-height: 480px;
   overflow-y: auto;
+  overflow-x: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-navy-300) var(--color-navy-100);
+}
+
+/* Card grows/shrinks with the selected page size. Inline max-height
+   from the component takes precedence; these are sensible fallbacks. */
+.tableFixed[data-page-size="10"] {
+  max-height: 29rem;
+}
+
+.tableFixed[data-page-size="20"] {
+  max-height: 36rem;
+}
+
+.tableFixed[data-page-size="50"] {
+  max-height: 70vh;
+}
+
+.tableFixed[data-page-size="100"] {
+  max-height: 75vh;
+}
+
+.tableFixed::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.tableFixed::-webkit-scrollbar-track {
+  background: var(--color-navy-100);
+  border-radius: 9999px;
+}
+
+.tableFixed::-webkit-scrollbar-thumb {
+  background: var(--color-navy-300);
+  border-radius: 9999px;
+  border: 2px solid var(--color-navy-100);
+}
+
+.tableFixed::-webkit-scrollbar-thumb:hover {
+  background: var(--color-navy-400);
+}
+
+.tableFixed::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 .tableFixed thead th {
   position: sticky;
   top: 0;
   background-color: #fff;
-  z-index: 1;
+  /* Keep below the site navbar (z-50) so the header never covers it. */
+  z-index: 2;
+  box-shadow: 0 1px 0 var(--color-navy-200);
 }
 
 .pager {

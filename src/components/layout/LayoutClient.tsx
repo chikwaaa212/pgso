@@ -20,7 +20,9 @@ function isReceiptPath(pathname: string) {
 export function LayoutClient({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const isLanding = LANDING_PATHS.includes(pathname);
+  const isPersonnel = pathname.startsWith("/personnel");
   const isBare = isLanding || isReceiptPath(pathname);
+  const hideHeader = isBare || isPersonnel;
 
   useEffect(() => {
     const html = document.documentElement;
@@ -34,7 +36,7 @@ export function LayoutClient({ children }: { children: React.ReactNode }) {
   return (
     <ToastProvider>
       <div className={styles.root}>
-        {isBare ? null : <Header />}
+        {hideHeader ? null : <Header />}
         <main className={styles.main}>{children}</main>
         {isReceiptPath(pathname) ? null : <Footer />}
       </div>

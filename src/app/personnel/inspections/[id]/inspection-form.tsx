@@ -7,7 +7,6 @@ import {
   CheckCircle2,
   XCircle,
   AlertCircle,
-  ChevronLeft,
   PackageCheck,
   ClipboardList,
   ShieldCheck,
@@ -434,7 +433,6 @@ const deliveryRef = delivery.id.slice(0, 8).toUpperCase();
       <div className={styles.headerRow}>
         <div>
           <Link href="/personnel/inspections" className={styles.backLink}>
-            <ChevronLeft className="inline h-4 w-4" />
             Back
           </Link>
           <h1 className={styles.title}>
@@ -504,7 +502,7 @@ const deliveryRef = delivery.id.slice(0, 8).toUpperCase();
               ["Received By", delivery.recipient_name ?? delivery.received_by.slice(0, 8)],
               ["Recipient Role", delivery.recipient_role ?? "—"],
               ["Asset Type / Code", `${delivery.asset_type ?? "—"} — ${delivery.account_code ?? "—"}`],
-              ["Account Type", delivery.account_type ?? "—"],
+              ["Account Title", delivery.account_title ?? "—"],
             ].map(([label, value]) => (
               <div key={label} className={styles.summaryItem}>
                 <span className={styles.summaryLabel}>{label}</span>
@@ -751,21 +749,18 @@ const deliveryRef = delivery.id.slice(0, 8).toUpperCase();
                       value: "passed",
                       label: "Passed",
                       desc: "Remaining balance collected — actual received now matches every PO quantity.",
-                      icon: <CheckCircle2 className="h-5 w-5" />,
                       tone: "ok",
                     },
                     {
                       value: "partial",
                       label: "Partial",
                       desc: "Some quantities still outstanding; only received items move to stocks.",
-                      icon: <AlertCircle className="h-5 w-5" />,
                       tone: "warn",
                     },
                   ] as {
                     value: Verdict;
                     label: string;
                     desc: string;
-                    icon: React.ReactNode;
                     tone: string;
                   }[]
                 ).map((opt) => (
@@ -784,7 +779,6 @@ const deliveryRef = delivery.id.slice(0, 8).toUpperCase();
                         : undefined
                     }
                   >
-                    <span className={styles.verdictOptionIcon}>{opt.icon}</span>
                     <span className={styles.verdictOptionLabel}>{opt.label}</span>
                     <span className={styles.verdictOptionDesc}>{opt.desc}</span>
                   </button>

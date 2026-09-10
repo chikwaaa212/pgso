@@ -13,24 +13,53 @@ model Profile {
   full_name  String?
   role       String    @default("employee") @db.VarChar
   status     String    @default("active") @db.VarChar
+  position   String?   @db.VarChar
+  office     String?   @db.VarChar
   created_at DateTime? @default(now()) @db.Timestamptz
 
   @@map("profiles")
 }
 
 model Asset {
-  id              String   @id @default(uuid()) @db.Uuid
-  property_number String?  @unique @db.VarChar
-  qr_code         String?  @unique @db.VarChar
-  category        String?  @db.VarChar
-  description     String?
-  condition       String?  @default("good") @db.VarChar
-  location        String?  @db.VarChar
-  assigned_to     String?  @db.Uuid
-  status          String?  @default("available") @db.VarChar
-  date_acquired   DateTime? @db.Date
-  image_url       String?
-  created_at      DateTime? @default(now()) @db.Timestamptz
+  id                       String    @id @default(uuid()) @db.Uuid
+  property_number          String?   @unique @db.VarChar
+  qr_code                  String?   @unique @db.VarChar
+  identifier               String?   @db.VarChar
+  account_code             String?   @db.VarChar
+  account_title            String?   @db.VarChar
+  account_name             String?   @db.VarChar
+  category                 String?   @db.VarChar
+  article                  String?   @db.VarChar
+  quantity                 Int?      @db.Integer
+  unit                     String?   @db.VarChar
+  description              String?
+  date_acquired            DateTime? @db.Date
+  location                 String?   @db.VarChar
+  total_cost               Decimal?  @db.Decimal(12, 2)
+  remarks                  String?
+  condition                String?   @default("good") @db.VarChar
+  unit_cost                Decimal?  @db.Decimal(12, 2)
+  end_user                 String?   @db.VarChar
+  brand                    String?   @db.VarChar
+  cylinders                Int?      @db.Integer
+  engine_displacement      String?   @db.VarChar
+  fuel_type                String?   @db.VarChar
+  engine_number            String?   @db.VarChar
+  chassis_number           String?   @db.VarChar
+  color                    String?   @db.VarChar
+  plate_number             String?   @db.VarChar
+  fund                     String?   @db.VarChar
+  status                   String?   @default("available") @db.VarChar
+  dv_tracking_number       String?   @db.VarChar
+  supplier_payee           String?   @db.VarChar
+  account_name_charge      String?   @db.VarChar
+  account_number           String?   @db.VarChar
+  obr_number               String?   @db.VarChar
+  dv_number                String?   @db.VarChar
+  date_received            DateTime? @db.Date
+  assigned_to              String?   @db.Uuid
+  created_at               DateTime? @default(now()) @db.Timestamptz
+  documents                Document[]
 
   @@map("assets")
 }
@@ -47,11 +76,12 @@ model Delivery {
   recipient_name    String?        @db.VarChar
   asset_type        String?        @db.VarChar
   account_code      String?        @db.VarChar
-  account_type      String?        @db.VarChar
+  account_title     String?        @db.VarChar
   created_at        DateTime?      @default(now()) @db.Timestamptz
   items             DeliveryItem[]
   inspections       Inspection[]
   iar_records       IarRecord[]
+  documents         Document[]
 
   @@map("deliveries")
 }
@@ -93,6 +123,7 @@ model Inspection {
   stocked_at      DateTime? @db.Timestamptz
   created_at      DateTime? @default(now()) @db.Timestamptz
   iar_records     IarRecord[]
+  documents       Document[]
 
   @@map("inspections")
 }
@@ -111,6 +142,7 @@ model IarRecord {
   iar_data         Json?
   iar_image_url    String?
   created_at       DateTime?  @default(now()) @db.Timestamptz
+  documents        Document[]
 
   @@index([delivery_id])
   @@index([inspection_id])
@@ -124,9 +156,12 @@ model InventoryItem {
   account_code     String?  @db.VarChar
   quantity         Int
   unit             String?  @db.VarChar
+  unit_cost        Decimal? @db.Decimal(12, 2)
+  total_cost       Decimal? @db.Decimal(12, 2)
   reorder_threshold Int?
   location         String?  @db.VarChar
   updated_at       DateTime? @default(now()) @db.Timestamptz
+  documents        Document[]
 
   @@map("inventory")
 }
@@ -150,7 +185,15 @@ model Document {
   document_type      String   @db.VarChar
   reference_number   String   @unique @db.VarChar
   related_asset_id   String?  @db.Uuid
+  related_asset      Asset?   @relation(fields: [related_asset_id], references: [id], onDelete: SetNull)
   related_inventory_id String? @db.Uuid
+  related_inventory  InventoryItem? @relation(fields: [related_inventory_id], references: [id], onDelete: SetNull)
+  related_delivery_id String? @db.Uuid
+  related_delivery   Delivery? @relation(fields: [related_delivery_id], references: [id], onDelete: SetNull)
+  related_inspection_id String? @db.Uuid
+  related_inspection Inspection? @relation(fields: [related_inspection_id], references: [id], onDelete: SetNull)
+  related_iar_record_id String? @db.Uuid
+  related_iar_record IarRecord? @relation(fields: [related_iar_record_id], references: [id], onDelete: SetNull)
   status             String?  @default("pending") @db.VarChar
   file_url           String?
   date_created       DateTime? @default(now()) @db.Date
@@ -170,8 +213,23 @@ model Request {
   status         String?   @default("pending") @db.VarChar
   date_requested DateTime? @default(now()) @db.Timestamptz
   date_resolved  DateTime?
+  items          RequestItem[]
 
   @@map("requests")
+}
+
+model RequestItem {
+  id          String    @id @default(uuid()) @db.Uuid
+  request_id  String    @db.Uuid
+  request     Request   @relation(fields: [request_id], references: [id], onDelete: Cascade)
+  asset_id    String?   @db.Uuid
+  description String    @db.Text
+  quantity    Int       @default(1)
+  unit_cost   Decimal?  @db.Decimal(12, 2)
+  created_at  DateTime? @default(now()) @db.Timestamptz
+
+  @@index([request_id])
+  @@map("request_items")
 }
 
 model AuditLog {
@@ -194,4 +252,40 @@ model IdempotencyKey {
   updated_at DateTime? @updatedAt @db.Timestamptz
 
   @@map("idempotency_keys")
+}
+
+model DocumentView {
+  id         String   @id @default(uuid()) @db.Uuid
+  doc_type   String   @db.VarChar
+  doc_id     String   @db.Uuid
+  viewed_at  DateTime? @default(now()) @db.Timestamptz
+
+  @@unique([doc_type, doc_id])
+  @@index([doc_type])
+  @@map("document_views")
+}
+
+model IssuanceRecord {
+  id             String    @id @default(uuid()) @db.Uuid
+  doc_type       String    @db.VarChar
+  doc_no         String?   @db.VarChar
+  doc_date       DateTime? @db.Date
+  asset_id       String?   @db.Uuid
+  inventory_id   String?   @db.Uuid
+  employee_id    String    @db.Uuid
+  request_id     String?   @db.Uuid
+  quantity       Int       @default(1) @db.Integer
+  unit_cost      Decimal?  @db.Decimal(12, 2)
+  total_amount   Decimal?  @db.Decimal(12, 2)
+  issuance_data  Json?
+  image_url      String?
+  created_by     String?   @db.Uuid
+  created_at     DateTime? @default(now()) @db.Timestamptz
+
+  @@index([doc_type])
+  @@index([employee_id])
+  @@index([asset_id])
+  @@index([inventory_id])
+  @@index([request_id])
+  @@map("issuance_records")
 }

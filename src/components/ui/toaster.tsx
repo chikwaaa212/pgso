@@ -2,7 +2,6 @@
 
 import { useState, createContext, useContext, useCallback } from "react";
 import * as ToastPrimitive from "@radix-ui/react-toast";
-import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface ToastData {
@@ -76,10 +75,10 @@ export const ToastProvider = ({ children }: { children: React.ReactNode }) => {
             <ToastPrimitive.Close asChild>
               <button
                 type="button"
-                className="rounded-full border border-navy-200 bg-white p-1 text-navy-700 opacity-50 hover:bg-navy-100 hover:opacity-100"
+                className="rounded-full border border-navy-200 bg-white px-2 py-0.5 text-xs text-navy-700 opacity-70 hover:bg-navy-100 hover:opacity-100"
                 aria-label="Close toast"
               >
-                <X size={14} />
+                Close
               </button>
             </ToastPrimitive.Close>
           </ToastPrimitive.Root>

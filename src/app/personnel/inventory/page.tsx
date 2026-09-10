@@ -1,7 +1,6 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { Plus } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -28,12 +27,15 @@ import {
   syncUnstockedInspections,
   type InventoryRow,
 } from './actions'
+import { TablePager } from '@/components/personnel/TablePager'
+import { usePageSize } from '@/hooks/use-page-size'
 import styles from '../dashboard/page.module.css'
 import air from '../inspections/air-section.module.css'
 
-type Level = 'ok' | 'low' | 'critical'
+type Level = 'ok' | 'low' | 'critical' | 'out'
 
 function levelOf(item: InventoryRow): Level | null {
+  if (item.quantity <= 0) return 'out'
   if (item.reorder_threshold == null) return null
   if (item.quantity <= Math.floor(item.reorder_threshold / 2)) return 'critical'
   if (item.quantity <= item.reorder_threshold) return 'low'
@@ -41,12 +43,13 @@ function levelOf(item: InventoryRow): Level | null {
 }
 
 function levelTone(level: Level | null) {
-  if (level === 'critical') return 'bad'
+  if (level === 'critical' || level === 'out') return 'bad'
   if (level === 'low') return 'warn'
   return 'ok'
 }
 
 function levelLabel(level: Level | null) {
+  if (level === 'out') return 'Out of stock'
   if (level === 'critical') return 'Critical'
   if (level === 'low') return 'Low stock'
   if (level === 'ok') return 'OK'
@@ -58,6 +61,7 @@ const LEVEL_FILTERS = [
   { value: 'ok', label: 'OK' },
   { value: 'low', label: 'Low stock' },
   { value: 'critical', label: 'Critical' },
+  { value: 'out', label: 'Out of stock' },
   { value: 'none', label: 'No threshold' },
 ] as const
 
@@ -67,6 +71,7 @@ interface Draft {
   account_code: string
   quantity: string
   unit: string
+  unit_cost: string
   reorder_threshold: string
   location: string
 }
@@ -76,6 +81,7 @@ const EMPTY_DRAFT: Draft = {
   account_code: '',
   quantity: '0',
   unit: '',
+  unit_cost: '',
   reorder_threshold: '',
   location: '',
 }
@@ -85,6 +91,8 @@ export default function PersonnelInventoryPage() {
   const [query, setQuery] = useState('')
   const [accountCode, setAccountCode] = useState('all')
   const [level, setLevel] = useState('all')
+  const [pageSize, setPageSize] = usePageSize('pgso:page-size:inventory', 10)
+  const [page, setPage] = useState(1)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT)
   const [saving, setSaving] = useState(false)
@@ -141,6 +149,13 @@ export default function PersonnelInventoryPage() {
     })
   }, [rows, query, accountCode, level])
 
+  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize))
+  const safePage = Math.min(Math.max(1, page), pageCount)
+  const visible = filtered.slice(
+    (safePage - 1) * pageSize,
+    (safePage - 1) * pageSize + pageSize
+  )
+
   function openAdd() {
     setDraft(EMPTY_DRAFT)
     setError('')
@@ -154,6 +169,7 @@ export default function PersonnelInventoryPage() {
       account_code: item.account_code ?? '',
       quantity: String(item.quantity),
       unit: item.unit ?? '',
+      unit_cost: item.unit_cost != null ? String(item.unit_cost) : '',
       reorder_threshold:
         item.reorder_threshold != null ? String(item.reorder_threshold) : '',
       location: item.location ?? '',
@@ -171,6 +187,8 @@ export default function PersonnelInventoryPage() {
       account_code: draft.account_code,
       quantity: Number(draft.quantity),
       unit: draft.unit,
+      unit_cost:
+        draft.unit_cost.trim() === '' ? null : Number(draft.unit_cost),
       reorder_threshold:
         draft.reorder_threshold.trim() === ''
           ? null
@@ -206,9 +224,18 @@ export default function PersonnelInventoryPage() {
       return
     }
     setSyncMsg(
-      res.stocked === 0
+      res.stocked === 0 && (res.costsFixed ?? 0) === 0
         ? 'Everything is already in stocks — nothing to sync.'
-        : `Moved ${res.stocked} inspection${res.stocked !== 1 ? 's' : ''} into stocks.`
+        : [
+            res.stocked
+              ? `Moved ${res.stocked} inspection${res.stocked !== 1 ? 's' : ''} into stocks.`
+              : '',
+            res.costsFixed
+              ? `Restored unit costs on ${res.costsFixed} stock item${res.costsFixed !== 1 ? 's' : ''} from deliveries.`
+              : '',
+          ]
+            .filter(Boolean)
+            .join(' ')
     )
     reload()
   }
@@ -218,6 +245,9 @@ export default function PersonnelInventoryPage() {
     draft.quantity.trim() !== '' &&
     Number.isInteger(Number(draft.quantity)) &&
     Number(draft.quantity) >= 0 &&
+    (draft.unit_cost.trim() === '' ||
+      (!Number.isNaN(Number(draft.unit_cost)) &&
+        Number(draft.unit_cost) >= 0)) &&
     (draft.reorder_threshold.trim() === '' ||
       (Number.isInteger(Number(draft.reorder_threshold)) &&
         Number(draft.reorder_threshold) >= 0))
@@ -244,7 +274,6 @@ export default function PersonnelInventoryPage() {
             {syncing ? 'Syncing…' : 'Sync from inspections'}
           </Button>
           <Button type="button" onClick={openAdd} className="gap-2">
-            <Plus className="h-4 w-4" />
             Add stock
           </Button>
         </div>
@@ -278,12 +307,21 @@ export default function PersonnelInventoryPage() {
           <Input
             type="search"
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => {
+              setQuery(e.target.value)
+              setPage(1)
+            }}
             placeholder="Search item, account code, location…"
             className={air.search}
             aria-label="Search stocks"
           />
-<Select value={accountCode} onValueChange={setAccountCode}>
+<Select
+            value={accountCode}
+            onValueChange={(v) => {
+              setAccountCode(v)
+              setPage(1)
+            }}
+          >
               <SelectTrigger className="w-44">
                 <SelectValue placeholder="Account code" />
               </SelectTrigger>
@@ -296,7 +334,13 @@ export default function PersonnelInventoryPage() {
                 ))}
               </SelectContent>
             </Select>
-          <Select value={level} onValueChange={setLevel}>
+          <Select
+            value={level}
+            onValueChange={(v) => {
+              setLevel(v)
+              setPage(1)
+            }}
+          >
             <SelectTrigger className="w-40">
               <SelectValue placeholder="Stock level" />
             </SelectTrigger>
@@ -327,21 +371,31 @@ export default function PersonnelInventoryPage() {
                   <th>Account code</th>
                   <th>Quantity</th>
                   <th>Unit</th>
+                  <th>Unit cost</th>
                   <th>Location</th>
                   <th>Stock level</th>
                   <th>Action</th>
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((item) => {
+                {visible.map((item) => {
                   const lv = levelOf(item)
                   return (
                     <tr key={item.id}>
-                      <td>{item.item_name}</td>
-                      <td>{item.account_code ?? '—'}</td>
-                      <td>{item.quantity}</td>
-                      <td>{item.unit ?? '—'}</td>
-                      <td>{item.location ?? '—'}</td>
+                          <td>{item.item_name}</td>
+                          <td>{item.account_code ?? '—'}</td>
+                          <td>{item.quantity}</td>
+                          <td>{item.unit ?? '—'}</td>
+                          <td>
+                            {item.unit_cost != null
+                              ? new Intl.NumberFormat('en-PH', {
+                                  style: 'currency',
+                                  currency: 'PHP',
+                                  minimumFractionDigits: 2,
+                                }).format(item.unit_cost)
+                              : '—'}
+                          </td>
+                          <td>{item.location ?? '—'}</td>
                       <td>
                         <span className={styles.status} data-tone={levelTone(lv)}>
                           {levelLabel(lv)}
@@ -372,6 +426,16 @@ export default function PersonnelInventoryPage() {
             </table>
           </div>
         )}
+        {filtered.length > 0 ? (
+          <TablePager
+            id="inventory"
+            total={filtered.length}
+            pageSize={pageSize}
+            page={safePage}
+            onPageSizeChange={setPageSize}
+            onPageChange={setPage}
+          />
+        ) : null}
       </Card>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
@@ -445,6 +509,20 @@ export default function PersonnelInventoryPage() {
                 onChange={(e) =>
                   setDraft((d) => ({ ...d, quantity: e.target.value }))
                 }
+              />
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="stock-unit-cost">Unit cost (₱)</Label>
+              <Input
+                id="stock-unit-cost"
+                type="number"
+                min={0}
+                step="0.01"
+                value={draft.unit_cost}
+                onChange={(e) =>
+                  setDraft((d) => ({ ...d, unit_cost: e.target.value }))
+                }
+                placeholder="e.g. 1250.00"
               />
             </div>
             <div className="grid gap-1.5">

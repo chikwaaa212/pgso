@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
+import { writeAuditLog } from '@/lib/audit'
 import { stockInspectionItems } from '@/lib/stock'
 import prisma from '@/lib/prisma'
 
@@ -11,6 +12,7 @@ export interface InventoryRow {
   account_code: string | null
   quantity: number
   unit: string | null
+  unit_cost: number | null
   reorder_threshold: number | null
   location: string | null
 }
@@ -21,19 +23,28 @@ export interface InventoryState {
 }
 
 export async function getInventoryItems(): Promise<InventoryRow[]> {
-  const rows = await prisma.inventoryItem.findMany({
-    orderBy: { item_name: 'asc' },
-    select: {
-      id: true,
-      item_name: true,
-      account_code: true,
-      quantity: true,
-      unit: true,
-      reorder_threshold: true,
-      location: true,
-    },
-  })
-  return rows
+  try {
+    const rows = await prisma.inventoryItem.findMany({
+      orderBy: { item_name: 'asc' },
+      select: {
+        id: true,
+        item_name: true,
+        account_code: true,
+        quantity: true,
+        unit: true,
+        unit_cost: true,
+        reorder_threshold: true,
+        location: true,
+      },
+    })
+    return rows.map((r) => ({
+      ...r,
+      unit_cost: r.unit_cost != null ? Number(r.unit_cost) : null,
+    }))
+  } catch (e) {
+    console.error('[getInventoryItems]', e)
+    return []
+  }
 }
 
 export interface SaveItemInput {
@@ -42,6 +53,7 @@ export interface SaveItemInput {
   account_code: string
   quantity: number
   unit: string
+  unit_cost: number | null
   reorder_threshold: number | null
   location: string
 }
@@ -69,6 +81,12 @@ export async function saveInventoryItem(
   ) {
     return { error: 'Reorder threshold must be a whole number of zero or more.' }
   }
+  if (
+    input.unit_cost != null &&
+    (!Number.isFinite(input.unit_cost) || input.unit_cost < 0)
+  ) {
+    return { error: 'Unit cost must be zero or more.' }
+  }
 
   const user = await requireUser()
   if (!user) return { error: 'You must be signed in to manage stocks.' }
@@ -78,6 +96,7 @@ export async function saveInventoryItem(
     account_code: input.account_code?.trim() || null,
     quantity: input.quantity,
     unit: input.unit?.trim() || null,
+    unit_cost: input.unit_cost,
     reorder_threshold: input.reorder_threshold,
     location: input.location?.trim() || null,
   }
@@ -93,6 +112,16 @@ export async function saveInventoryItem(
     } else {
       await prisma.inventoryItem.create({ data })
     }
+    await writeAuditLog({
+      userId: user.id,
+      action: input.id ? 'inventory:update' : 'inventory:create',
+      module: 'inventory',
+      details: {
+        purpose: `${input.id ? 'Update' : 'Add'} stock item ${name}`,
+        summary: `${name} · Qty ${input.quantity}${input.unit ? ` ${input.unit}` : ''}`,
+        reference_id: input.id ?? null,
+      },
+    })
     revalidatePath('/personnel/inventory')
     return { success: true }
   } catch (e) {
@@ -109,6 +138,16 @@ export async function deleteInventoryItem(id: string): Promise<InventoryState> {
 
   try {
     await prisma.inventoryItem.delete({ where: { id } })
+    await writeAuditLog({
+      userId: user.id,
+      action: 'inventory:delete',
+      module: 'inventory',
+      details: {
+        purpose: 'Remove stock item',
+        summary: `Deleted stock ${id.slice(0, 8).toUpperCase()}`,
+        reference_id: id,
+      },
+    })
     revalidatePath('/personnel/inventory')
     return { success: true }
   } catch (e) {
@@ -120,12 +159,15 @@ export async function deleteInventoryItem(id: string): Promise<InventoryState> {
 export interface SyncState extends InventoryState {
   stocked?: number
   skipped?: number
+  costsFixed?: number
 }
 
 /**
  * Stocks every passed/partial inspection that has an AIR but still has
- * unstocked received quantities (e.g. completed before auto-stocking).
- * Idempotent — nothing is ever counted twice.
+ * unstocked received quantities (e.g. completed before auto-stocking),
+ * and backfills stock unit costs from delivery items for rows that were
+ * stocked before costs were copied over. Idempotent — quantities are
+ * never counted twice.
  */
 export async function syncUnstockedInspections(): Promise<SyncState> {
   const user = await requireUser()
@@ -141,10 +183,12 @@ export async function syncUnstockedInspections(): Promise<SyncState> {
     })
 
     let stocked = 0
+    let costsFixed = 0
     for (const p of pending) {
       try {
         const res = await stockInspectionItems(p.id)
         if (res.stocked) stocked += 1
+        costsFixed += res.costsFixed ?? 0
       } catch (e) {
         console.error('[syncUnstockedInspections]', p.id, e)
       }
@@ -152,7 +196,7 @@ export async function syncUnstockedInspections(): Promise<SyncState> {
 
     revalidatePath('/personnel/inventory')
     revalidatePath('/personnel/inspections')
-    return { success: true, stocked, skipped: pending.length - stocked }
+    return { success: true, stocked, skipped: pending.length - stocked, costsFixed }
   } catch (e) {
     console.error('[syncUnstockedInspections]', e)
     return { error: 'Failed to sync inspections. Please try again.' }

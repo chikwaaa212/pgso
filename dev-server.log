@@ -1,0 +1,35 @@
+
+> pgso@0.1.0 dev
+> next dev
+
+▲ Next.js 16.3.4 (Turbopack)
+- Local:         http://localhost:3000
+- Network:       http://192.168.1.34:3000
+- Environments: .env.local, .env
+✓ Ready in 451ms
+✓ Running next.config.ts took 37ms
+
+ HEAD /login 200 in 1028ms (next.js: 712ms, application-code: 316ms)
+ HEAD /login 200 in 51ms (next.js: 3ms, application-code: 48ms)
+ GET /personnel/documents 200 in 3.7s (next.js: 75ms, application-code: 3.6s)
+ POST /personnel/documents 200 in 246ms (next.js: 3ms, application-code: 243ms)
+  └─ ƒ getDeliveryDocuments() in 231ms src/app/personnel/documents/actions.ts
+ POST /personnel/documents 200 in 359ms (next.js: 3ms, application-code: 357ms)
+  └─ ƒ getInspectionsList() in 347ms src/app/personnel/inspections/actions.ts
+ POST /personnel/documents 200 in 240ms (next.js: 3ms, application-code: 237ms)
+  └─ ƒ getInventoryItems() in 231ms src/app/personnel/inventory/actions.ts
+ POST /personnel/documents 200 in 1226ms (next.js: 3ms, application-code: 1223ms)
+  └─ ƒ getAllUnifiedAssets() in 1193ms src/app/personnel/assets/actions.ts
+ POST /personnel/documents 200 in 695ms (next.js: 3ms, application-code: 691ms)
+  └─ ƒ getAllIarReports() in 682ms src/app/personnel/documents/actions.ts
+ POST /personnel/documents 200 in 126ms (next.js: 3ms, application-code: 123ms)
+  └─ ƒ getDeliveryDocuments() in 115ms src/app/personnel/documents/actions.ts
+ POST /personnel/documents 200 in 236ms (next.js: 2ms, application-code: 234ms)
+  └─ ƒ getInspectionsList() in 227ms src/app/personnel/inspections/actions.ts
+ POST /personnel/documents 200 in 125ms (next.js: 3ms, application-code: 122ms)
+  └─ ƒ getInventoryItems() in 114ms src/app/personnel/inventory/actions.ts
+ POST /personnel/documents 200 in 507ms (next.js: 2ms, application-code: 505ms)
+  └─ ƒ getAllUnifiedAssets() in 485ms src/app/personnel/assets/actions.ts
+ POST /personnel/documents 200 in 490ms (next.js: 2ms, application-code: 488ms)
+  └─ ƒ getAllIarReports() in 479ms src/app/personnel/documents/actions.ts
+[?25h

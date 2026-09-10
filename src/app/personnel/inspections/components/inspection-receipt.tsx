@@ -146,7 +146,7 @@ export function InspectionReceipt({
                 ? `${delivery.asset_type} — ${delivery.account_code ?? "—"}`
                 : "—",
             ],
-            ["Account Type", delivery.account_type ?? "—"],
+            ["Account Title", delivery.account_title ?? "—"],
             ["Inspection Date", inspection ? fmt(inspection.inspection_date) : "—"],
             ["Inspector", inspection?.inspector_name ?? "—"],
           ].map(([label, value]) => (

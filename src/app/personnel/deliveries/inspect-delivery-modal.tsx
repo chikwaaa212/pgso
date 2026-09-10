@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import { useActionState, useEffect, useRef } from "react";
-import { X } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -139,7 +138,6 @@ export function InspectDeliveryModal({
                 "border border-navy-200 bg-transparent text-navy-700 hover:bg-navy-100"
               )}
             >
-              <X className="mr-1 h-4 w-4" />
               Cancel
             </button>
             <SubmitButton

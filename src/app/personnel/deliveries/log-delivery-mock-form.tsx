@@ -1,7 +1,6 @@
 "use client";
 
 import { useActionState, useEffect, useRef, useState } from "react";
-import { Plus, Trash2 } from "lucide-react";
 import { DatePicker } from "@/components/ui/date-picker";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
@@ -9,13 +8,13 @@ import { Label } from "@/components/ui/label";
 import { SubmitButton } from "@/components/ui/submit-button";
 import { useToast } from "@/components/ui/toaster";
 import { cn } from "@/lib/utils";
-import { logDelivery } from "./actions";
+import { logDelivery, getDeliveryFormOptions, type DeliveryFormOptions } from "./actions";
 import type { SignupState } from "@/types";
 
 interface Step1Data {
   assetType: string;
   accountCode: string;
-  accountType: string;
+  accountTitle: string;
 }
 
 interface Step2Data {
@@ -47,6 +46,8 @@ interface PreviewData extends Step1Data, Step2Data, RecipientData, Step3Data {}
 export type { PreviewData };
 
 const STEPS = ["Asset Details", "Delivery Details", "Recipient", "Items Delivered"];
+
+const CUSTOM_CODE_VALUE = "__custom__";
 
 function StepperNav({ currentStep }: { currentStep: number }) {
   return (
@@ -89,7 +90,7 @@ export function useLogDeliveryDraft() {
   const [step1, setStep1] = useState<Step1Data>({
     assetType: "",
     accountCode: "",
-    accountType: "",
+    accountTitle: "",
   });
   const [step2, setStep2] = useState<Step2Data>({
     dateSupplied: undefined,
@@ -104,7 +105,7 @@ export function useLogDeliveryDraft() {
   const [step3, setStep3] = useState<Step3Data>({ items: [] });
 
   const reset = () => {
-    setStep1({ assetType: "", accountCode: "", accountType: "" });
+    setStep1({ assetType: "", accountCode: "", accountTitle: "" });
     setStep2({
       dateSupplied: undefined,
       supplierName: "",
@@ -165,6 +166,51 @@ export function LogDeliveryMockForm({
     setStep1((prev) => ({ ...prev, [field]: value }));
   };
 
+  const lookupCode = (code: string) =>
+    formOptions.codes.find(
+      (c) => c.code.toLowerCase() === code.trim().toLowerCase()
+    );
+
+  /**
+   * Account Code drives Step 1: picking a known code auto-fills asset type
+   * + account title from the chart of accounts. Unknown/custom codes clear
+   * any previous auto-fill so stale values can't leak into a manual entry.
+   */
+  const handleAccountCodeChange = (value: string) => {
+    const hit = lookupCode(value);
+    if (hit) {
+      setStep1((prev) => ({
+        ...prev,
+        accountCode: value,
+        assetType: hit.assetType || prev.assetType,
+        accountTitle: hit.accountTitle || prev.accountTitle,
+      }));
+    } else {
+      setStep1((prev) => {
+        const prevWasKnown = !!lookupCode(prev.accountCode);
+        if (!value.trim() || prevWasKnown) {
+          return { assetType: "", accountCode: value, accountTitle: "" };
+        }
+        return { ...prev, accountCode: value };
+      });
+    }
+  };
+
+  /**
+   * Switching asset type drops a previously picked code (and its title)
+   * when that code belongs to a different type. Custom codes the user
+   * typed are left alone.
+   */
+  const handleAssetTypeChange = (value: string) => {
+    setStep1((prev) => {
+      const current = lookupCode(prev.accountCode);
+      if (prev.accountCode && current && current.assetType !== value) {
+        return { ...prev, assetType: value, accountCode: "", accountTitle: "" };
+      }
+      return { ...prev, assetType: value };
+    });
+  };
+
   const handleStep2Change = (field: keyof Step2Data, value: Date | string | undefined) => {
     setStep2((prev) => ({ ...prev, [field]: value }));
   };
@@ -196,6 +242,7 @@ export function LogDeliveryMockForm({
 
   const resetForm = () => {
     reset();
+    setCustomCodeMode(false);
     setIdempotencyKey(crypto.randomUUID());
   };
 
@@ -207,6 +254,16 @@ export function LogDeliveryMockForm({
   );
   const lastSavedId = useRef<string | null>(null);
   const [idempotencyKey, setIdempotencyKey] = useState(() => crypto.randomUUID());
+  const [customCodeMode, setCustomCodeMode] = useState(false);
+  const [formOptions, setFormOptions] = useState<DeliveryFormOptions>({
+    assetTypes: [],
+    accountTitles: [],
+    codes: [],
+  });
+
+  useEffect(() => {
+    void getDeliveryFormOptions().then(setFormOptions);
+  }, []);
 
   useEffect(() => {
     if (
@@ -234,7 +291,7 @@ export function LogDeliveryMockForm({
   }, [actionState, toast, onClose]);
 
   const isStep1Valid =
-    !!step1.assetType && !!step1.accountCode && !!step1.accountType;
+    !!step1.assetType && !!step1.accountCode && !!step1.accountTitle;
   const isStep2Valid =
     !!step2.dateSupplied && !!step2.supplierName && !!step2.poReference;
   const isRecipientValid = !!recipient.recipientRole;
@@ -252,65 +309,192 @@ export function LogDeliveryMockForm({
   const handleNext = () => setStep((s) => Math.min(s + 1, 4));
   const handleBack = () => setStep((s) => Math.max(s - 1, 1));
 
-  const renderStep1 = () => (
-    <div className="flex flex-col gap-3">
-      <div>
-        <Label htmlFor="asset-type" className="mb-1 block text-sm font-medium">
-          Asset Type
-        </Label>
-        <Select
-          value={step1.assetType}
-          onValueChange={(v) => handleStep1Change("assetType", v)}
-        >
-          <SelectTrigger id="asset-type" className="w-full">
-            <SelectValue placeholder="Select asset type" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="IT">IT Equipment</SelectItem>
-            <SelectItem value="FS">Furniture &amp; Supplies</SelectItem>
-            <SelectItem value="HV">Vehicle</SelectItem>
-            <SelectItem value="OT">Office Equipment</SelectItem>
-          </SelectContent>
-        </Select>
+  const renderStep1 = () => {
+    const matchedCode = lookupCode(step1.accountCode);
+    const isAutoFilled = !!matchedCode;
+    const isCustomTyped =
+      !isAutoFilled && step1.accountCode.trim() !== "";
+    const showCustomInput = customCodeMode || isCustomTyped;
+    const accountSelectValue = showCustomInput
+      ? CUSTOM_CODE_VALUE
+      : isAutoFilled
+        ? matchedCode.code
+        : "";
+
+    const handleAccountCodeSelect = (value: string) => {
+      if (value === CUSTOM_CODE_VALUE) {
+        setCustomCodeMode(true);
+        setStep1((prev) => ({ assetType: "", accountCode: "", accountTitle: "" }));
+      } else {
+        setCustomCodeMode(false);
+        handleAccountCodeChange(value);
+      }
+    };
+
+    return (
+      <div className="flex flex-col gap-3">
+        <div>
+          <Label htmlFor="account-code" className="mb-1 block text-sm font-medium">
+            Account Code <span className="font-normal text-navy-500">(start here)</span>
+          </Label>
+          {formOptions.codes.length > 0 ? (
+            <>
+              <Select value={accountSelectValue} onValueChange={handleAccountCodeSelect}>
+                <SelectTrigger id="account-code" className="w-full">
+                  <SelectValue placeholder="Select account code" />
+                </SelectTrigger>
+                <SelectContent>
+                  {formOptions.codes.map((c) => (
+                    <SelectItem key={c.code} value={c.code}>
+                      {c.code}
+                      {c.accountTitle ? ` — ${c.accountTitle}` : c.assetType ? ` — ${c.assetType}` : ""}
+                    </SelectItem>
+                  ))}
+                  <SelectItem value={CUSTOM_CODE_VALUE}>
+                    Type a custom code…
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+              {showCustomInput && (
+                <Input
+                  id="account-code-custom"
+                  name="accountCodeCustom"
+                  value={step1.accountCode}
+                  onChange={(e) => handleAccountCodeChange(e.target.value)}
+                  placeholder="Enter custom account code"
+                  className="mt-2"
+                  autoFocus={customCodeMode}
+                />
+              )}
+            </>
+          ) : (
+            <Input
+              id="account-code"
+              name="accountCode"
+              value={step1.accountCode}
+              onChange={(e) => handleAccountCodeChange(e.target.value)}
+              placeholder="e.g. 1-06-05-020"
+              autoFocus
+            />
+          )}
+          {step1.accountCode.trim() === "" && !showCustomInput ? (
+            <p className="mt-1 text-xs text-navy-500">
+              Start by picking the account code — asset type and account title
+              fill in automatically.
+            </p>
+          ) : isAutoFilled ? (
+            <p className="mt-1 text-xs font-medium text-emerald-700">
+              Known code — asset type and account title filled in automatically.
+            </p>
+          ) : (
+            <p className="mt-1 text-xs text-amber-700">
+              Custom code — fill in asset type and account title manually below.
+            </p>
+          )}
+        </div>
+        <div>
+          <Label htmlFor="asset-type" className="mb-1 block text-sm font-medium">
+            Asset Type
+            {isAutoFilled && (
+              <span className="ml-1 font-normal text-emerald-700">(auto-filled)</span>
+            )}
+          </Label>
+          {formOptions.assetTypes.length > 0 ? (
+            <Select
+              value={step1.assetType}
+              onValueChange={handleAssetTypeChange}
+              disabled={isAutoFilled}
+            >
+              <SelectTrigger
+                id="asset-type"
+                className="w-full disabled:cursor-not-allowed disabled:opacity-70"
+              >
+                <SelectValue
+                  placeholder={
+                    isAutoFilled ? "Auto-filled from code" : "Select asset type"
+                  }
+                />
+              </SelectTrigger>
+              <SelectContent>
+                {formOptions.assetTypes.map((t) => (
+                  <SelectItem key={t} value={t}>
+                    {t}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          ) : (
+            <Input
+              id="asset-type"
+              name="assetType"
+              value={step1.assetType}
+              onChange={(e) => handleAssetTypeChange(e.target.value)}
+              placeholder={
+                isAutoFilled ? "Auto-filled from code" : "e.g. Machinery and Equipment"
+              }
+              disabled={isAutoFilled}
+            />
+          )}
+        </div>
+        <div>
+          <Label htmlFor="account-title" className="mb-1 block text-sm font-medium">
+            Account Title
+            {isAutoFilled && (
+              <span className="ml-1 font-normal text-emerald-700">(auto-filled)</span>
+            )}
+          </Label>
+          {formOptions.accountTitles.length > 0 ? (
+            <Select
+              value={step1.accountTitle}
+              onValueChange={(v) => handleStep1Change("accountTitle", v)}
+              disabled={isAutoFilled}
+            >
+              <SelectTrigger
+                id="account-title"
+                className="w-full disabled:cursor-not-allowed disabled:opacity-70"
+              >
+                <SelectValue
+                  placeholder={
+                    isAutoFilled ? "Auto-filled from code" : "Select account title"
+                  }
+                />
+              </SelectTrigger>
+              <SelectContent>
+                {formOptions.accountTitles.map((t) => (
+                  <SelectItem key={t} value={t}>
+                    {t}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          ) : (
+            <Input
+              id="account-title"
+              name="accountTitle"
+              value={step1.accountTitle}
+              onChange={(e) => handleStep1Change("accountTitle", e.target.value)}
+              placeholder={
+                isAutoFilled ? "Auto-filled from code" : "e.g. OFFICE EQUIPMENT"
+              }
+              disabled={isAutoFilled}
+            />
+          )}
+        </div>
+        {isAutoFilled && (
+          <p className="text-xs text-navy-500">
+            Showing {matchedCode?.assetType} • {matchedCode?.accountTitle}. To use a
+            different type/title, change or clear the account code above.
+          </p>
+        )}
       </div>
-      <div>
-        <Label htmlFor="account-code" className="mb-1 block text-sm font-medium">
-          Account Code
-        </Label>
-        <Input
-          id="account-code"
-          name="accountCode"
-          value={step1.accountCode}
-          onChange={(e) => handleStep1Change("accountCode", e.target.value)}
-          placeholder="e.g. A-001-B"
-        />
-      </div>
-      <div>
-        <Label htmlFor="account-type" className="mb-1 block text-sm font-medium">
-          Account Type
-        </Label>
-        <Select
-          value={step1.accountType}
-          onValueChange={(v) => handleStep1Change("accountType", v)}
-        >
-          <SelectTrigger id="account-type" className="w-full">
-            <SelectValue placeholder="Select account type" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="capital">Capital</SelectItem>
-            <SelectItem value="operational">Operational</SelectItem>
-            <SelectItem value="administrative">Administrative</SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
-    </div>
-  );
+    );
+  };
 
   const renderStep2 = () => (
     <div className="flex flex-col gap-3">
       <div>
         <Label htmlFor="date-supplied" className="mb-1 block text-sm font-medium">
-          Date Supplied
+          Date Received
         </Label>
         <DatePicker
           id="date-supplied"
@@ -321,7 +505,7 @@ export function LogDeliveryMockForm({
       </div>
       <div>
         <Label htmlFor="supplier-name" className="mb-1 block text-sm font-medium">
-          Supplier Name
+          Supplier/Payee
         </Label>
         <Input
           id="supplier-name"
@@ -409,18 +593,18 @@ export function LogDeliveryMockForm({
             <div key={item.id} className="flex items-end gap-2">
               <div className="flex-1">
                 <Label
-                  htmlFor={`item-desc-${item.id}`}
+                  htmlFor={`item-article-${item.id}`}
                   className="mb-1 block text-sm font-medium"
                 >
-                  Description
+                  Article
                 </Label>
                 <Input
-                  id={`item-desc-${item.id}`}
+                  id={`item-article-${item.id}`}
                   value={item.description}
                   onChange={(e) =>
                     handleItemChange(item.id, "description", e.target.value)
                   }
-                  placeholder="Item description"
+                  placeholder="Article name"
                 />
               </div>
               <div className="w-20">
@@ -428,7 +612,7 @@ export function LogDeliveryMockForm({
                   htmlFor={`item-qty-${item.id}`}
                   className="mb-1 block text-sm font-medium"
                 >
-                  Quantity
+                  Qty.
                 </Label>
                 <Input
                   id={`item-qty-${item.id}`}
@@ -445,7 +629,7 @@ export function LogDeliveryMockForm({
                   htmlFor={`item-units-${item.id}`}
                   className="mb-1 block text-sm font-medium"
                 >
-                  Units
+                  Unit
                 </Label>
                 <Select
                   value={item.units}
@@ -485,10 +669,10 @@ export function LogDeliveryMockForm({
               <button
                 type="button"
                 onClick={() => removeItem(item.id)}
-                className="mb-[0.25rem] p-1 text-red-600 hover:text-red-800"
+                className="mb-[0.25rem] p-1 text-sm font-medium text-red-600 hover:text-red-800 hover:underline"
                 aria-label="Remove item"
               >
-                <Trash2 className="h-4 w-4" />
+                Remove
               </button>
             </div>
           ))}
@@ -505,7 +689,6 @@ export function LogDeliveryMockForm({
           "border border-navy-200 bg-transparent text-navy-700 hover:bg-navy-100"
         )}
       >
-        <Plus className="mr-1 h-4 w-4" />
         Add item delivery
       </button>
     </div>
@@ -522,7 +705,7 @@ export function LogDeliveryMockForm({
     <form action={formAction}>
       <input type="hidden" name="assetType" value={step1.assetType} />
       <input type="hidden" name="accountCode" value={step1.accountCode} />
-      <input type="hidden" name="accountType" value={step1.accountType} />
+      <input type="hidden" name="accountTitle" value={step1.accountTitle} />
       <input
         type="hidden"
         name="dateSupplied"

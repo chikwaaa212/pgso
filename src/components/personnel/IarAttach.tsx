@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ImagePlus, Loader2, Trash2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { createClient } from "@/lib/supabase/client";
 import {
@@ -98,9 +98,7 @@ export function IarAttachButton({
       >
         {busy ? (
           <Loader2 className="h-4 w-4 animate-spin" />
-        ) : (
-          <ImagePlus className="h-4 w-4" />
-        )}
+        ) : null}
         {busy ? "Uploading…" : label}
       </Button>
       {error ? (
@@ -165,9 +163,7 @@ export function IarRemoveButton({
       >
         {busy ? (
           <Loader2 className="h-4 w-4 animate-spin" />
-        ) : (
-          <Trash2 className="h-4 w-4" />
-        )}
+        ) : null}
         {busy ? "Removing…" : "Remove scan"}
       </Button>
       {error ? (

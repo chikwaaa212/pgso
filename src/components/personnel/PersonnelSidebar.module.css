@@ -39,11 +39,11 @@
   .sidebar {
     display: flex;
     position: sticky;
-    top: 5rem;
+    top: 1rem;
     align-self: start;
     width: 15rem;
     flex-shrink: 0;
-    max-height: calc(100vh - 6rem);
+    max-height: calc(100vh - 2rem);
     overflow-y: auto;
   }
 }

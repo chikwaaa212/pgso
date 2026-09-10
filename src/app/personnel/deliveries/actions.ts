@@ -4,7 +4,9 @@ import { revalidatePath } from 'next/cache'
 import { notFound } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import prisma from '@/lib/prisma'
+import type { Prisma } from '@prisma/client'
 import { withIdempotency } from '@/lib/idempotency'
+import { writeAuditLog } from '@/lib/audit'
 import { stockInspectionItems } from '@/lib/stock'
 import type { SignupState } from '@/types'
 
@@ -25,7 +27,7 @@ export async function logDelivery(
 ): Promise<SignupState> {
   const assetType = (formData.get('assetType') as string)?.trim()
   const accountCode = (formData.get('accountCode') as string)?.trim()
-  const accountType = (formData.get('accountType') as string)?.trim()
+  const accountTitle = (formData.get('accountTitle') as string)?.trim()
   const dateSupplied = formData.get('dateSupplied') as string
   const supplierName = (formData.get('supplierName') as string)?.trim()
   const poReference = (formData.get('poReference') as string)?.trim()
@@ -35,16 +37,16 @@ export async function logDelivery(
   const recipientRole = (formData.get('recipientRole') as string)?.trim()
   const recipientName = (formData.get('recipientName') as string)?.trim()
 
-  if (!assetType || !accountCode || !accountType) {
-    return { error: 'Asset type, account code, and account type are required.' }
+  if (!assetType || !accountCode || !accountTitle) {
+    return { error: 'Asset type, account code, and account title are required.' }
   }
 
   if (!dateSupplied || Number.isNaN(Date.parse(dateSupplied))) {
-    return { error: 'A valid date supplied is required.' }
+    return { error: 'A valid date received is required.' }
   }
 
   if (!supplierName) {
-    return { error: 'Supplier name is required.' }
+    return { error: 'Supplier/payee is required.' }
   }
 
   if (!poReference) {
@@ -80,7 +82,7 @@ export async function logDelivery(
 
   for (const item of parsedItems) {
     if (!item.description) {
-      return { error: 'Every item needs a description.' }
+      return { error: 'Every item needs an article.' }
     }
     if (!Number.isInteger(item.quantity) || item.quantity <= 0) {
       return { error: 'Item quantities must be whole numbers above zero.' }
@@ -116,7 +118,7 @@ export async function logDelivery(
             recipient_name: recipientName || null,
             asset_type: assetType,
             account_code: accountCode,
-            account_type: accountType,
+            account_title: accountTitle,
             items: {
               create: parsedItems.map((item) => ({
                 item_name: item.description,
@@ -134,6 +136,18 @@ export async function logDelivery(
 
     revalidatePath('/personnel/deliveries')
     revalidatePath('/personnel/dashboard')
+    await writeAuditLog({
+      userId: user.id,
+      action: 'delivery:create',
+      module: 'deliveries',
+      details: {
+        purpose: `Log delivery from ${supplierName}`,
+        summary: `PO ${poReference} · ${parsedItems.length} item(s) · ${deliveryStatus}`,
+        reference_id: outcome.result.deliveryId,
+        supplier: supplierName,
+        po_reference: poReference,
+      },
+    })
     return { success: true, deliveryId: outcome.result.deliveryId }
   } catch {
     return { error: 'Failed to save delivery. Please try again.' }
@@ -175,8 +189,8 @@ export async function recordInspection(
     return { error: 'A valid inspection date is required.' }
   }
 
-  let supplierChecks: Record<string, unknown> = {}
-  let itemChecks: unknown[] = []
+  let supplierChecks: Prisma.InputJsonValue = {}
+  let itemChecks: Prisma.InputJsonValue = []
 
   try {
     if (supplierRaw) supplierChecks = JSON.parse(supplierRaw)
@@ -255,6 +269,17 @@ export async function recordInspection(
     revalidatePath('/personnel/inspections')
     revalidatePath(`/personnel/inspections/${deliveryId}`)
     revalidatePath('/personnel/dashboard')
+    await writeAuditLog({
+      userId: user.id,
+      action: 'inspection:create',
+      module: 'inspections',
+      details: {
+        purpose: `Record ${result} inspection by ${inspectorName}`,
+        summary: remarks || `Delivery ${deliveryId.slice(0, 8).toUpperCase()} inspected — ${result}`,
+        reference_id: deliveryId,
+        result,
+      },
+    })
     return { success: true, stockWarning }
   } catch (e) {
     console.error('[recordInspection]', e)
@@ -282,7 +307,7 @@ export interface DeliveryDetails {
   inspection_status: string | null
   asset_type: string | null
   account_code: string | null
-  account_type: string | null
+  account_title: string | null
   recipient_role: string | null
   recipient_name: string | null
   created_at: string | null
@@ -292,35 +317,91 @@ export interface DeliveryDetails {
 export async function getDeliveryDetails(
   deliveryId: string
 ): Promise<DeliveryDetails> {
-  const delivery = await prisma.delivery.findUnique({
-    where: { id: deliveryId },
-    include: {
-      items: { orderBy: { created_at: 'asc' } },
-    },
-  })
+  try {
+    const delivery = await prisma.delivery.findUnique({
+      where: { id: deliveryId },
+      include: {
+        items: { orderBy: { created_at: 'asc' } },
+      },
+    })
 
-  if (!delivery) notFound()
+    if (!delivery) notFound()
 
-  return {
-    id: delivery.id,
-    delivery_ref: delivery.id.slice(0, 8).toUpperCase(),
-    supplier: delivery.supplier,
-    po_reference: delivery.po_reference,
-    date_delivered: delivery.date_delivered?.toISOString().slice(0, 10) ?? null,
-    delivery_status: delivery.delivery_status,
-    inspection_status: delivery.inspection_status,
-    asset_type: delivery.asset_type,
-    account_code: delivery.account_code,
-    account_type: delivery.account_type,
-    recipient_role: delivery.recipient_role,
-    recipient_name: delivery.recipient_name,
-    created_at: delivery.created_at?.toISOString() ?? null,
-    items: delivery.items.map((item) => ({
-      id: item.id,
-      item_name: item.item_name,
-      unit: item.unit,
-      quantity: item.quantity,
-      unit_cost: item.unit_cost ? Number(item.unit_cost) : null,
-    })),
+    return {
+      id: delivery.id,
+      delivery_ref: delivery.id.slice(0, 8).toUpperCase(),
+      supplier: delivery.supplier,
+      po_reference: delivery.po_reference,
+      date_delivered: delivery.date_delivered?.toISOString().slice(0, 10) ?? null,
+      delivery_status: delivery.delivery_status,
+      inspection_status: delivery.inspection_status,
+      asset_type: delivery.asset_type,
+      account_code: delivery.account_code,
+      account_title: delivery.account_title,
+      recipient_role: delivery.recipient_role,
+      recipient_name: delivery.recipient_name,
+      created_at: delivery.created_at?.toISOString() ?? null,
+      items: delivery.items.map((item) => ({
+        id: item.id,
+        item_name: item.item_name,
+        unit: item.unit,
+        quantity: item.quantity,
+        unit_cost: item.unit_cost ? Number(item.unit_cost) : null,
+      })),
+    }
+  } catch (e) {
+    console.error('[getDeliveryDetails]', e)
+    notFound()
+  }
+}
+
+export interface DeliveryFormCode {
+  code: string
+  assetType: string
+  accountTitle: string
+}
+
+export interface DeliveryFormOptions {
+  assetTypes: string[]
+  accountTitles: string[]
+  codes: DeliveryFormCode[]
+}
+
+/**
+ * Chart-of-accounts options for the Log delivery form, sourced from the
+ * assets table (the canonical asset type / account code / account title
+ * reference). Each account code maps to exactly one asset type + title,
+ * so picking a code auto-fills the other two fields.
+ */
+export async function getDeliveryFormOptions(): Promise<DeliveryFormOptions> {
+  const empty: DeliveryFormOptions = { assetTypes: [], accountTitles: [], codes: [] }
+  try {
+    const assets = await prisma.asset.findMany({
+      where: { account_code: { not: null } },
+      select: { category: true, account_code: true, account_title: true },
+    })
+
+    const byCode = new Map<string, DeliveryFormCode>()
+    for (const a of assets) {
+      const code = a.account_code?.trim() ?? ''
+      if (!code || byCode.has(code.toLowerCase())) continue
+      byCode.set(code.toLowerCase(), {
+        code,
+        assetType: a.category?.trim() ?? '',
+        accountTitle: a.account_title?.trim() ?? '',
+      })
+    }
+
+    const codes = [...byCode.values()].sort((x, y) => x.code.localeCompare(y.code))
+    const assetTypes = [...new Set(codes.map((c) => c.assetType).filter(Boolean))].sort((a, b) =>
+      a.localeCompare(b)
+    )
+    const accountTitles = [...new Set(codes.map((c) => c.accountTitle).filter(Boolean))].sort(
+      (a, b) => a.localeCompare(b)
+    )
+    return { assetTypes, accountTitles, codes }
+  } catch (e) {
+    console.error('[getDeliveryFormOptions]', e)
+    return empty
   }
 }

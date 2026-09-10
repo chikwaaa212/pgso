@@ -4,6 +4,7 @@ import { notFound } from 'next/navigation'
 import { revalidatePath } from 'next/cache'
 import { Prisma } from '@prisma/client'
 import { createClient } from '@/lib/supabase/server'
+import { writeAuditLog } from '@/lib/audit'
 import { stockInspectionItems } from '@/lib/stock'
 import prisma from '@/lib/prisma'
 
@@ -29,7 +30,7 @@ export interface DeliveryForInspection {
   recipient_role: string | null
   asset_type: string | null
   account_code: string | null
-  account_type: string | null
+  account_title: string | null
   received_by: string             // UUID
   items: DeliveryItemData[]
   inspection_data?: {
@@ -82,83 +83,88 @@ export interface PendingDeliveryRow {
 export async function getDeliveryForInspection(
   deliveryId: string
 ): Promise<DeliveryForInspection> {
-  const delivery = await prisma.delivery.findUnique({
-    where: { id: deliveryId },
-    include: {
-      items: { orderBy: { created_at: 'asc' } },
-      inspections: {
-        orderBy: { created_at: 'desc' },
-        take: 1,
-        select: {
-          inspector_name: true,
-          inspector_id: true,
-          inspection_date: true,
-          result: true,
-          remarks: true,
-          supplier_checks: true,
-          item_checks: true,
-          iar_no: true,
-          iar_date: true,
-          iar_invoice_no: true,
-          iar_invoice_date: true,
-          iar_data: true,
-          iar_generated_at: true,
-          iar_image_url: true,
-          stocked_at: true,
+  try {
+    const delivery = await prisma.delivery.findUnique({
+      where: { id: deliveryId },
+      include: {
+        items: { orderBy: { created_at: 'asc' } },
+        inspections: {
+          orderBy: { created_at: 'desc' },
+          take: 1,
+          select: {
+            inspector_name: true,
+            inspector_id: true,
+            inspection_date: true,
+            result: true,
+            remarks: true,
+            supplier_checks: true,
+            item_checks: true,
+            iar_no: true,
+            iar_date: true,
+            iar_invoice_no: true,
+            iar_invoice_date: true,
+            iar_data: true,
+            iar_generated_at: true,
+            iar_image_url: true,
+            stocked_at: true,
+          },
         },
       },
-    },
-  })
+    })
 
-  if (!delivery) notFound()
+    if (!delivery) notFound()
 
-  const latestInspection = delivery.inspections[0] ?? null
+    const latestInspection = delivery.inspections[0] ?? null
 
-  return {
-    id:               delivery.id,
-    po_reference:     delivery.po_reference,
-    supplier:         delivery.supplier,
-    date_delivered:   delivery.date_delivered?.toISOString().slice(0, 10) ?? null,
-    delivery_status:  delivery.delivery_status,
-    inspection_status: delivery.inspection_status,
-    recipient_name:   delivery.recipient_name,
-    recipient_role:   delivery.recipient_role,
-    asset_type:       delivery.asset_type,
-    account_code:     delivery.account_code,
-    account_type:     delivery.account_type,
-    received_by:      delivery.received_by,
-    items: delivery.items.map((item) => ({
-      id:        item.id,
-      item_name: item.item_name,
-      unit:      item.unit,
-      quantity:  item.quantity,
-      unit_cost: item.unit_cost ? Number(item.unit_cost) : null,
-      stocked_qty: item.stocked_qty,
-    })),
-    inspection_data: latestInspection
-      ? {
-          inspector_name: latestInspection.inspector_name,
-          inspector_id: latestInspection.inspector_id,
-          inspection_date: latestInspection.inspection_date.toISOString().slice(0, 10),
-          result: latestInspection.result,
-          remarks: latestInspection.remarks,
-          supplier_checks: latestInspection.supplier_checks as Record<string, string> | null,
-          item_checks: latestInspection.item_checks as Array<{
-            itemId: string
-            status: string
-            actualQty: number
-            remarks: string
-          }> | null,
-          iar_no: latestInspection.iar_no,
-          iar_date: latestInspection.iar_date?.toISOString().slice(0, 10) ?? null,
-          iar_invoice_no: latestInspection.iar_invoice_no,
-          iar_invoice_date: latestInspection.iar_invoice_date?.toISOString().slice(0, 10) ?? null,
-          iar_data: latestInspection.iar_data as Record<string, string> | null,
-          iar_generated_at: latestInspection.iar_generated_at?.toISOString() ?? null,
-          iar_image_url: latestInspection.iar_image_url,
-          stocked_at: latestInspection.stocked_at?.toISOString() ?? null,
-        }
-      : undefined,
+    return {
+      id:               delivery.id,
+      po_reference:     delivery.po_reference,
+      supplier:         delivery.supplier,
+      date_delivered:   delivery.date_delivered?.toISOString().slice(0, 10) ?? null,
+      delivery_status:  delivery.delivery_status,
+      inspection_status: delivery.inspection_status,
+      recipient_name:   delivery.recipient_name,
+      recipient_role:   delivery.recipient_role,
+      asset_type:       delivery.asset_type,
+      account_code:     delivery.account_code,
+      account_title:     delivery.account_title,
+      received_by:      delivery.received_by,
+      items: delivery.items.map((item) => ({
+        id:        item.id,
+        item_name: item.item_name,
+        unit:      item.unit,
+        quantity:  item.quantity,
+        unit_cost: item.unit_cost ? Number(item.unit_cost) : null,
+        stocked_qty: item.stocked_qty,
+      })),
+      inspection_data: latestInspection
+        ? {
+            inspector_name: latestInspection.inspector_name,
+            inspector_id: latestInspection.inspector_id,
+            inspection_date: latestInspection.inspection_date.toISOString().slice(0, 10),
+            result: latestInspection.result,
+            remarks: latestInspection.remarks,
+            supplier_checks: latestInspection.supplier_checks as Record<string, string> | null,
+            item_checks: latestInspection.item_checks as Array<{
+              itemId: string
+              status: string
+              actualQty: number
+              remarks: string
+            }> | null,
+            iar_no: latestInspection.iar_no,
+            iar_date: latestInspection.iar_date?.toISOString().slice(0, 10) ?? null,
+            iar_invoice_no: latestInspection.iar_invoice_no,
+            iar_invoice_date: latestInspection.iar_invoice_date?.toISOString().slice(0, 10) ?? null,
+            iar_data: latestInspection.iar_data as Record<string, string> | null,
+            iar_generated_at: latestInspection.iar_generated_at?.toISOString() ?? null,
+            iar_image_url: latestInspection.iar_image_url,
+            stocked_at: latestInspection.stocked_at?.toISOString() ?? null,
+          }
+        : undefined,
+    }
+  } catch (e) {
+    console.error('[getDeliveryForInspection]', e)
+    notFound()
   }
 }
 
@@ -183,43 +189,48 @@ export interface UnifiedInspectionRow {
 }
 
 export async function getInspectionsList(): Promise<UnifiedInspectionRow[]> {
-  const deliveries = await prisma.delivery.findMany({
-    orderBy: { created_at: 'desc' },
-    include: {
-      _count: { select: { items: true } },
-      inspections: {
-        orderBy: { created_at: 'desc' },
-        take: 1,
-        select: {
-          inspector_name: true,
-          result: true,
-          inspection_date: true,
-          created_at: true,
-          iar_no: true,
-          iar_image_url: true,
-          stocked_at: true,
+  try {
+    const deliveries = await prisma.delivery.findMany({
+      orderBy: { created_at: 'desc' },
+      include: {
+        _count: { select: { items: true } },
+        inspections: {
+          orderBy: { created_at: 'desc' },
+          take: 1,
+          select: {
+            inspector_name: true,
+            result: true,
+            inspection_date: true,
+            created_at: true,
+            iar_no: true,
+            iar_image_url: true,
+            stocked_at: true,
+          },
         },
       },
-    },
-  })
+    })
 
-  return deliveries.map((d) => ({
-    delivery_id:       d.id,
-    delivery_ref:      d.id.slice(0, 8).toUpperCase(),
-    supplier:          d.supplier,
-    po_reference:      d.po_reference,
-    date_delivered:    d.date_delivered?.toISOString().slice(0, 10) ?? null,
-    item_count:        d._count.items,
-    delivery_status:   d.delivery_status,
-    inspector_name:    d.inspections[0]?.inspector_name ?? null,
-    inspection_date:   d.inspections[0]?.inspection_date?.toISOString().slice(0, 10) ?? null,
-    result:            d.inspections[0]?.result ?? null,
-    inspection_status: d.inspection_status ?? 'pending',
-    created_at:        d.inspections[0]?.created_at?.toISOString() ?? null,
-    iar_no:            d.inspections[0]?.iar_no ?? null,
-    iar_image_url:     d.inspections[0]?.iar_image_url ?? null,
-    stocked_at:        d.inspections[0]?.stocked_at?.toISOString() ?? null,
-  }))
+    return deliveries.map((d) => ({
+      delivery_id:       d.id,
+      delivery_ref:      d.id.slice(0, 8).toUpperCase(),
+      supplier:          d.supplier,
+      po_reference:      d.po_reference,
+      date_delivered:    d.date_delivered?.toISOString().slice(0, 10) ?? null,
+      item_count:        d._count.items,
+      delivery_status:   d.delivery_status,
+      inspector_name:    d.inspections[0]?.inspector_name ?? null,
+      inspection_date:   d.inspections[0]?.inspection_date?.toISOString().slice(0, 10) ?? null,
+      result:            d.inspections[0]?.result ?? null,
+      inspection_status: d.inspection_status ?? 'pending',
+      created_at:        d.inspections[0]?.created_at?.toISOString() ?? null,
+      iar_no:            d.inspections[0]?.iar_no ?? null,
+      iar_image_url:     d.inspections[0]?.iar_image_url ?? null,
+      stocked_at:        d.inspections[0]?.stocked_at?.toISOString() ?? null,
+    }))
+  } catch (e) {
+    console.error('[getInspectionsList]', e)
+    return []
+  }
 }
 
 // ─── Fetch full inspection history for a delivery ─────────────────────────
@@ -244,38 +255,43 @@ export interface InspectionHistoryRecord {
 export async function getInspectionHistory(
   deliveryId: string
 ): Promise<InspectionHistoryRecord[]> {
-  const inspections = await prisma.inspection.findMany({
-    where: { delivery_id: deliveryId },
-    orderBy: { created_at: 'desc' },
-    select: {
-      id: true,
-      inspector_id: true,
-      inspector_name: true,
-      inspection_date: true,
-      result: true,
-      remarks: true,
-      supplier_checks: true,
-      item_checks: true,
-      created_at: true,
-    },
-  })
+  try {
+    const inspections = await prisma.inspection.findMany({
+      where: { delivery_id: deliveryId },
+      orderBy: { created_at: 'desc' },
+      select: {
+        id: true,
+        inspector_id: true,
+        inspector_name: true,
+        inspection_date: true,
+        result: true,
+        remarks: true,
+        supplier_checks: true,
+        item_checks: true,
+        created_at: true,
+      },
+    })
 
-  return inspections.map((inspection) => ({
-    id: inspection.id,
-    inspector_id: inspection.inspector_id,
-    inspector_name: inspection.inspector_name,
-    inspection_date: inspection.inspection_date.toISOString().slice(0, 10),
-    result: inspection.result,
-    remarks: inspection.remarks,
-    supplier_checks: inspection.supplier_checks as Record<string, string> | null,
-    item_checks: inspection.item_checks as Array<{
-      itemId: string
-      status: string
-      actualQty: number
-      remarks: string
-    }> | null,
-    created_at: inspection.created_at?.toISOString() ?? null,
-  }))
+    return inspections.map((inspection) => ({
+      id: inspection.id,
+      inspector_id: inspection.inspector_id,
+      inspector_name: inspection.inspector_name,
+      inspection_date: inspection.inspection_date.toISOString().slice(0, 10),
+      result: inspection.result,
+      remarks: inspection.remarks,
+      supplier_checks: inspection.supplier_checks as Record<string, string> | null,
+      item_checks: inspection.item_checks as Array<{
+        itemId: string
+        status: string
+        actualQty: number
+        remarks: string
+      }> | null,
+      created_at: inspection.created_at?.toISOString() ?? null,
+    }))
+  } catch (e) {
+    console.error('[getInspectionHistory]', e)
+    return []
+  }
 }
 
 // ─── Dashboard helpers ────────────────────────────────────────────────────────
@@ -285,18 +301,69 @@ export interface DashboardStats {
   pendingInspections: number
   completedInspections: number
   totalItems: number
+  pendingRequests: number
+  pendingRepairs: number
+  totalDocuments: number
 }
 
 export async function getDashboardStats(): Promise<DashboardStats> {
-  const [totalDeliveries, pendingInspections, completedInspections, totalItems] =
-    await Promise.all([
+  const zeros: DashboardStats = {
+    totalDeliveries: 0,
+    pendingInspections: 0,
+    completedInspections: 0,
+    totalItems: 0,
+    pendingRequests: 0,
+    pendingRepairs: 0,
+    totalDocuments: 0,
+  }
+  try {
+    const issuanceDocs = await prisma
+      .$queryRaw<Array<{ count: bigint }>>`SELECT COUNT(*)::bigint AS count FROM issuance_records`
+      .then((r) => Number(r[0]?.count ?? 0))
+      .catch(() => 0)
+    const [
+      totalDeliveries,
+      pendingInspections,
+      completedInspections,
+      totalItems,
+      pendingRequests,
+      pendingRepairs,
+      deliveryDocs,
+      stockDocs,
+      assetDocs,
+      repairDocs,
+      iarDocs,
+      viewedDocs,
+    ] = await Promise.all([
       prisma.delivery.count(),
       prisma.delivery.count({ where: { inspection_status: 'pending' } }),
       prisma.inspection.count(),
       prisma.deliveryItem.count(),
+      prisma.request.count({ where: { status: 'pending' } }),
+      prisma.repair.count({ where: { status: 'pending' } }),
+      prisma.delivery.count(),
+      prisma.inventoryItem.count(),
+      prisma.asset.count(),
+      prisma.repair.count({ where: { status: 'completed' } }),
+      prisma.iarRecord.count(),
+      prisma.documentView.count(),
     ])
-
-  return { totalDeliveries, pendingInspections, completedInspections, totalItems }
+    return {
+      totalDeliveries,
+      pendingInspections,
+      completedInspections,
+      totalItems,
+      pendingRequests,
+      pendingRepairs,
+      totalDocuments: Math.max(
+        0,
+        deliveryDocs + stockDocs + assetDocs + repairDocs + iarDocs + issuanceDocs - viewedDocs
+      ),
+    }
+  } catch (e) {
+    console.error('[getDashboardStats]', e)
+    return zeros
+  }
 }
 
 export interface MonthlyPoint {
@@ -306,7 +373,6 @@ export interface MonthlyPoint {
 }
 
 export async function getMonthlyOverview(): Promise<MonthlyPoint[]> {
-  // Last 6 calendar months including current
   const now = new Date()
   const months: MonthlyPoint[] = []
 
@@ -315,14 +381,20 @@ export async function getMonthlyOverview(): Promise<MonthlyPoint[]> {
     const start = new Date(d.getFullYear(), d.getMonth(), 1)
     const end   = new Date(d.getFullYear(), d.getMonth() + 1, 1)
 
-    const [deliveries, inspections] = await Promise.all([
-      prisma.delivery.count({
-        where: { created_at: { gte: start, lt: end } },
-      }),
-      prisma.inspection.count({
-        where: { created_at: { gte: start, lt: end } },
-      }),
-    ])
+    let deliveries = 0
+    let inspections = 0
+    try {
+      [deliveries, inspections] = await Promise.all([
+        prisma.delivery.count({
+          where: { created_at: { gte: start, lt: end } },
+        }),
+        prisma.inspection.count({
+          where: { created_at: { gte: start, lt: end } },
+        }),
+      ])
+    } catch (e) {
+      console.error('[getMonthlyOverview]', e)
+    }
 
     months.push({
       month: d.toLocaleString('en-PH', { month: 'short' }),
@@ -344,27 +416,32 @@ export interface RecentDeliveryRow {
 }
 
 export async function getRecentDeliveries(limit = 5): Promise<RecentDeliveryRow[]> {
-  const rows = await prisma.delivery.findMany({
-    orderBy: { created_at: 'desc' },
-    take: limit,
-    select: {
-      id: true,
-      supplier: true,
-      po_reference: true,
-      delivery_status: true,
-      inspection_status: true,
-      date_delivered: true,
-    },
-  })
+  try {
+    const rows = await prisma.delivery.findMany({
+      orderBy: { created_at: 'desc' },
+      take: limit,
+      select: {
+        id: true,
+        supplier: true,
+        po_reference: true,
+        delivery_status: true,
+        inspection_status: true,
+        date_delivered: true,
+      },
+    })
 
-  return rows.map((d) => ({
-    id:               d.id,
-    supplier:         d.supplier,
-    po_reference:     d.po_reference,
-    delivery_status:  d.delivery_status,
-    inspection_status: d.inspection_status,
-    date_delivered:   d.date_delivered?.toISOString().slice(0, 10) ?? null,
-  }))
+    return rows.map((d) => ({
+      id:               d.id,
+      supplier:         d.supplier,
+      po_reference:     d.po_reference,
+      delivery_status:  d.delivery_status,
+      inspection_status: d.inspection_status,
+      date_delivered:   d.date_delivered?.toISOString().slice(0, 10) ?? null,
+    }))
+  } catch (e) {
+    console.error('[getRecentDeliveries]', e)
+    return []
+  }
 }
 
 // ─── Generated AIR / IAR ───────────────────────────────────────────────────
@@ -468,6 +545,17 @@ export async function saveAir(
     revalidatePath(`/personnel/inspections/${deliveryId}`)
     revalidatePath(`/personnel/inspections/${deliveryId}/iar`)
     revalidatePath(`/personnel/inspections/${deliveryId}/receipt`)
+    await writeAuditLog({
+      userId: user.id,
+      action: 'iar:generate',
+      module: 'inspections',
+      details: {
+        purpose: `Generate AIR ${iarNo} for ${entity} — ${department}`,
+        summary: `Delivery ${deliveryId.slice(0, 8).toUpperCase()} · Invoice ${input.invoiceNo?.trim() || '—'}`,
+        reference_id: record.id,
+        iar_no: iarNo,
+      },
+    })
     return { success: true, recordId: record.id, stockWarning }
   } catch (e) {
     console.error('[saveAir]', e)
@@ -643,33 +731,38 @@ export interface IarRecordRow {
 
 /** Every generated / attached AIR for a delivery, newest first. */
 export async function getIarRecords(deliveryId: string): Promise<IarRecordRow[]> {
-  const rows = await prisma.iarRecord.findMany({
-    where: { delivery_id: deliveryId },
-    orderBy: { created_at: 'desc' },
-    include: {
-      inspection: {
-        select: {
-          result: true,
-          inspection_date: true,
-          inspector_name: true,
+  try {
+    const rows = await prisma.iarRecord.findMany({
+      where: { delivery_id: deliveryId },
+      orderBy: { created_at: 'desc' },
+      include: {
+        inspection: {
+          select: {
+            result: true,
+            inspection_date: true,
+            inspector_name: true,
+          },
         },
       },
-    },
-  })
+    })
 
-  return rows.map((r) => ({
-    id:               r.id,
-    kind:             r.kind,
-    iar_no:           r.iar_no,
-    iar_date:         r.iar_date?.toISOString().slice(0, 10) ?? null,
-    iar_invoice_no:   r.iar_invoice_no,
-    iar_invoice_date: r.iar_invoice_date?.toISOString().slice(0, 10) ?? null,
-    iar_data:         r.iar_data as Record<string, string> | null,
-    iar_image_url:    r.iar_image_url,
-    created_at:       r.created_at?.toISOString() ?? null,
-    inspection_id:    r.inspection_id,
-    inspection_result: r.inspection.result,
-    inspection_date:  r.inspection.inspection_date.toISOString().slice(0, 10),
-    inspector_name:   r.inspection.inspector_name,
-  }))
+    return rows.map((r) => ({
+      id:               r.id,
+      kind:             r.kind,
+      iar_no:           r.iar_no,
+      iar_date:         r.iar_date?.toISOString().slice(0, 10) ?? null,
+      iar_invoice_no:   r.iar_invoice_no,
+      iar_invoice_date: r.iar_invoice_date?.toISOString().slice(0, 10) ?? null,
+      iar_data:         r.iar_data as Record<string, string> | null,
+      iar_image_url:    r.iar_image_url,
+      created_at:       r.created_at?.toISOString() ?? null,
+      inspection_id:    r.inspection_id,
+      inspection_result: r.inspection.result,
+      inspection_date:  r.inspection.inspection_date.toISOString().slice(0, 10),
+      inspector_name:   r.inspection.inspector_name,
+    }))
+  } catch (e) {
+    console.error('[getIarRecords]', e)
+    return []
+  }
 }

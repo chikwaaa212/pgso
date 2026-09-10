@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { Menu, X, ExternalLink } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import styles from "./Navbar.module.css";
 
@@ -41,10 +40,9 @@ export function Navbar() {
           Government agencies can now onboard PGSO — request a demo to get
           started.
         </span>
-        <Link href="/contact" className={styles.notifyLink}>
-          Request Demo
-          <ExternalLink className={styles.notifyIcon} />
-        </Link>
+          <Link href="/contact" className={styles.notifyLink}>
+            Request Demo
+          </Link>
       </motion.div>
 
       <div className={styles.container}>
@@ -102,11 +100,7 @@ export function Navbar() {
             aria-label={mobileMenuOpen ? "Close menu" : "Open menu"}
             aria-expanded={mobileMenuOpen}
           >
-            {mobileMenuOpen ? (
-              <X className={styles.menuIcon} />
-            ) : (
-              <Menu className={styles.menuIcon} />
-            )}
+            {mobileMenuOpen ? "Close" : "Menu"}
           </button>
         </motion.div>
       </div>

@@ -15,24 +15,31 @@ function formatDate(value: Date | null) {
 }
 
 export default async function PersonnelDeliveriesPage() {
-  const deliveries = await prisma.delivery.findMany({
-    orderBy: { created_at: "desc" },
-    include: { _count: { select: { items: true } } },
-  });
+  let rows: DeliveryRow[] = [];
+  let total = 0;
 
-  const total = await prisma.delivery.count();
+  try {
+    const deliveries = await prisma.delivery.findMany({
+      orderBy: { created_at: "desc" },
+      include: { _count: { select: { items: true } } },
+    });
 
-  const rows: DeliveryRow[] = deliveries.map((d) => ({
-    id: d.id.slice(0, 8).toUpperCase(),
-    deliveryId: d.id,
-    supplier: d.supplier ?? "—",
-    po: d.po_reference ?? "—",
-    date: formatDate(d.date_delivered),
-    status: d.delivery_status === "partial" ? "Partial" : "Complete",
-    itemCount: d._count.items,
-    inspectionStatus: (d.inspection_status as DeliveryRow["inspectionStatus"]) ?? "pending",
-    inspectionRef: d.id.slice(0, 8).toUpperCase(),
-  }));
+    total = await prisma.delivery.count();
+
+    rows = deliveries.map((d) => ({
+      id: d.id.slice(0, 8).toUpperCase(),
+      deliveryId: d.id,
+      supplier: d.supplier ?? "—",
+      po: d.po_reference ?? "—",
+      date: formatDate(d.date_delivered),
+      status: d.delivery_status === "partial" ? "Partial" : "Complete",
+      itemCount: d._count.items,
+      inspectionStatus: (d.inspection_status as DeliveryRow["inspectionStatus"]) ?? "pending",
+      inspectionRef: d.id.slice(0, 8).toUpperCase(),
+    }));
+  } catch (e) {
+    console.error("[PersonnelDeliveriesPage]", e);
+  }
 
   return (
     <section className={styles.section}>

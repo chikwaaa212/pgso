@@ -2,7 +2,7 @@ import 'server-only'
 
 import { PrismaClient } from '@prisma/client'
 
-const prismaClientSingleton = () => new PrismaClient()
+const prismaClientSingleton = () => new PrismaClient({ log: ['error', 'warn'] })
 
 type PrismaClientSingleton = ReturnType<typeof prismaClientSingleton>
 

@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { Printer, ChevronLeft } from "lucide-react";
 import type { DeliveryDetails } from "../actions";
 import { cn } from "@/lib/utils";
 import receiptStyles from "@/app/personnel/inspections/components/receipt.module.css";
@@ -50,7 +49,6 @@ export function DeliveryReceiptToolbar() {
         href="/personnel/deliveries"
         className={cn(receiptStyles.toolbarBtn, receiptStyles.toolbarGhost)}
       >
-        <ChevronLeft className="h-4 w-4" />
         Back to deliveries
       </Link>
       <button
@@ -58,7 +56,6 @@ export function DeliveryReceiptToolbar() {
         className={cn(receiptStyles.toolbarBtn, receiptStyles.toolbarPrint)}
         onClick={() => window.print()}
       >
-        <Printer className="h-4 w-4" />
         Print / Save PDF
       </button>
     </div>
@@ -116,8 +113,8 @@ export function DeliveryReceipt({ delivery }: { delivery: DeliveryDetails }) {
               delivery.account_code ?? "—",
             ],
             [
-              "Asset Type / Account Type",
-              `${delivery.asset_type ?? "—"} / ${delivery.account_type ?? "—"}`,
+              "Asset Type / Account Title",
+              `${delivery.asset_type ?? "—"} / ${delivery.account_title ?? "—"}`,
             ],
           ].map(([label, value]) => (
             <div key={label} className={receiptStyles.row}>

@@ -2,6 +2,7 @@
 
 import { createClient } from '@/lib/supabase/server'
 import prisma from '@/lib/prisma'
+import { writeAuditLog } from '@/lib/audit'
 import { withIdempotency } from '@/lib/idempotency'
 import { redirect, unstable_rethrow } from 'next/navigation'
 import { createClient as createAdminClient } from '@supabase/supabase-js'
@@ -57,9 +58,19 @@ export async function login(
           throw new Error('Your account is inactive.')
         }
 
-        return { role: profile.role }
+        return { role: profile.role, userId: user.id }
       }
     )
+
+    await writeAuditLog({
+      userId: outcome.result.userId,
+      action: 'auth:login',
+      module: 'auth',
+      details: {
+        purpose: 'User sign-in',
+        summary: `Signed in as ${email}`,
+      },
+    })
 
     redirect(roleRoutes[outcome.result.role] || '/')
   } catch (e) {

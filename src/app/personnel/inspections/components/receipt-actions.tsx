@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { Printer, ChevronLeft, List, FileSpreadsheet, FileSearch } from "lucide-react";
 import { cn } from "@/lib/utils";
 import styles from "./receipt.module.css";
 
@@ -25,14 +24,12 @@ export function ReceiptActions({
         href={`/personnel/inspections/${deliveryId}`}
         className={cn(styles.toolbarBtn, styles.toolbarGhost)}
       >
-        <ChevronLeft className="h-4 w-4" />
         Back to inspection
       </Link>
       <Link
         href="/personnel/inspections"
         className={cn(styles.toolbarBtn, styles.toolbarGhost)}
       >
-        <List className="h-4 w-4" />
         Inspections list
       </Link>
       <button
@@ -40,7 +37,6 @@ export function ReceiptActions({
         className={cn(styles.toolbarBtn, styles.toolbarPrint)}
         onClick={() => window.print()}
       >
-        <Printer className="h-4 w-4" />
         Print / Save PDF
       </button>
       {excelHref ? (
@@ -48,7 +44,6 @@ export function ReceiptActions({
           href={excelHref}
           className={cn(styles.toolbarBtn, styles.toolbarGhost)}
         >
-          <FileSpreadsheet className="h-4 w-4" />
           Download Excel
         </a>
       ) : null}
@@ -57,7 +52,6 @@ export function ReceiptActions({
           href={viewIarHref}
           className={cn(styles.toolbarBtn, styles.toolbarGhost)}
         >
-          <FileSearch className="h-4 w-4" />
           View IAR
         </Link>
       ) : null}

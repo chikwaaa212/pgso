@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { X } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -80,9 +79,9 @@ export function LogDeliveryModal() {
                 setShowPreview(false);
               }}
               aria-label="Close preview"
-              className="absolute top-3 right-3 z-10 rounded-full border border-navy-200 bg-white p-1.5 text-navy-700 shadow-md transition-colors hover:bg-navy-100"
+              className="absolute top-3 right-3 z-10 rounded-full border border-navy-200 bg-white px-2.5 py-1 text-xs font-medium text-navy-700 shadow-md transition-colors hover:bg-navy-100"
             >
-              <X className="size-4" />
+              Close
             </button>
             <DeliveryReceipt data={previewData} />
           </div>

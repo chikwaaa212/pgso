@@ -1,0 +1,494 @@
+/* ─── Official Appendix 71 (PAR) / Appendix 59 (ICS) accountability forms ───
+   Mirrors public/PAR FORM.xls + public/ICS FORM.xls.
+   Same ruled look as the Appendix 62 IAR sheet (iar.module.css).
+*/
+
+.airSheet {
+  width: 100%;
+  max-width: 52rem;
+  background: #fff;
+  color: #000;
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: 12px;
+  line-height: 1.4;
+  border: 2px solid #000;
+}
+
+.unsavedBanner {
+  width: 100%;
+  max-width: 52rem;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 10px 14px;
+  border: 1px solid #f59e0b;
+  border-radius: 6px;
+  background: #fffbeb;
+  color: #92400e;
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: 13px;
+}
+
+/* ─── Previous AIRs history ─────────────────────────────────────────────── */
+
+.history {
+  width: 100%;
+  max-width: 52rem;
+  box-sizing: border-box;
+  background: #fff;
+  border: 1px solid #d1d9e6;
+  border-radius: 8px;
+  padding: 14px 16px;
+}
+
+.historyTitle {
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #243b66;
+  margin: 0 0 10px;
+}
+
+.historyList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.historyItem {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  padding: 10px 12px;
+  border: 1px solid #d1d9e6;
+  border-radius: 6px;
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: 12px;
+  color: #1b2a4a;
+}
+
+.historyItem[data-current="true"] {
+  border-color: #243b66;
+  background: #eef2f8;
+}
+
+.historyKind {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 10px;
+  border-radius: 9999px;
+  white-space: nowrap;
+}
+
+.historyKind[data-kind="form"] {
+  color: #166534;
+  background: #dcfce7;
+}
+
+.historyKind[data-kind="scan"] {
+  color: #243b66;
+  background: #e8edf5;
+}
+
+.historyMain {
+  font-weight: 700;
+}
+
+.historyMeta {
+  color: #4a6080;
+}
+
+.historyResult[data-tone="ok"] {
+  color: #166534;
+  font-weight: 700;
+}
+
+.historyResult[data-tone="bad"] {
+  color: #991b1b;
+  font-weight: 700;
+}
+
+.historyResult[data-tone="warn"] {
+  color: #92400e;
+  font-weight: 700;
+}
+
+.historyResult[data-tone="info"] {
+  color: #4a6080;
+  font-weight: 700;
+}
+
+.historyTime {
+  margin-left: auto;
+  color: #4a6080;
+  white-space: nowrap;
+}
+
+.historyCurrent {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #243b66;
+}
+
+.historyView {
+  font-size: 12px;
+  font-weight: 700;
+  color: #fff;
+  background: #243b66;
+  border-radius: 9999px;
+  padding: 5px 16px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.historyView:hover {
+  background: #2d4a7a;
+}
+
+@media print {
+  .history {
+    display: none;
+  }
+}
+
+/* ─── Attached scan viewer ──────────────────────────────────────────────── */
+
+.scanWrap {
+  width: 100%;
+  max-width: 52rem;
+  box-sizing: border-box;
+  margin: 0;
+  background: #fff;
+  border: 2px solid #000;
+  padding: 10px;
+}
+
+.scanImg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.scanCap {
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: 12px;
+  color: #000;
+  padding: 8px 4px 2px;
+  text-align: center;
+}
+
+.scanCap a {
+  color: #243b66;
+}
+
+.appendix {
+  text-align: right;
+  font-style: italic;
+  font-size: 12px;
+  margin: 0;
+  padding: 6px 10px 0;
+}
+
+.title {
+  text-align: center;
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: 0.04em;
+  margin: 2px 0 8px;
+  padding: 0 10px;
+}
+
+/* ─── Header: two columns, ruled rows ─────────────────────────────────────── */
+
+.headerGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border-top: 2px solid #000;
+  border-bottom: 2px solid #000;
+}
+
+.headerColLeft {
+  min-width: 0;
+}
+
+.headerColRight {
+  min-width: 0;
+  border-left: 2px solid #000;
+}
+
+/* Horizontal label + underline value. The 10px gap is the requirement. */
+.field {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-end;
+  gap: 10px;
+  padding: 4px 8px;
+  border-bottom: 1px solid #000;
+  min-height: 26px;
+  box-sizing: border-box;
+}
+
+.headerColLeft .field:last-child,
+.headerColRight .field:last-child {
+  border-bottom: none;
+}
+
+.fieldLabel {
+  flex-shrink: 0;
+  white-space: nowrap;
+  font-weight: 400;
+}
+
+.fieldValue {
+  /* exactly 10px from the label is handled by parent gap;
+     margin-left is a fallback if gap is unsupported in print */
+  margin-left: 10px;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 1.25em;
+  font-weight: 700;
+  border-bottom: 1px solid #000;
+  padding: 0 4px;
+  overflow-wrap: anywhere;
+}
+
+/* When gap is supported, avoid doubling (gap 10 + margin 10 = 20).
+   Keep single 10px: reset margin when flex gap applies. */
+@supports (gap: 10px) {
+  .fieldValue {
+    margin-left: 0;
+  }
+}
+
+/* ─── Items table ─────────────────────────────────────────────────────────── */
+
+.itemsTable {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.itemsTable th,
+.itemsTable td {
+  border: 1px solid #000;
+  padding: 4px 6px;
+  vertical-align: middle;
+}
+
+.itemsTable thead th {
+  font-style: italic;
+  font-weight: 700;
+  font-size: 12px;
+  text-align: center;
+  background: #fff;
+}
+
+.itemsTable tbody td {
+  height: 26px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.cellCenter {
+  text-align: center;
+}
+
+.cellStock {
+  width: 18%;
+}
+
+.cellDesc {
+  text-align: left;
+}
+
+/* PAR (6 cols): Qty | Unit | Description | Property No. | Date Acq. | Amount */
+.cellParQty {
+  width: 10%;
+  text-align: center;
+}
+
+.cellParUnit {
+  width: 10%;
+  text-align: center;
+}
+
+.cellParDesc {
+  width: 34%;
+  text-align: left;
+}
+
+.cellParProp {
+  width: 16%;
+  text-align: center;
+}
+
+.cellParDate {
+  width: 14%;
+  text-align: center;
+}
+
+.cellParAmount {
+  width: 16%;
+  text-align: right;
+}
+
+/* ICS (7 cols): Qty | Unit | Unit Cost | Total Cost | Description | Item No. | Life */
+.cellIcsQty {
+  width: 9%;
+  text-align: center;
+}
+
+.cellIcsUnit {
+  width: 9%;
+  text-align: center;
+}
+
+.cellIcsUnitCost {
+  width: 12%;
+  text-align: right;
+}
+
+.cellIcsTotalCost {
+  width: 13%;
+  text-align: right;
+}
+
+.cellIcsDesc {
+  width: 27%;
+  text-align: left;
+}
+
+.cellIcsItemNo {
+  width: 16%;
+  text-align: center;
+}
+
+.cellIcsLife {
+  width: 14%;
+  text-align: center;
+}
+
+/* ─── Bottom Inspection / Acceptance ──────────────────────────────────────── */
+
+.bottomGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border-top: 2px solid #000;
+}
+
+.bottomLeft {
+  min-width: 0;
+}
+
+.bottomRight {
+  min-width: 0;
+  border-left: 2px solid #000;
+}
+
+.bottomTitle {
+  text-align: center;
+  font-style: italic;
+  font-weight: 700;
+  font-size: 12px;
+  margin: 0;
+  padding: 5px 8px;
+  border-bottom: 2px solid #000;
+}
+
+.bottomBody {
+  padding: 8px 10px 10px;
+}
+
+.checkRow {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 12px;
+}
+
+.checkbox {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  border: 1.5px solid #000;
+  margin-top: 1px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.sig {
+  margin-top: 44px;
+  text-align: center;
+}
+
+.sigName {
+  min-height: 1.4em;
+  margin: 0 8px;
+  font-weight: 700;
+  border-bottom: 1px solid #000;
+  overflow-wrap: anywhere;
+}
+
+.sigLabel {
+  margin: 3px 0 0;
+  font-size: 11px;
+}
+
+/* Page-1 watermark like the scanned xls preview */
+.pageMark {
+  text-align: center;
+  color: rgba(0, 0, 0, 0.22);
+  font-size: 44px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  padding: 10px 0 0;
+  user-select: none;
+}
+
+@media (max-width: 640px) {
+  .headerGrid,
+  .bottomGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .headerColRight {
+    border-left: none;
+    border-top: 2px solid #000;
+  }
+
+  .bottomRight {
+    border-left: none;
+    border-top: 2px solid #000;
+  }
+
+  .title {
+    font-size: 13px;
+  }
+}
+
+@media print {
+  .airSheet {
+    max-width: none;
+    border-width: 2px;
+  }
+
+  .itemsTable tbody td {
+    height: 24px;
+  }
+
+  .pageMark {
+    color: rgba(0, 0, 0, 0.14);
+  }
+}

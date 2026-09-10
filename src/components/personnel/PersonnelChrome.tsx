@@ -7,9 +7,15 @@ import layoutStyles from "../../app/personnel/layout.module.css";
 export function PersonnelChrome({
   children,
   pendingInspections = 0,
+  pendingRequests = 0,
+  pendingRepairs = 0,
+  totalDocuments = 0,
 }: {
   children: React.ReactNode;
   pendingInspections?: number;
+  pendingRequests?: number;
+  pendingRepairs?: number;
+  totalDocuments?: number;
 }) {
   const pathname = usePathname();
   const isBare =
@@ -22,7 +28,12 @@ export function PersonnelChrome({
 
   return (
     <div className={layoutStyles.shell}>
-      <PersonnelSidebar pendingInspections={pendingInspections} />
+      <PersonnelSidebar
+        pendingInspections={pendingInspections}
+        pendingRequests={pendingRequests}
+        pendingRepairs={pendingRepairs}
+        totalDocuments={totalDocuments}
+      />
       <div className={layoutStyles.main}>{children}</div>
     </div>
   );

@@ -3,7 +3,6 @@
 import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Menu, X } from "lucide-react";
 import { logout } from "@/app/(auth)/auth";
 import { SubmitButton } from "@/components/ui/submit-button";
 import { cn } from "@/lib/utils";
@@ -15,7 +14,17 @@ interface SidebarLink {
   badge?: number;
 }
 
-export function PersonnelSidebar({ pendingInspections = 0 }: { pendingInspections?: number }) {
+export function PersonnelSidebar({
+  pendingInspections = 0,
+  pendingRequests = 0,
+  pendingRepairs = 0,
+  totalDocuments = 0,
+}: {
+  pendingInspections?: number;
+  pendingRequests?: number;
+  pendingRepairs?: number;
+  totalDocuments?: number;
+}) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
 
@@ -41,9 +50,11 @@ export function PersonnelSidebar({ pendingInspections = 0 }: { pendingInspection
     {
       title: "Records",
       links: [
-        { label: "Documents", href: "/personnel/documents" },
-        { label: "Requests", href: "/personnel/requests" },
-        { label: "Repairs", href: "/personnel/repairs" },
+        { label: "Documents", href: "/personnel/documents", badge: totalDocuments },
+        { label: "PAR / ICS", href: "/personnel/issuances" },
+        { label: "Requests", href: "/personnel/requests", badge: pendingRequests },
+        { label: "Repairs", href: "/personnel/repairs", badge: pendingRepairs },
+        { label: "Logs", href: "/personnel/logs" },
       ],
     },
   ];
@@ -57,8 +68,7 @@ export function PersonnelSidebar({ pendingInspections = 0 }: { pendingInspection
         aria-label={open ? "Close menu" : "Open menu"}
         aria-expanded={open}
       >
-        {open ? <X size={20} /> : <Menu size={20} />}
-        Menu
+        {open ? "Close" : "Menu"}
       </button>
 
       <aside

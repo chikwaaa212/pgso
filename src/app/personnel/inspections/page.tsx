@@ -14,6 +14,8 @@ import {
 import { getInspectionsList, type UnifiedInspectionRow } from './actions'
 import { IarDialog } from '@/components/personnel/IarDialog'
 import { IarAttachButton } from '@/components/personnel/IarAttach'
+import { TablePager } from '@/components/personnel/TablePager'
+import { usePageSize } from '@/hooks/use-page-size'
 import styles from '../dashboard/page.module.css'
 import air from './air-section.module.css'
 
@@ -77,6 +79,13 @@ export default function PersonnelInspectionsPage() {
   const [query, setQuery] = useState('')
   const [airStatus, setAirStatus] = useState('all')
   const [airResult, setAirResult] = useState('all')
+  const [inspPageSize, setInspPageSize] = usePageSize(
+    'pgso:page-size:inspections',
+    10
+  )
+  const [inspPage, setInspPage] = useState(1)
+  const [airPageSize, setAirPageSize] = usePageSize('pgso:page-size:air', 10)
+  const [airPage, setAirPage] = useState(1)
 
   const reload = useCallback(() => {
     void getInspectionsList().then(setRows)
@@ -124,6 +133,20 @@ export default function PersonnelInspectionsPage() {
     })
   }, [rows, query, airStatus, airResult])
 
+  const inspPageCount = Math.max(1, Math.ceil(filtered.length / inspPageSize))
+  const inspSafePage = Math.min(Math.max(1, inspPage), inspPageCount)
+  const inspVisible = filtered.slice(
+    (inspSafePage - 1) * inspPageSize,
+    (inspSafePage - 1) * inspPageSize + inspPageSize
+  )
+
+  const airPageCount = Math.max(1, Math.ceil(airRows.length / airPageSize))
+  const airSafePage = Math.min(Math.max(1, airPage), airPageCount)
+  const airVisible = airRows.slice(
+    (airSafePage - 1) * airPageSize,
+    (airSafePage - 1) * airPageSize + airPageSize
+  )
+
   return (
     <section className={styles.section}>
       <p className={styles.crumb}>Personnel / Inspections</p>
@@ -146,7 +169,10 @@ export default function PersonnelInspectionsPage() {
               aria-selected={tab === 'inspections'}
               className={air.tab}
               data-active={tab === 'inspections'}
-              onClick={() => setTab('inspections')}
+              onClick={() => {
+                setTab('inspections')
+                setInspPage(1)
+              }}
             >
               Inspections
             </button>
@@ -156,7 +182,10 @@ export default function PersonnelInspectionsPage() {
               aria-selected={tab === 'air'}
               className={air.tab}
               data-active={tab === 'air'}
-              onClick={() => setTab('air')}
+              onClick={() => {
+                setTab('air')
+                setAirPage(1)
+              }}
             >
               AIR / IAR
             </button>
@@ -174,7 +203,13 @@ export default function PersonnelInspectionsPage() {
               </p>
             </div>
             <div className={styles.actions}>
-              <Select value={filter} onValueChange={setFilter}>
+              <Select
+                value={filter}
+                onValueChange={(v) => {
+                  setFilter(v)
+                  setInspPage(1)
+                }}
+              >
                 <SelectTrigger className="w-48">
                   <SelectValue placeholder="Filter by status" />
                 </SelectTrigger>
@@ -212,7 +247,7 @@ export default function PersonnelInspectionsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filtered.map((d) => {
+                  {inspVisible.map((d) => {
                     const isPending = d.inspection_status === 'pending'
                     const isPartialOrFailed = d.result === 'partial' || d.result === 'failed'
                     const isEditable = !isPending && isPartialOrFailed
@@ -290,6 +325,16 @@ export default function PersonnelInspectionsPage() {
               </table>
             </div>
           )}
+          {filtered.length > 0 ? (
+            <TablePager
+              id="inspections"
+              total={filtered.length}
+              pageSize={inspPageSize}
+              page={inspSafePage}
+              onPageSizeChange={setInspPageSize}
+              onPageChange={setInspPage}
+            />
+          ) : null}
         </Card>
       ) : (
         <div>
@@ -312,12 +357,21 @@ export default function PersonnelInspectionsPage() {
             <Input
               type="search"
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              onChange={(e) => {
+                setQuery(e.target.value)
+                setAirPage(1)
+              }}
               placeholder="Search ref, supplier, PO, IAR no., inspector…"
               className={air.search}
               aria-label="Search AIR records"
             />
-            <Select value={airStatus} onValueChange={setAirStatus}>
+            <Select
+              value={airStatus}
+              onValueChange={(v) => {
+                setAirStatus(v)
+                setAirPage(1)
+              }}
+            >
               <SelectTrigger className="w-44">
                 <SelectValue placeholder="Filter by AIR" />
               </SelectTrigger>
@@ -329,7 +383,13 @@ export default function PersonnelInspectionsPage() {
                 ))}
               </SelectContent>
             </Select>
-            <Select value={airResult} onValueChange={setAirResult}>
+            <Select
+              value={airResult}
+              onValueChange={(v) => {
+                setAirResult(v)
+                setAirPage(1)
+              }}
+            >
               <SelectTrigger className="w-40">
                 <SelectValue placeholder="Filter by result" />
               </SelectTrigger>
@@ -349,7 +409,7 @@ export default function PersonnelInspectionsPage() {
             </div>
           ) : (
             <div className={air.grid}>
-              {airRows.map((d) => {
+              {airVisible.map((d) => {
                 const isPending = d.inspection_status === 'pending'
                 return (
                   <article key={d.delivery_id} className={air.card}>
@@ -460,6 +520,18 @@ export default function PersonnelInspectionsPage() {
               })}
             </div>
           )}
+          {airRows.length > 0 ? (
+            <div style={{ marginTop: '1rem' }}>
+              <TablePager
+                id="air"
+                total={airRows.length}
+                pageSize={airPageSize}
+                page={airSafePage}
+                onPageSizeChange={setAirPageSize}
+                onPageChange={setAirPage}
+              />
+            </div>
+          ) : null}
         </div>
       )}
     </section>

@@ -10,7 +10,12 @@ export default async function PersonnelLayout({
 }) {
   const stats = await getDashboardStats();
   return (
-    <PersonnelChrome pendingInspections={stats.pendingInspections}>
+    <PersonnelChrome
+      pendingInspections={stats.pendingInspections}
+      pendingRequests={stats.pendingRequests}
+      pendingRepairs={stats.pendingRepairs}
+      totalDocuments={stats.totalDocuments}
+    >
       {children}
     </PersonnelChrome>
   );

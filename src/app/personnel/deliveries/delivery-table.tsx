@@ -10,6 +10,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import { usePageSize } from "@/hooks/use-page-size";
 import styles from "../dashboard/page.module.css";
 
 const statusFilters = ["All", "Complete", "Partial"] as const;
@@ -52,7 +53,10 @@ export function DeliveryTable({ rows: allRows }: { rows: DeliveryRow[] }) {
   const [statusFilter, setStatusFilter] = useState<(typeof statusFilters)[number]>(
     "All"
   );
-  const [pageSize, setPageSize] = useState<number>(pageSizes[0]);
+  const [pageSize, setPageSize] = usePageSize(
+    "pgso:page-size:deliveries",
+    pageSizes[0]
+  );
   const [page, setPage] = useState(1);
 
   const filtered = allRows.filter((d) => {

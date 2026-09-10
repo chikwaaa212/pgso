@@ -71,8 +71,8 @@ export function DeliveryReceipt({
           <span className="text-right">{data.accountCode || "—"}</span>
         </div>
         <div className="flex justify-between gap-4">
-          <span className="text-navy-600">Account</span>
-          <span className="text-right">{data.accountType || "—"}</span>
+          <span className="text-navy-600">Account Title</span>
+          <span className="text-right">{data.accountTitle || "—"}</span>
         </div>
       </div>
 
