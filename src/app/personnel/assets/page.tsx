@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { Search, Filter } from "lucide-react";
+import { Search } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -13,7 +13,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { getAllUnifiedAssets, type UnifiedAssetRow } from "./actions";
+import { getAllUnifiedAssets, getCategories, type UnifiedAssetRow } from "./actions";
+import { AddAssetDialog, ImportAssetsDialog } from "./asset-dialogs";
 import { IssuanceEvaluateDialog } from "@/components/personnel/IssuanceDialog";
 import { usePageSize } from "@/hooks/use-page-size";
 import styles from "../dashboard/page.module.css";
@@ -62,6 +63,19 @@ const STATUS_FILTERS = [
 
 const PAGE_SIZES = [10, 20, 50, 100];
 
+const norm = (v: string | null | undefined) => (v ?? "").trim().toLowerCase();
+
+function distinctValues(rows: UnifiedAssetRow[], pick: (r: UnifiedAssetRow) => string | null) {
+  const map = new Map<string, string>();
+  for (const r of rows) {
+    const raw = (pick(r) ?? "").trim();
+    if (!raw) continue;
+    const key = raw.toLowerCase();
+    if (!map.has(key)) map.set(key, raw);
+  }
+  return [...map.entries()].sort((a, b) => a[1].localeCompare(b[1]));
+}
+
 function pageWindow(current: number, total: number) {
   const start = Math.max(1, Math.min(current - 2, total - 4));
   const end = Math.min(total, start + 4);
@@ -72,9 +86,13 @@ function pageWindow(current: number, total: number) {
 
 export default function PersonnelAssetsPage() {
   const [rows, setRows] = useState<UnifiedAssetRow[]>([]);
+  const [categories, setCategories] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [conditionFilter, setConditionFilter] = useState("all");
+  const [unitFilter, setUnitFilter] = useState("all");
+  const [assetTypeFilter, setAssetTypeFilter] = useState("all");
   const [pageSize, setPageSize] = usePageSize(
     "pgso:page-size:assets",
     PAGE_SIZES[0]
@@ -85,19 +103,37 @@ export default function PersonnelAssetsPage() {
   const [presetAssetId, setPresetAssetId] = useState<string | null>(null);
 
   useEffect(() => {
-    void getAllUnifiedAssets().then((data) => {
+    void Promise.all([getAllUnifiedAssets(), getCategories()]).then(([data, cats]) => {
       setRows(data);
+      setCategories(cats);
       setLoading(false);
     });
   }, []);
 
   const reload = () => {
     setLoading(true);
-    void getAllUnifiedAssets().then((data) => {
+    void Promise.all([getAllUnifiedAssets(), getCategories()]).then(([data, cats]) => {
       setRows(data);
+      setCategories(cats);
       setLoading(false);
     });
   };
+
+  const resetPage = () => {
+    setPage(1);
+    setSelectedId(null);
+  };
+
+  const conditionOptions = useMemo(() => distinctValues(rows, (r) => r.condition), [rows]);
+  const unitOptions = useMemo(() => distinctValues(rows, (r) => r.unit), [rows]);
+  const assetTypeOptions = useMemo(() => distinctValues(rows, (r) => r.category), [rows]);
+
+  const hasActiveFilters =
+    query.trim() !== "" ||
+    statusFilter !== "all" ||
+    conditionFilter !== "all" ||
+    unitFilter !== "all" ||
+    assetTypeFilter !== "all";
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -123,6 +159,8 @@ export default function PersonnelAssetsPage() {
           a.plate_number,
           a.fund,
           a.status,
+          a.condition,
+          a.unit,
           a.dv_tracking_number,
           a.supplier_payee,
           a.account_name_charge,
@@ -135,12 +173,13 @@ export default function PersonnelAssetsPage() {
           .toLowerCase();
         if (!hay.includes(q)) return false;
       }
-      if (statusFilter !== "all" && (a.status ?? "") !== statusFilter) {
-        return false;
-      }
+      if (statusFilter !== "all" && norm(a.status) !== statusFilter) return false;
+      if (conditionFilter !== "all" && norm(a.condition) !== conditionFilter) return false;
+      if (unitFilter !== "all" && norm(a.unit) !== unitFilter) return false;
+      if (assetTypeFilter !== "all" && norm(a.category) !== assetTypeFilter) return false;
       return true;
     });
-  }, [rows, query, statusFilter]);
+  }, [rows, query, statusFilter, conditionFilter, unitFilter, assetTypeFilter]);
 
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
   const safePage = Math.min(page, pageCount);
@@ -163,6 +202,7 @@ export default function PersonnelAssetsPage() {
           <h1 className={styles.title}>Assets</h1>
           <p className={styles.subtitle}>
             {rows.length} {rows.length === 1 ? "asset" : "assets"} registered
+            {hasActiveFilters ? ` · ${filtered.length} shown` : ""}
           </p>
         </div>
         <div className={styles.actions}>
@@ -181,61 +221,144 @@ export default function PersonnelAssetsPage() {
           >
             Issue / Assign
           </Button>
-          <span className={styles.actionSecondary}>Add asset (soon)</span>
+          <AddAssetDialog categories={categories} onSuccess={reload} />
+          <ImportAssetsDialog onSuccess={reload} />
+          <a href="/api/personnel/assets/template-xlsx" download className={styles.actionSecondary}>
+            Download template
+          </a>
         </div>
       </div>
 
       <Card className={styles.panel}>
         <div className={airStyles.controls}>
-          <div className={assetStyles.searchWrap}>
-            <Search className={assetStyles.searchIcon} size={16} />
-            <Input
-              type="search"
-              value={query}
-              onChange={(e) => {
-                setQuery(e.target.value);
-                setPage(1);
-                setSelectedId(null);
-              }}
-              placeholder="Search property no., category, description…"
-              className={assetStyles.search}
-              aria-label="Search assets"
-            />
-          </div>
-          <div className={assetStyles.filterRow}>
-            <Filter size={14} />
-            {STATUS_FILTERS.map((f) => (
-              <Button
-                key={f.value}
-                type="button"
-                variant={statusFilter === f.value ? "primary" : "outline"}
-                size="sm"
-                className={assetStyles.filterBtn}
-                data-active={statusFilter === f.value ? "true" : undefined}
-                onClick={() => {
-                  setStatusFilter(f.value);
-                  setPage(1);
-                  setSelectedId(null);
+          <div className={assetStyles.topRow}>
+            <div className={assetStyles.searchWrap}>
+              <Search className={assetStyles.searchIcon} size={16} />
+              <Input
+                type="search"
+                value={query}
+                onChange={(e) => {
+                  setQuery(e.target.value);
+                  resetPage();
+                }}
+                placeholder="Search property no., category, description…"
+                className={assetStyles.search}
+                aria-label="Search assets"
+              />
+            </div>
+            <div className={assetStyles.filterGroup}>
+              <label className={assetStyles.filterLabel} htmlFor="assets-filter-status">
+                Status
+              </label>
+              <Select
+                value={statusFilter}
+                onValueChange={(v) => {
+                  setStatusFilter(v);
+                  resetPage();
                 }}
               >
-                {f.label}
-              </Button>
-            ))}
-            {query && (
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className={assetStyles.filterBtn}
-                onClick={() => {
-                  setQuery("");
-                  setPage(1);
-                  setSelectedId(null);
-                }}
-              >
-                Clear
-              </Button>
-            )}
+                <SelectTrigger id="assets-filter-status" size="sm" className={assetStyles.filterSelect}>
+                  <SelectValue placeholder="All statuses" />
+                </SelectTrigger>
+                <SelectContent>
+                  {STATUS_FILTERS.map((f) => (
+                    <SelectItem key={f.value} value={f.value}>
+                      {f.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+              <div className={assetStyles.filterGroup}>
+                <label className={assetStyles.filterLabel} htmlFor="assets-filter-type">
+                  Asset type
+                </label>
+                <Select
+                  value={assetTypeFilter}
+                  onValueChange={(v) => {
+                    setAssetTypeFilter(v);
+                    resetPage();
+                  }}
+                >
+                  <SelectTrigger id="assets-filter-type" size="sm" className={assetStyles.filterSelect}>
+                    <SelectValue placeholder="All types" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All types</SelectItem>
+                    {assetTypeOptions.map(([key, display]) => (
+                      <SelectItem key={key} value={key}>
+                        {label(display)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className={assetStyles.filterGroup}>
+                <label className={assetStyles.filterLabel} htmlFor="assets-filter-condition">
+                  Condition
+                </label>
+                <Select
+                  value={conditionFilter}
+                  onValueChange={(v) => {
+                    setConditionFilter(v);
+                    resetPage();
+                  }}
+                >
+                  <SelectTrigger id="assets-filter-condition" size="sm" className={assetStyles.filterSelect}>
+                    <SelectValue placeholder="All conditions" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All conditions</SelectItem>
+                    {conditionOptions.map(([key, display]) => (
+                      <SelectItem key={key} value={key}>
+                        {label(display)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className={assetStyles.filterGroup}>
+                <label className={assetStyles.filterLabel} htmlFor="assets-filter-unit">
+                  Unit
+                </label>
+                <Select
+                  value={unitFilter}
+                  onValueChange={(v) => {
+                    setUnitFilter(v);
+                    resetPage();
+                  }}
+                >
+                  <SelectTrigger id="assets-filter-unit" size="sm" className={assetStyles.filterSelect}>
+                    <SelectValue placeholder="All units" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All units</SelectItem>
+                    {unitOptions.map(([key, display]) => (
+                      <SelectItem key={key} value={key}>
+                        {label(display)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              {hasActiveFilters && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className={assetStyles.filterBtn}
+                  onClick={() => {
+                    setQuery("");
+                    setStatusFilter("all");
+                    setConditionFilter("all");
+                    setUnitFilter("all");
+                    setAssetTypeFilter("all");
+                    resetPage();
+                  }}
+                >
+                  Clear all
+                </Button>
+              )}
           </div>
         </div>
 
@@ -247,7 +370,7 @@ export default function PersonnelAssetsPage() {
           <div className={styles.emptyState}>
             <p className={styles.panelSub}>
               {rows.length === 0
-                ? "No assets have been registered yet."
+                ? "No assets have been registered yet. Use Add asset or Import Excel to get started."
                 : "No assets match your search or filters."}
             </p>
           </div>
@@ -257,41 +380,41 @@ export default function PersonnelAssetsPage() {
               <table className={styles.table}>
                 <thead>
                   <tr>
-                    <th>Details</th>
-                    <th>Account Code</th>
-                    <th>Property No.</th>
-                    <th>Asset Type</th>
-                    <th>Account Title</th>
-                    <th>Account Name</th>
-                    <th>Identifier</th>
-                    <th>Article</th>
-                    <th>Qty.</th>
-                    <th>Unit</th>
-                    <th>Description</th>
-                    <th>Date Acquired</th>
-                    <th>Location</th>
-                    <th>Total Cost</th>
-                    <th>Unit Cost</th>
-                    <th>Condition</th>
-                    <th>Status</th>
-                    <th>Brand</th>
-                    <th>Cyl.</th>
-                    <th>Engine Disp.</th>
-                    <th>Fuel Type</th>
-                    <th>Engine #</th>
-                    <th>Chassis #</th>
-                    <th>Color</th>
-                    <th>Plate No.</th>
-                    <th>Fund</th>
-                    <th>Remarks</th>
-                    <th>DV Tracking #</th>
-                    <th>Supplier/Payee</th>
-                    <th>Account Name (Charge)</th>
-                    <th>Account Number</th>
-                    <th>OBR Number</th>
-                    <th>DV Number</th>
-                    <th>Date Received</th>
-                    <th>Created</th>
+                    <th className={assetStyles.colDetails}>Details</th>
+                    <th className={assetStyles.colBase}>Account Code</th>
+                    <th className={assetStyles.colBase}>Property No.</th>
+                    <th className={assetStyles.colWide}>Asset Type</th>
+                    <th className={assetStyles.colWide}>Account Title</th>
+                    <th className={assetStyles.colWide}>Account Name</th>
+                    <th className={assetStyles.colBase}>Identifier</th>
+                    <th className={assetStyles.colWide}>Article</th>
+                    <th className={assetStyles.colNarrow}>Qty.</th>
+                    <th className={assetStyles.colNarrow}>Unit</th>
+                    <th className={assetStyles.colXl}>Description</th>
+                    <th className={assetStyles.colBase}>Date Acquired</th>
+                    <th className={assetStyles.colBase}>Location</th>
+                    <th className={assetStyles.colCost}>Total Cost</th>
+                    <th className={assetStyles.colCost}>Unit Cost</th>
+                    <th className={assetStyles.colBase}>Condition</th>
+                    <th className={assetStyles.colBase}>Status</th>
+                    <th className={assetStyles.colBase}>Brand</th>
+                    <th className={assetStyles.colNarrow}>Cyl.</th>
+                    <th className={assetStyles.colBase}>Engine Disp.</th>
+                    <th className={assetStyles.colBase}>Fuel Type</th>
+                    <th className={assetStyles.colBase}>Engine #</th>
+                    <th className={assetStyles.colBase}>Chassis #</th>
+                    <th className={assetStyles.colBase}>Color</th>
+                    <th className={assetStyles.colBase}>Plate No.</th>
+                    <th className={assetStyles.colBase}>Fund</th>
+                    <th className={assetStyles.colXl}>Remarks</th>
+                    <th className={assetStyles.colBase}>DV Tracking #</th>
+                    <th className={assetStyles.colWide}>Supplier/Payee</th>
+                    <th className={assetStyles.colWide}>Account Name (Charge)</th>
+                    <th className={assetStyles.colBase}>Account Number</th>
+                    <th className={assetStyles.colBase}>OBR Number</th>
+                    <th className={assetStyles.colBase}>DV Number</th>
+                    <th className={assetStyles.colBase}>Date Received</th>
+                    <th className={assetStyles.colBase}>Created</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -336,7 +459,7 @@ export default function PersonnelAssetsPage() {
                         }}
                       >
                         <td
-                          className={assetStyles.detailsCell}
+                          className={`${assetStyles.detailsCell} ${assetStyles.colDetails}`}
                           onClick={(e) => e.stopPropagation()}
                         >
                           <span className="inline-flex items-center gap-1.5">
@@ -364,7 +487,7 @@ export default function PersonnelAssetsPage() {
                             </Button>
                           </span>
                         </td>
-                        <td>
+                        <td className={assetStyles.colBase}>
                           <span
                             className={assetStyles.property}
                             title={a.account_code ?? undefined}
@@ -372,21 +495,21 @@ export default function PersonnelAssetsPage() {
                             {a.account_code ?? "—"}
                           </span>
                         </td>
-                        <td>{a.qr_code ?? "—"}</td>
-                        <td>{label(a.category)}</td>
-                        <td>{label(a.account_title)}</td>
-                        <td>{label(a.account_name)}</td>
-                        <td>{a.identifier ?? "—"}</td>
-                        <td>{label(a.article)}</td>
-                        <td>{a.quantity ?? "—"}</td>
-                        <td>{label(a.unit)}</td>
-                        <td>{a.description ?? "—"}</td>
-                        <td>{fmtDate(a.date_acquired)}</td>
-                        <td>{a.location ?? "—"}</td>
-                        <td>{fmtCurrency(a.total_cost)}</td>
-                        <td>{fmtCurrency(a.unit_cost)}</td>
-                        <td>{label(a.condition)}</td>
-                        <td>
+                        <td className={assetStyles.colBase}>{a.qr_code ?? "—"}</td>
+                        <td className={assetStyles.colWide}>{label(a.category)}</td>
+                        <td className={assetStyles.colWide}>{label(a.account_title)}</td>
+                        <td className={assetStyles.colWide}>{label(a.account_name)}</td>
+                        <td className={assetStyles.colBase}>{a.identifier ?? "—"}</td>
+                        <td className={assetStyles.colWide}>{label(a.article)}</td>
+                        <td className={assetStyles.colNarrow}>{a.quantity ?? "—"}</td>
+                        <td className={assetStyles.colNarrow}>{label(a.unit)}</td>
+                        <td className={assetStyles.colXl}>{a.description ?? "—"}</td>
+                        <td className={assetStyles.colBase}>{fmtDate(a.date_acquired)}</td>
+                        <td className={assetStyles.colBase}>{a.location ?? "—"}</td>
+                        <td className={assetStyles.colCost}>{fmtCurrency(a.total_cost)}</td>
+                        <td className={assetStyles.colCost}>{fmtCurrency(a.unit_cost)}</td>
+                        <td className={assetStyles.colBase}>{label(a.condition)}</td>
+                        <td className={assetStyles.colBase}>
                           <span
                             className={styles.status}
                             data-tone={
@@ -406,24 +529,24 @@ export default function PersonnelAssetsPage() {
                                 : label(a.status)}
                           </span>
                         </td>
-                        <td>{a.brand ?? "—"}</td>
-                        <td>{a.cylinders ?? "—"}</td>
-                        <td>{a.engine_displacement ?? "—"}</td>
-                        <td>{label(a.fuel_type)}</td>
-                        <td>{a.engine_number ?? "—"}</td>
-                        <td>{a.chassis_number ?? "—"}</td>
-                        <td>{label(a.color)}</td>
-                        <td>{a.plate_number ?? "—"}</td>
-                        <td>{a.fund ?? "—"}</td>
-                        <td>{a.remarks ?? "—"}</td>
-                        <td>{a.dv_tracking_number ?? "—"}</td>
-                        <td>{a.supplier_payee ?? "—"}</td>
-                        <td>{a.account_name_charge ?? "—"}</td>
-                        <td>{a.account_number ?? "—"}</td>
-                        <td>{a.obr_number ?? "—"}</td>
-                        <td>{a.dv_number ?? "—"}</td>
-                        <td>{fmtDate(a.date_received)}</td>
-                        <td>{fmtDate(a.created_at)}</td>
+                        <td className={assetStyles.colBase}>{a.brand ?? "—"}</td>
+                        <td className={assetStyles.colNarrow}>{a.cylinders ?? "—"}</td>
+                        <td className={assetStyles.colBase}>{a.engine_displacement ?? "—"}</td>
+                        <td className={assetStyles.colBase}>{label(a.fuel_type)}</td>
+                        <td className={assetStyles.colBase}>{a.engine_number ?? "—"}</td>
+                        <td className={assetStyles.colBase}>{a.chassis_number ?? "—"}</td>
+                        <td className={assetStyles.colBase}>{label(a.color)}</td>
+                        <td className={assetStyles.colBase}>{a.plate_number ?? "—"}</td>
+                        <td className={assetStyles.colBase}>{a.fund ?? "—"}</td>
+                        <td className={assetStyles.colXl}>{a.remarks ?? "—"}</td>
+                        <td className={assetStyles.colBase}>{a.dv_tracking_number ?? "—"}</td>
+                        <td className={assetStyles.colWide}>{a.supplier_payee ?? "—"}</td>
+                        <td className={assetStyles.colWide}>{a.account_name_charge ?? "—"}</td>
+                        <td className={assetStyles.colBase}>{a.account_number ?? "—"}</td>
+                        <td className={assetStyles.colBase}>{a.obr_number ?? "—"}</td>
+                        <td className={assetStyles.colBase}>{a.dv_number ?? "—"}</td>
+                        <td className={assetStyles.colBase}>{fmtDate(a.date_received)}</td>
+                        <td className={assetStyles.colBase}>{fmtDate(a.created_at)}</td>
                       </tr>
                     );
                   })}

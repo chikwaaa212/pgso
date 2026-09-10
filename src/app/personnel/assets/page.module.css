@@ -57,6 +57,42 @@
   box-shadow: 0 1px 0 var(--color-navy-200);
 }
 
+/* Every data column gets an explicit minimum width so headers/cells
+   never collapse to content width — horizontal scroll takes over. */
+.tableAuto thead th,
+.tableAuto tbody td {
+  min-width: 9rem;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.colDetails {
+  min-width: 13rem !important;
+}
+
+.colNarrow {
+  min-width: 5.5rem !important;
+}
+
+.colBase {
+  min-width: 9rem !important;
+}
+
+.colWide {
+  min-width: 13rem !important;
+}
+
+.colXl {
+  min-width: 18rem !important;
+  white-space: normal !important;
+}
+
+.colCost {
+  min-width: 8rem !important;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
 .selectableRow {
   cursor: pointer;
 }
@@ -114,8 +150,9 @@
 
 .searchWrap {
   position: relative;
-  flex: 1 1 14rem;
-  min-width: 12rem;
+  flex: 1 1 20rem;
+  max-width: 28rem;
+  min-width: 14rem;
 }
 
 .searchIcon {
@@ -136,6 +173,65 @@
   align-items: center;
   gap: 0.375rem;
   flex-wrap: wrap;
+}
+
+.filterBar {
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+  width: 100%;
+}
+
+.topRow {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.625rem;
+  width: 100%;
+  flex-wrap: nowrap;
+}
+
+.topRow .searchWrap {
+  align-self: flex-end;
+}
+
+.topRow .filterGroup {
+  flex: 1 1 9rem;
+  min-width: 9rem;
+  max-width: 12rem;
+}
+
+@media (max-width: 900px) {
+  .topRow {
+    flex-wrap: wrap;
+  }
+}
+
+.filterSelects {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: flex-end;
+}
+
+.filterGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 10rem;
+  flex: 1 1 10rem;
+  max-width: 14rem;
+}
+
+.filterLabel {
+  font-size: 0.6875rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-navy-500);
+}
+
+.filterSelect {
+  min-width: 10rem;
 }
 
 .filterRow .filterBtn {

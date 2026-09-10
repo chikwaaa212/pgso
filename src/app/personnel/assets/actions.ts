@@ -1,8 +1,10 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import ExcelJS from "exceljs";
 import prisma from "@/lib/prisma";
 import { generateQrDataUrl } from "@/lib/qrcode";
+import { ASSET_EXCEL_HEADERS, ASSET_TEMPLATE_SHEET } from "@/lib/asset-excel";
 
 export interface EditState {
   success?: boolean;
@@ -25,6 +27,7 @@ const ASSET_EDITABLE_KEYS = [
   "remarks",
   "condition",
   "unit_cost",
+  "end_user",
   "brand",
   "cylinders",
   "engine_displacement",
@@ -66,6 +69,7 @@ export interface AssetRow {
   remarks: string | null;
   condition: string | null;
   unit_cost: number | null;
+  end_user: string | null;
   brand: string | null;
   cylinders: number | null;
   engine_displacement: string | null;
@@ -110,6 +114,7 @@ export async function getAssets(): Promise<AssetRow[]> {
         remarks: true,
         condition: true,
         unit_cost: true,
+        end_user: true,
         brand: true,
         cylinders: true,
         engine_displacement: true,
@@ -151,6 +156,7 @@ export async function getAssets(): Promise<AssetRow[]> {
         remarks: a.remarks,
         condition: a.condition,
         unit_cost: a.unit_cost !== null && a.unit_cost !== undefined ? Number(a.unit_cost) : null,
+        end_user: a.end_user,
         brand: a.brand,
         cylinders: a.cylinders,
         engine_displacement: a.engine_displacement,
@@ -230,6 +236,7 @@ export interface UnifiedAssetRow {
   remarks: string | null;
   condition: string | null;
   unit_cost: number | null;
+  end_user: string | null;
   brand: string | null;
   cylinders: number | null;
   engine_displacement: string | null;
@@ -272,6 +279,7 @@ function mapStockToUnified(stock: StockRow): UnifiedAssetRow {
     remarks: stock.reorder_threshold !== null ? `Reorder: ${stock.reorder_threshold}` : null,
     condition: null,
     unit_cost: stock.unit_cost,
+    end_user: null,
     brand: null,
     cylinders: null,
     engine_displacement: null,
@@ -368,6 +376,7 @@ export async function getAsset(id: string): Promise<AssetRow | null> {
         remarks: true,
         condition: true,
         unit_cost: true,
+        end_user: true,
         brand: true,
         cylinders: true,
         engine_displacement: true,
@@ -410,6 +419,7 @@ export async function getAsset(id: string): Promise<AssetRow | null> {
       remarks: a.remarks,
       condition: a.condition,
       unit_cost: a.unit_cost !== null && a.unit_cost !== undefined ? Number(a.unit_cost) : null,
+      end_user: a.end_user,
       brand: a.brand,
       cylinders: a.cylinders,
       engine_displacement: a.engine_displacement,
@@ -720,4 +730,354 @@ export async function updateUnifiedAsset(
     console.error("[updateUnifiedAsset]", e);
     return { success: false, error: "Failed to update asset." };
   }
+}
+
+// ── Add single asset ──────────────────────────────────────────────
+
+export interface CreateAssetState {
+  success?: boolean;
+  error?: string;
+  id?: string;
+}
+
+function normalizeConditionInput(value: string | null): string | null {
+  if (!value) return "serviceable";
+  const lower = value.toLowerCase().trim();
+  if (lower.includes("unservice")) return "unserviceable";
+  return "serviceable";
+}
+
+function normalizeStatusInput(value: string | null): string | null {
+  if (!value) return "available";
+  const lower = value.toLowerCase().trim();
+  if (["available", "in use", "maintenance", "retired"].includes(lower)) return lower;
+  if (lower.includes("retired") || lower.includes("unservice") || lower.includes("dispos"))
+    return "retired";
+  return "available";
+}
+
+export async function createAsset(
+  _prevState: CreateAssetState,
+  formData: FormData
+): Promise<CreateAssetState> {
+  const get = (k: string) => {
+    const v = formData.get(k);
+    if (v === null || v === undefined) return null;
+    const s = String(v).trim();
+    return s === "" ? null : s;
+  };
+
+  const accountCode = get("account_code");
+  const article = get("article");
+  if (!accountCode) return { success: false, error: "ACCOUNT CODE is required." };
+  if (!article) return { success: false, error: "ARTICLE is required." };
+
+  const qtyRaw = get("quantity");
+  const cylRaw = get("cylinders");
+  const totalRaw = get("total_cost");
+  const unitCostRaw = get("unit_cost");
+
+  const quantity = qtyRaw === null ? null : Number(qtyRaw);
+  if (quantity !== null && (!Number.isInteger(quantity) || quantity < 0))
+    return { success: false, error: "QTY must be a whole number 0 or more." };
+  const cylinders = cylRaw === null ? null : Number(cylRaw);
+  if (cylinders !== null && (!Number.isInteger(cylinders) || cylinders < 0))
+    return { success: false, error: "No. of Cyl. must be a whole number 0 or more." };
+  const totalCost = totalRaw === null ? null : Number(totalRaw);
+  if (totalCost !== null && (!Number.isFinite(totalCost) || totalCost < 0))
+    return { success: false, error: "TOTAL COST must be 0 or more." };
+  const unitCost = unitCostRaw === null ? null : Number(unitCostRaw);
+  if (unitCost !== null && (!Number.isFinite(unitCost) || unitCost < 0))
+    return { success: false, error: "UNIT COST must be 0 or more." };
+
+  const parseDate = (k: string) => {
+    const v = get(k);
+    if (!v) return null;
+    const d = new Date(v);
+    return Number.isNaN(d.getTime()) ? null : d;
+  };
+
+  const qrCode = get("qr_code");
+
+  try {
+    const dupCode = await prisma.asset.findUnique({
+      where: { property_number: accountCode },
+      select: { id: true },
+    });
+    if (dupCode)
+      return { success: false, error: `ACCOUNT CODE "${accountCode}" already exists.` };
+    if (qrCode) {
+      const dupQr = await prisma.asset.findUnique({
+        where: { qr_code: qrCode },
+        select: { id: true },
+      });
+      if (dupQr)
+        return { success: false, error: `PROPERTY No. "${qrCode}" already exists.` };
+    }
+
+    const created = await prisma.asset.create({
+      data: {
+        property_number: accountCode,
+        account_code: accountCode,
+        identifier: get("identifier"),
+        account_title: get("account_title"),
+        account_name: get("account_name"),
+        category: get("category"),
+        article,
+        quantity,
+        unit: get("unit"),
+        description: get("description"),
+        date_acquired: parseDate("date_acquired"),
+        location: get("location"),
+        total_cost: totalCost,
+        remarks: get("remarks"),
+        condition: normalizeConditionInput(get("condition")),
+        unit_cost: unitCost,
+        end_user: get("end_user"),
+        brand: get("brand"),
+        cylinders,
+        engine_displacement: get("engine_displacement"),
+        fuel_type: get("fuel_type"),
+        engine_number: get("engine_number"),
+        chassis_number: get("chassis_number"),
+        color: get("color"),
+        plate_number: get("plate_number"),
+        fund: get("fund"),
+        status: normalizeStatusInput(get("status")),
+        dv_tracking_number: get("dv_tracking_number"),
+        supplier_payee: get("supplier_payee"),
+        account_name_charge: get("account_name_charge"),
+        account_number: get("account_number"),
+        obr_number: get("obr_number"),
+        dv_number: get("dv_number"),
+        date_received: parseDate("date_received"),
+        qr_code: qrCode,
+      },
+      select: { id: true },
+    });
+
+    revalidatePath("/personnel/assets");
+    return { success: true, id: created.id };
+  } catch (e) {
+    console.error("[createAsset]", e);
+    return { success: false, error: "Failed to add the asset. Please try again." };
+  }
+}
+
+// ── Bulk import from the exact-header Excel template ──────────────
+
+export interface ImportAssetsState {
+  success?: boolean;
+  error?: string;
+  created?: number;
+  updated?: number;
+  skipped?: number;
+  errors?: string[];
+}
+
+function cellToValue(value: unknown): unknown {
+  if (value === null || value === undefined) return null;
+  if (value instanceof Date) return value;
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean")
+    return value;
+  if (typeof value === "object") {
+    const v = value as Record<string, unknown>;
+    if ("result" in v && v.result !== undefined && v.result !== null) return v.result;
+    if ("text" in v && typeof v.text === "string") return v.text;
+    if ("richText" in v && Array.isArray(v.richText))
+      return (v.richText as Array<{ text?: string }>).map((r) => r.text ?? "").join("");
+    if ("hyperlink" in v && typeof v.hyperlink === "string") return v.hyperlink;
+  }
+  return String(value);
+}
+
+function strVal(v: unknown): string | null {
+  if (v === null || v === undefined) return null;
+  if (v instanceof Date) return null;
+  const s = String(v).trim();
+  return s === "" ? null : s;
+}
+
+function intVal(v: unknown): number | null {
+  if (v === null || v === undefined || v === "") return null;
+  const n = typeof v === "number" ? Math.trunc(v) : Number(String(v).replace(/,/g, ""));
+  return Number.isInteger(n) && n >= 0 ? n : null;
+}
+
+function decVal(v: unknown): number | null {
+  if (v === null || v === undefined || v === "") return null;
+  const n = typeof v === "number" ? v : Number(String(v).replace(/,/g, "").replace(/₱/g, ""));
+  return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
+function dateVal(v: unknown): Date | null {
+  if (v === null || v === undefined || v === "") return null;
+  if (v instanceof Date) return Number.isNaN(v.getTime()) ? null : v;
+  const d = new Date(String(v).trim());
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+export async function importAssetsFromExcel(
+  _prevState: ImportAssetsState,
+  formData: FormData
+): Promise<ImportAssetsState> {
+  const file = formData.get("file");
+  if (!file || !(file instanceof File) || file.size === 0)
+    return { success: false, error: "Choose an .xlsx file to import." };
+  if (file.size > 10 * 1024 * 1024)
+    return { success: false, error: "File is too large (max 10 MB)." };
+
+  let wb: ExcelJS.Workbook;
+  try {
+    wb = new ExcelJS.Workbook();
+    const buf = await file.arrayBuffer();
+    await wb.xlsx.load(buf);
+  } catch (e) {
+    console.error("[importAssetsFromExcel] load", e);
+    return { success: false, error: "Could not read that Excel file. Use the downloaded template (.xlsx)." };
+  }
+
+  const ws = wb.getWorksheet(ASSET_TEMPLATE_SHEET) ?? wb.worksheets[0];
+  if (!ws) return { success: false, error: "No worksheet found in that file." };
+
+  // Map normalized (trimmed) header -> column index. Tolerant of Excel
+  // trimming the two trailing-space headers on re-save.
+  const colByHeader = new Map<string, number>();
+  ws.getRow(1).eachCell({ includeEmpty: true }, (cell, col) => {
+    const raw = cellToValue(cell.value);
+    const key = raw === null ? "" : String(raw).trim();
+    if (key && !colByHeader.has(key)) colByHeader.set(key, col);
+  });
+
+  if (!colByHeader.has("ACCOUNT CODE"))
+    return {
+      success: false,
+      error: `Header row not recognized — download the template and keep its ${ASSET_EXCEL_HEADERS.length} headers unchanged.`,
+    };
+
+  const at = (row: ExcelJS.Row, header: string): unknown => {
+    const col = colByHeader.get(header);
+    if (!col) return null;
+    return cellToValue(row.getCell(col).value);
+  };
+
+  let created = 0;
+  let updated = 0;
+  let skipped = 0;
+  const errors: string[] = [];
+  const seenQr = new Set<string>();
+
+  const last = ws.lastRow?.number ?? ws.rowCount;
+  for (let i = 2; i <= last; i++) {
+    const row = ws.getRow(i);
+    const accountCode = strVal(at(row, "ACCOUNT CODE"));
+    if (!accountCode) {
+      // Ignore fully blank rows; count rows with other data but no key as skipped.
+      let hasAny = false;
+      row.eachCell({ includeEmpty: false }, () => {
+        hasAny = true;
+      });
+      if (hasAny) skipped++;
+      continue;
+    }
+
+    const condRaw = strVal(at(row, "CONDITION"));
+    const statusRaw = strVal(at(row, "STATUS"));
+    const condition = !condRaw
+      ? "serviceable"
+      : condRaw.toLowerCase().includes("unservice")
+        ? "unserviceable"
+        : "serviceable";
+    const statusLower = (statusRaw ?? "").toLowerCase().trim();
+    const status = ["available", "in use", "maintenance", "retired"].includes(statusLower)
+      ? statusLower
+      : statusLower.includes("retir") || statusLower.includes("unservice") || statusLower.includes("dispos")
+        ? "retired"
+        : "available";
+
+    let qrCode = strVal(at(row, "PROPERTY No."));
+    if (qrCode && seenQr.has(qrCode)) {
+      errors.push(`Row ${i} (${accountCode}): duplicate PROPERTY No. "${qrCode}" in file — saved without it.`);
+      qrCode = null;
+    } else if (qrCode) {
+      seenQr.add(qrCode);
+      try {
+        const clash = await prisma.asset.findUnique({
+          where: { qr_code: qrCode },
+          select: { property_number: true },
+        });
+        if (clash && clash.property_number !== accountCode) {
+          errors.push(`Row ${i} (${accountCode}): PROPERTY No. "${qrCode}" already in use — saved without it.`);
+          qrCode = null;
+        }
+      } catch {
+        qrCode = null;
+      }
+    }
+
+    const data = {
+      account_code: accountCode,
+      identifier: strVal(at(row, "IDENTIFIER")),
+      account_title: strVal(at(row, "ACCOUNT TITLE")),
+      account_name: strVal(at(row, "ACCOUNT NAME")),
+      category: strVal(at(row, "ASSET TYPE")),
+      article: strVal(at(row, "ARTICLE")),
+      quantity: intVal(at(row, "QTY.")),
+      unit: strVal(at(row, "UNIT")),
+      description: strVal(at(row, "DESCRIPTION")),
+      date_acquired: dateVal(at(row, "DATE ACQUIRED")),
+      location: strVal(at(row, "LOCATION")),
+      total_cost: decVal(at(row, "TOTAL COST")),
+      remarks: strVal(at(row, "REMARKS")),
+      condition,
+      unit_cost: decVal(at(row, "UNIT COST")),
+      end_user: strVal(at(row, "END USER")),
+      brand: strVal(at(row, "BRAND")),
+      cylinders: intVal(at(row, "No. of Cyl.")),
+      engine_displacement: strVal(at(row, "Engine Displacement")),
+      fuel_type: strVal(at(row, "Fuel Type")),
+      engine_number: strVal(at(row, "ENGINE#")),
+      chassis_number: strVal(at(row, "CHASSIS#")),
+      color: strVal(at(row, "COLOR")),
+      plate_number: strVal(at(row, "PLATE NO.")),
+      fund: strVal(at(row, "FUND")),
+      status,
+      dv_tracking_number: strVal(at(row, "DV TRACKING NUMBER")),
+      supplier_payee: strVal(at(row, "SUPPLIER/PAYEE")),
+      account_name_charge: strVal(at(row, "ACCOUNT NAME-CHARGE")),
+      account_number: strVal(at(row, "ACCOUNT NUMBER")),
+      obr_number: strVal(at(row, "OBR NUMBER")),
+      dv_number: strVal(at(row, "DV NUMBER")),
+      date_received: dateVal(at(row, "DATE RECEIVED AT INVENTORY SECTION")),
+      qr_code: qrCode,
+    };
+
+    try {
+      const existing = await prisma.asset.findUnique({
+        where: { property_number: accountCode },
+        select: { id: true },
+      });
+      if (existing) {
+        await prisma.asset.update({ where: { property_number: accountCode }, data });
+        updated++;
+      } else {
+        await prisma.asset.create({ data: { property_number: accountCode, ...data } });
+        created++;
+      }
+    } catch (e) {
+      console.error(`[importAssetsFromExcel] row ${i}`, e);
+      errors.push(`Row ${i} (${accountCode}): could not save (${e instanceof Error ? e.message.slice(0, 120) : "unknown error"}).`);
+    }
+  }
+
+  if (created === 0 && updated === 0)
+    return {
+      success: false,
+      error: "No rows imported — fill the template starting at row 2 with an ACCOUNT CODE per row.",
+      skipped,
+      errors: errors.slice(0, 20),
+    };
+
+  revalidatePath("/personnel/assets");
+  return { success: true, created, updated, skipped, errors: errors.slice(0, 20) };
 }

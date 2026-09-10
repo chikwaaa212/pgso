@@ -1,0 +1,463 @@
+/* ─── Pro-level Issue QR Record (personnel/issues modal) ────────────────────
+   Branded PGSO record card: navy masthead, receiver strip, QR panel with
+   scan-corner ticks, icon detail rows, trust footer. Costs never appear. */
+
+.dialogWide {
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--color-navy-200);
+}
+
+.record {
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  color: var(--color-navy-900);
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+/* ── Masthead ─────────────────────────────────────────────────────────────── */
+.masthead {
+  position: relative;
+  background: linear-gradient(135deg, var(--color-navy-900) 0%, var(--color-navy-800) 60%, var(--color-navy-700) 100%);
+  color: #fff;
+  padding: 1.1rem 1.25rem 0.95rem;
+  overflow: hidden;
+}
+
+.masthead::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 4px;
+  background: linear-gradient(90deg, var(--color-yellow-500) 0%, var(--color-yellow-600) 55%, transparent 100%);
+}
+
+.mastheadPattern {
+  position: absolute;
+  inset: 0;
+  opacity: 0.07;
+  background-image:
+    linear-gradient(to right, #fff 1px, transparent 1px),
+    linear-gradient(to bottom, #fff 1px, transparent 1px);
+  background-size: 22px 22px;
+  pointer-events: none;
+}
+
+.kicker {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.625rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--color-yellow-500);
+  margin: 0;
+}
+
+.kickerDot {
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 9999px;
+  background: var(--color-yellow-500);
+  flex-shrink: 0;
+}
+
+.mastheadRow {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: 0.3rem;
+}
+
+.mastheadTitle {
+  font-size: 1.35rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  margin: 0;
+  line-height: 1.15;
+}
+
+.mastheadSub {
+  font-size: 0.72rem;
+  color: rgba(255, 255, 255, 0.72);
+  margin: 0.2rem 0 0;
+  letter-spacing: 0.04em;
+}
+
+.docBadge {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.1rem;
+  flex-shrink: 0;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 0.65rem;
+  padding: 0.45rem 0.9rem;
+  text-align: center;
+}
+
+.docBadgeKind {
+  font-size: 1.05rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  line-height: 1;
+}
+
+.docBadgeNo {
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.85);
+  letter-spacing: 0.03em;
+}
+
+/* ── Receiver strip ───────────────────────────────────────────────────────── */
+.receiver {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  padding: 0.8rem 1.25rem;
+  background: var(--color-muted);
+  border-bottom: 1px solid var(--color-navy-200);
+}
+
+.avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.6rem;
+  height: 2.6rem;
+  border-radius: 9999px;
+  flex-shrink: 0;
+  background: var(--color-navy-800);
+  color: #fff;
+  font-size: 0.85rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  border: 2px solid var(--color-yellow-500);
+}
+
+.receiverMeta {
+  min-width: 0;
+}
+
+.receiverLabel {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.625rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-navy-500);
+  margin: 0;
+}
+
+.receiverName {
+  font-size: 1rem;
+  font-weight: 700;
+  margin: 0.1rem 0 0;
+  overflow-wrap: anywhere;
+}
+
+.receiverCap {
+  font-size: 0.7rem;
+  color: var(--color-navy-500);
+  margin: 0.05rem 0 0;
+}
+
+.qtyPill {
+  margin-left: auto;
+  flex-shrink: 0;
+  text-align: center;
+  background: #fff;
+  border: 1px solid var(--color-navy-200);
+  border-radius: 0.65rem;
+  padding: 0.35rem 0.8rem;
+}
+
+.qtyValue {
+  font-size: 1.25rem;
+  font-weight: 800;
+  line-height: 1;
+  color: var(--color-navy-900);
+}
+
+.qtyLabel {
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-navy-500);
+  margin-top: 0.15rem;
+}
+
+/* ── Body ─────────────────────────────────────────────────────────────────── */
+.body {
+  display: grid;
+  gap: 1rem;
+  padding: 1.1rem 1.25rem 1rem;
+}
+
+@media (min-width: 560px) {
+  .body {
+    grid-template-columns: 15rem 1fr;
+    align-items: start;
+  }
+}
+
+/* QR panel */
+.qrPanel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.55rem;
+  background: var(--color-muted);
+  border: 1px solid var(--color-navy-200);
+  border-radius: 0.8rem;
+  padding: 0.9rem 0.9rem 0.8rem;
+}
+
+.qrFrame {
+  position: relative;
+  background: #fff;
+  border: 1px solid var(--color-navy-200);
+  border-radius: 0.6rem;
+  padding: 0.7rem;
+}
+
+.qrFrame img {
+  display: block;
+  width: 11.5rem;
+  height: 11.5rem;
+}
+
+/* scan-corner ticks */
+.tick {
+  position: absolute;
+  width: 1.1rem;
+  height: 1.1rem;
+  border: 3px solid var(--color-navy-800);
+}
+
+.tickTL { top: -2px; left: -2px; border-right: none; border-bottom: none; border-radius: 0.6rem 0 0 0; }
+.tickTR { top: -2px; right: -2px; border-left: none; border-bottom: none; border-radius: 0 0.6rem 0 0; }
+.tickBL { bottom: -2px; left: -2px; border-right: none; border-top: none; border-radius: 0 0 0 0.6rem; }
+.tickBR { bottom: -2px; right: -2px; border-left: none; border-top: none; border-radius: 0 0 0.6rem 0; }
+
+.scanHint {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-navy-600);
+  margin: 0;
+}
+
+.refCode {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.66rem;
+  color: var(--color-navy-500);
+  background: #fff;
+  border: 1px dashed var(--color-navy-300);
+  border-radius: 0.4rem;
+  padding: 0.2rem 0.55rem;
+  margin: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Details */
+.details {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.detailsTitle {
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-navy-500);
+  margin: 0 0 0.45rem;
+}
+
+.detailRow {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--color-navy-100);
+}
+
+.detailRow:last-child {
+  border-bottom: none;
+}
+
+.detailIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.9rem;
+  height: 1.9rem;
+  border-radius: 0.55rem;
+  flex-shrink: 0;
+  background: var(--color-navy-100);
+  color: var(--color-navy-800);
+}
+
+.detailText {
+  min-width: 0;
+  flex: 1;
+}
+
+.detailKey {
+  font-size: 0.63rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--color-navy-500);
+  margin: 0;
+}
+
+.detailValue {
+  font-size: 0.9rem;
+  font-weight: 600;
+  margin: 0.1rem 0 0;
+  overflow-wrap: anywhere;
+  line-height: 1.35;
+}
+
+/* ── Trust footer ─────────────────────────────────────────────────────────── */
+.trust {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+  margin: 0 1.25rem;
+  padding: 0.6rem 0.75rem;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 0.6rem;
+  color: #166534;
+  font-size: 0.72rem;
+  line-height: 1.45;
+}
+
+.trust p {
+  margin: 0;
+}
+
+.trust strong {
+  font-weight: 700;
+}
+
+/* ── Actions ──────────────────────────────────────────────────────────────── */
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0.9rem 1.25rem 1.25rem;
+}
+
+.btnPrimary,
+.btnOutline,
+.btnGhost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  border-radius: 0.55rem;
+  padding: 0.55rem 1rem;
+  cursor: pointer;
+  text-decoration: none;
+  border: 1px solid transparent;
+  transition: background-color 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.btnPrimary {
+  background: var(--color-yellow-500);
+  color: var(--color-navy-900);
+  border-color: var(--color-yellow-500);
+}
+
+.btnPrimary:hover {
+  background: var(--color-yellow-600);
+  border-color: var(--color-yellow-600);
+}
+
+.btnOutline {
+  background: #fff;
+  color: var(--color-navy-800);
+  border-color: var(--color-navy-300);
+}
+
+.btnOutline:hover {
+  background: var(--color-navy-100);
+}
+
+.btnGhost {
+  background: transparent;
+  color: var(--color-navy-600);
+  border-color: transparent;
+  margin-left: auto;
+}
+
+.btnGhost:hover {
+  color: var(--color-navy-900);
+  background: var(--color-navy-100);
+}
+
+/* Table QR thumbnail frame */
+.thumb {
+  display: inline-flex;
+  background: #fff;
+  border: 1px solid var(--color-navy-200);
+  border-radius: 0.45rem;
+  padding: 3px;
+}
+
+.thumb img {
+  display: block;
+  width: 44px;
+  height: 44px;
+  border-radius: 0.25rem;
+}
+
+/* ── Print: only the record card ──────────────────────────────────────────── */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  .printArea,
+  .printArea * {
+    visibility: visible;
+  }
+  .printArea {
+    position: absolute;
+    inset: 0;
+    margin: 0;
+  }
+  .noPrint {
+    display: none !important;
+  }
+  .dialogWide {
+    border: none;
+    max-height: none;
+    overflow: visible;
+  }
+}

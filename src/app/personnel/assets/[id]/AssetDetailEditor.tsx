@@ -41,6 +41,7 @@ const FIELD_SECTIONS: { title: string; fields: EditFieldType[] }[] = [
     title: "Identification",
     fields: [
       { label: "Account Code", key: "account_code", type: "text" },
+      { label: "Property No. (QR)", key: "qr_code", type: "text" },
       { label: "Identifier", key: "identifier", type: "text" },
       { label: "Account Title", key: "account_title", type: "text" },
       { label: "Account Name", key: "account_name", type: "text" },
@@ -56,6 +57,7 @@ const FIELD_SECTIONS: { title: string; fields: EditFieldType[] }[] = [
       { label: "Description", key: "description", type: "textarea" },
       { label: "Date Acquired", key: "date_acquired", type: "date" },
       { label: "Location", key: "location", type: "text" },
+      { label: "End User", key: "end_user", type: "text" },
     ],
   },
   {

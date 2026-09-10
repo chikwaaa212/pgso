@@ -52,6 +52,7 @@ export function PersonnelSidebar({
       links: [
         { label: "Documents", href: "/personnel/documents", badge: totalDocuments },
         { label: "PAR / ICS", href: "/personnel/issuances" },
+        { label: "Issues", href: "/personnel/issues" },
         { label: "Requests", href: "/personnel/requests", badge: pendingRequests },
         { label: "Repairs", href: "/personnel/repairs", badge: pendingRepairs },
         { label: "Logs", href: "/personnel/logs" },
