@@ -1,3 +1,6 @@
+"use client";
+
+import { useMemo } from "react";
 import Image from "next/image";
 import { Card } from "@/components/ui/card";
 import { BackButton } from "../back-button";
@@ -5,9 +8,10 @@ import { requestTypeLabel } from "@/app/personnel/requests/request-types";
 import { getMyRequests, getMyRequestOptions } from "../actions";
 import { NewRequestForm } from "./request-form";
 import { RequestQrButton } from "@/components/personnel/RequestQrButton";
+import { useCachedAction } from "@/hooks/use-cached-action";
+import { CLIENT_CACHE_KEYS } from "@/lib/client-cache";
+import RequestsLoading from "./loading";
 import styles from "./page.module.css";
-
-export const dynamic = "force-dynamic";
 
 function tone(status: string | null): "ok" | "warn" | "bad" | "info" {
   if (status === "approved" || status === "completed") return "ok";
@@ -23,9 +27,84 @@ function fmtDate(value: string | null) {
   return d.toLocaleDateString("en-PH", { year: "numeric", month: "short", day: "numeric", timeZone: "Asia/Manila" });
 }
 
-export default async function EmployeeRequestsPage() {
-  const [requests, options] = await Promise.all([getMyRequests(), getMyRequestOptions()]);
-  const pending = requests.filter((r) => r.status === "pending").length;
+export default function EmployeeRequestsPage() {
+  // Cached snapshot (my requests + form options): back-navigation paints
+  // instantly from memory / sessionStorage and only revalidates silently
+  // when stale (30s, matching the personnel lists) — same SWR pattern as
+  // the personnel dashboard / deliveries pages. A DB outage never crashes
+  // the page: stale data stays visible and only cold starts surface the
+  // error with a Retry.
+  const { data: snapshot, loading, error, refresh } = useCachedAction(
+    CLIENT_CACHE_KEYS.employeeRequests,
+    () =>
+      Promise.all([getMyRequests(), getMyRequestOptions()]).then(
+        ([requests, options]) => ({ requests, options })
+      ),
+    { staleTime: 30_000 }
+  );
+
+  const requests = useMemo(() => snapshot?.requests ?? [], [snapshot]);
+  const options = useMemo(
+    () => snapshot?.options ?? { assets: [], personnel: [] },
+    [snapshot]
+  );
+  const pending = useMemo(
+    () => requests.filter((r) => r.status === "pending").length,
+    [requests]
+  );
+
+  if (loading) {
+    return <RequestsLoading />;
+  }
+
+  if (!snapshot) {
+    return (
+      <section className={styles.section}>
+        <p className={styles.crumb}>Employee / My Requests</p>
+        <div className={styles.headerRow}>
+          <div>
+            <BackButton />
+            <h1 className={styles.title}>My Requests</h1>
+            <p className={styles.subtitle}>
+              {error || "Could not load your requests."}
+            </p>
+          </div>
+          <Image
+            src="/salute.png"
+            alt="Saluting eagle mascot"
+            width={120}
+            height={120}
+            priority
+            className={styles.mascot}
+          />
+        </div>
+        <Card className={styles.panel}>
+          <p className={styles.panelSub}>
+            The database could not be reached. Your previously loaded requests
+            will reappear automatically — or try again now.
+          </p>
+          <div>
+            <button
+              type="button"
+              onClick={refresh}
+              style={{
+                padding: "0.5rem 1.25rem",
+                fontSize: "0.875rem",
+                fontWeight: 600,
+                borderRadius: "0.375rem",
+                border: "1px solid var(--color-navy-600)",
+                background: "var(--color-navy-900)",
+                color: "#fff",
+                cursor: "pointer",
+              }}
+            >
+              Retry
+            </button>
+          </div>
+        </Card>
+      </section>
+    );
+  }
 
   return (
     <section className={styles.section}>
@@ -52,12 +131,12 @@ export default async function EmployeeRequestsPage() {
       <Card className={styles.panel}>
         <h2 className={styles.panelTitle}>File a new request</h2>
         <p className={styles.panelSub}>
-          Transfer an item assigned to you, request a new assignment, or
-          report a repair — pick an asset or a stock lot
+          Transfer or report a repair for an item assigned to you, or request
+          a new assignment — new assignments can pick an asset or a stock lot
           (every delivery is an asset; stock is its quantity on hand).
           PGSO personnel review and act on it.
         </p>
-        <NewRequestForm assets={options.assets} personnel={options.personnel} />
+        <NewRequestForm assets={options.assets} personnel={options.personnel} onFiled={refresh} />
       </Card>
 
       <Card className={styles.panel}>

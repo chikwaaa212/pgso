@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
+import { X } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import {
   BrowseTable,
@@ -11,6 +12,9 @@ import {
 import { browseInventory } from "../browse/actions";
 import { setReorderThreshold } from "./actions";
 import type { InventoryRow } from "@/app/personnel/inventory/actions";
+import { useCachedAction } from "@/hooks/use-cached-action";
+import { CLIENT_CACHE_KEYS } from "@/lib/client-cache";
+import InventoryLoading from "./loading";
 import styles from "./page.module.css";
 
 function fmtCost(v: number | null) {
@@ -36,16 +40,57 @@ function levelValue(level: Level): string {
   return "No threshold";
 }
 
+function recommendationTone(level: Level): "ok" | "warn" | "bad" | "info" {
+  if (level === "out" || level === "critical") return "bad";
+  if (level === "low") return "warn";
+  if (level === "ok") return "ok";
+  return "info";
+}
+
+function recommendationFor(r: InventoryRow): { short: string; title: string; detail: string } {
+  const level = levelOf(r);
+  const onHand = `${r.quantity}${r.unit ? ` ${r.unit}` : ""}`;
+  const threshold = r.reorder_threshold;
+  if (level === "out") {
+    return {
+      short: "Replenish now",
+      title: `${r.item_name} is out of stock`,
+      detail: `No units on hand. File a supply request immediately and replenish before operations are blocked.`,
+    };
+  }
+  if (level === "critical") {
+    return {
+      short: "Restock soon",
+      title: `${r.item_name} is critically low`,
+      detail: `Only ${onHand} left (threshold ${threshold}). Replenish this week and tell personnel to prioritize a supply request.`,
+    };
+  }
+  if (level === "low") {
+    return {
+      short: "Plan reorder",
+      title: `${r.item_name} is below threshold`,
+      detail: `Down to ${onHand} (threshold ${threshold}). Plan a reorder soon so it doesn't turn critical.`,
+    };
+  }
+  if (level === "none") {
+    return {
+      short: "Set threshold",
+      title: `${r.item_name} has no threshold`,
+      detail: `Set a reorder threshold for this item so the system can alert personnel before it runs out.`,
+    };
+  }
+  return {
+    short: "No action",
+    title: `${r.item_name} is healthy`,
+    detail: `${onHand} on hand (threshold ${threshold}). No action needed.`,
+  };
+}
+
 function ThresholdCell({ row, onSaved }: { row: InventoryRow; onSaved: () => void }) {
   const initial = row.reorder_threshold != null ? String(row.reorder_threshold) : "";
   const [val, setVal] = useState(initial);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-
-  useEffect(() => {
-    setVal(row.reorder_threshold != null ? String(row.reorder_threshold) : "");
-    setError("");
-  }, [row.reorder_threshold]);
 
   const dirty = val.trim() !== initial.trim();
 
@@ -117,19 +162,23 @@ function ThresholdCell({ row, onSaved }: { row: InventoryRow; onSaved: () => voi
 }
 
 export default function SuperAdminInventoryPage() {
-  const [rows, setRows] = useState<InventoryRow[]>([]);
-  const [loading, setLoading] = useState(true);
+  // Same client caching as the personnel inventory page: back-navigation
+  // paints instantly from memory / sessionStorage and only revalidates
+  // silently when stale (60s, matching the server list cache).
+  const {
+    data,
+    loading,
+    refresh,
+  } = useCachedAction(
+    CLIENT_CACHE_KEYS.adminInventory,
+    browseInventory,
+    { staleTime: 60_000 }
+  );
+  const rows = useMemo(() => data ?? [], [data]);
 
-  const reload = () => {
-    void browseInventory().then((r) => {
-      setRows(r);
-      setLoading(false);
-    });
-  };
-
-  useEffect(() => {
-    reload();
-  }, []);
+  // Dismissal is keyed to the alert count — closing hides this exact alert,
+  // but a changed count (e.g. after saving a threshold) toasts again.
+  const [dismissedFor, setDismissedFor] = useState<number | null>(null);
 
   const alert = useMemo(() => {
     let out = 0;
@@ -145,6 +194,13 @@ export default function SuperAdminInventoryPage() {
     }
     return { out, critical, low, none, attention: out + critical + low };
   }, [rows]);
+
+  const showAlert = alert.attention > 0 && dismissedFor !== alert.attention;
+
+  // Per-row recommendation toast — stored as an id so it always reflects
+  // the freshest row data after threshold saves.
+  const [recId, setRecId] = useState<string | null>(null);
+  const recRow = recId ? (rows.find((r) => r.id === recId) ?? null) : null;
 
   const columns: BrowseColumn<InventoryRow>[] = useMemo(
     () => [
@@ -166,14 +222,41 @@ export default function SuperAdminInventoryPage() {
       {
         key: "threshold",
         label: "Threshold",
-        value: (r) => <ThresholdCell row={r} onSaved={reload} />,
+        // Keyed by record + threshold so the cell resets whenever fresh
+        // data arrives (replaces the old sync-on-prop-change effect).
+        value: (r) => (
+          <ThresholdCell
+            key={`${r.id}:${r.reorder_threshold ?? ""}`}
+            row={r}
+            onSaved={() => refresh()}
+          />
+        ),
         text: (r) => (r.reorder_threshold != null ? String(r.reorder_threshold) : ""),
       },
       { key: "location", label: "Location", value: (r) => r.location ?? "—", text: (r) => r.location ?? "" },
+      {
+        key: "recommendation",
+        label: "Recommendation",
+        value: (r) => (
+          <button
+            type="button"
+            className={styles.recBtn}
+            data-tone={recommendationTone(levelOf(r))}
+            aria-label={`View recommendation for ${r.item_name}`}
+            onClick={() => setRecId(r.id)}
+          >
+            {recommendationFor(r).short}
+          </button>
+        ),
+        text: (r) => recommendationFor(r).short,
+      },
     ],
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    []
+    [refresh]
   );
+
+  if (loading) {
+    return <InventoryLoading />;
+  }
 
   return (
     <section className={styles.section}>
@@ -181,34 +264,67 @@ export default function SuperAdminInventoryPage() {
       <div>
         <h1 className={styles.title}>Stocks</h1>
         <p className={styles.subtitle}>
-          {loading ? "Loading…" : `${rows.length} stock ${rows.length === 1 ? "line" : "lines"}`} · thresholds are set by Super Admin
+          {`${rows.length} stock ${rows.length === 1 ? "line" : "lines"}`} · thresholds are set by Super Admin
         </p>
       </div>
 
-      {!loading && alert.attention > 0 ? (
-        <div
-          role="alert"
-          className="rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900"
-        >
-          <p className="font-semibold">
-            Stock alert: {alert.attention} item{alert.attention !== 1 ? "s" : ""} at or
-            below threshold
-            {alert.out > 0 ? ` — ${alert.out} out of stock` : ""}
-            {alert.critical > 0 ? `, ${alert.critical} critical` : ""}
-            {alert.low > 0 ? `, ${alert.low} low` : ""}.
-          </p>
-          <p className="mt-1">
-            Recommendation: tell personnel to file supply requests for these items and
-            replenish before they run out. Review incoming requests under{" "}
-            <Link href="/super-admin/transactions" className="font-semibold underline">
-              Transactions
-            </Link>
-            .
-          </p>
+      {recRow ? (
+        <div role="alert" className={styles.toast}>
+          <div className={styles.toastBody}>
+            <p className={styles.toastTitle}>{recommendationFor(recRow).title}</p>
+            <p>
+              {recommendationFor(recRow).detail}{" "}
+              {levelOf(recRow) !== "ok" && levelOf(recRow) !== "none" ? (
+                <>
+                  Review incoming requests under{" "}
+                  <Link href="/super-admin/transactions" className="font-semibold underline">
+                    Transactions
+                  </Link>
+                  .
+                </>
+              ) : null}
+            </p>
+          </div>
+          <button
+            type="button"
+            className={styles.toastClose}
+            aria-label="Dismiss recommendation"
+            onClick={() => setRecId(null)}
+          >
+            <X size={16} aria-hidden="true" />
+          </button>
+        </div>
+      ) : showAlert ? (
+        <div role="alert" className={styles.toast}>
+          <div className={styles.toastBody}>
+            <p className={styles.toastTitle}>
+              Stock alert: {alert.attention} item{alert.attention !== 1 ? "s" : ""}{" "}
+              at or below threshold
+              {alert.out > 0 ? ` — ${alert.out} out of stock` : ""}
+              {alert.critical > 0 ? `, ${alert.critical} critical` : ""}
+              {alert.low > 0 ? `, ${alert.low} low` : ""}.
+            </p>
+            <p>
+              Recommendation: tell personnel to file supply requests for these items
+              and replenish before they run out. Review incoming requests under{" "}
+              <Link href="/super-admin/transactions" className="font-semibold underline">
+                Transactions
+              </Link>
+              .
+            </p>
+          </div>
+          <button
+            type="button"
+            className={styles.toastClose}
+            aria-label="Dismiss stock alert"
+            onClick={() => setDismissedFor(alert.attention)}
+          >
+            <X size={16} aria-hidden="true" />
+          </button>
         </div>
       ) : null}
 
-      {!loading && alert.attention === 0 && alert.none > 0 ? (
+      {alert.attention === 0 && alert.none > 0 ? (
         <p className={styles.panelSub} role="status">
           All stocked items are above threshold. {alert.none} item{alert.none !== 1 ? "s have" : " has"} no
           threshold yet — set one below so the system can alert personnel.

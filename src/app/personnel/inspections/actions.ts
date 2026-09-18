@@ -2,7 +2,16 @@
 
 import { cache } from 'react'
 import { notFound } from 'next/navigation'
-import { revalidatePath } from 'next/cache'
+import { revalidatePath as nextRevalidatePath } from 'next/cache'
+
+// Every Next.js revalidation also busts the Upstash personnel cache so
+// Redis never serves stale lists after a write (fire-and-forget).
+function revalidatePath(path: string) {
+  nextRevalidatePath(path)
+  void import('@/lib/personnel-cache')
+    .then((m) => m.bustPersonnelCache())
+    .catch(() => {})
+}
 import { Prisma } from '@prisma/client'
 import { createClient } from '@/lib/supabase/server'
 import { writeAuditLog } from '@/lib/audit'
@@ -86,6 +95,14 @@ export async function getDeliveryForInspection(
   deliveryId: string
 ): Promise<DeliveryForInspection> {
   try {
+    // Per-delivery Redis cache (30s, per-user) — back-navigation and the
+    // receipt / receipts / IAR pages share one fetch instead of
+    // re-querying. Busted automatically by bustPersonnelCache() on writes.
+    const { withScopedCache } = await import('@/lib/personnel-cache')
+    return await withScopedCache(
+      'personnel:inspection-detail',
+      30,
+      async () => {
     const scope = await getPersonnelScope()
     // Fail closed: signed-out callers see nothing (previously fell through
     // to the unfiltered row, costs included).
@@ -176,6 +193,9 @@ export async function getDeliveryForInspection(
           }
         : undefined,
     }
+      },
+      { id: deliveryId }
+    )
   } catch (e) {
     console.error('[getDeliveryForInspection]', e)
     notFound()
@@ -206,6 +226,8 @@ export interface UnifiedInspectionRow {
 }
 
 export async function getInspectionsList(): Promise<UnifiedInspectionRow[]> {
+  const { withScopedCache } = await import('@/lib/personnel-cache')
+  return withScopedCache('personnel:inspections-list', 30, async () => {
   try {
     const scope = await getPersonnelScope()
     if (scope.isEmpty || !scope.userId) return []
@@ -263,6 +285,7 @@ export async function getInspectionsList(): Promise<UnifiedInspectionRow[]> {
     console.error('[getInspectionsList]', e)
     return []
   }
+  })
 }
 
 // ─── Fetch full inspection history for a delivery ─────────────────────────
@@ -288,6 +311,13 @@ export async function getInspectionHistory(
   deliveryId: string
 ): Promise<InspectionHistoryRecord[]> {
   try {
+    // Same per-delivery cache as the detail — receipts history revisits
+    // are cache hits.
+    const { withScopedCache } = await import('@/lib/personnel-cache')
+    return await withScopedCache(
+      'personnel:inspection-history',
+      30,
+      async () => {
     // Own-data only for personnel; super_admin sees all.
     const scope = await getPersonnelScope()
     if (scope.isEmpty) return []
@@ -337,6 +367,9 @@ export async function getInspectionHistory(
       }> | null,
       created_at: inspection.created_at?.toISOString() ?? null,
     }))
+      },
+      { id: deliveryId }
+    )
   } catch (e) {
     console.error('[getInspectionHistory]', e)
     return []
@@ -358,6 +391,8 @@ export interface DashboardStats {
 // Per-request memoized: layout + page render in one request and both need
 // these badges, so share a single execution instead of doubling the queries.
 export const getDashboardStats = cache(async function getDashboardStats(): Promise<DashboardStats> {
+  const { withScopedCache } = await import('@/lib/personnel-cache')
+  return withScopedCache('personnel:dashboard-stats', 60, async () => {
   const zeros: DashboardStats = {
     totalDeliveries: 0,
     pendingInspections: 0,
@@ -392,27 +427,33 @@ export const getDashboardStats = cache(async function getDashboardStats(): Promi
           .$queryRaw<Array<{ count: bigint }>>`SELECT COUNT(*)::bigint AS count FROM issuance_records WHERE created_by = ${me}::uuid`
           .then((r) => Number(r[0]?.count ?? 0))
           .catch(() => 0)
-    // Repairs own-data uses created_by when present (legacy NULL rows count as mine
-    // so old tickets don't vanish; new tickets always carry the creator).
+    // Repairs badge matches the repairs page (strict own-data:
+    // created_by = me, no legacy-NULL fallback — see getRepairs v2).
     // Raw SQL keeps working whether or not the generated client knows the column.
     const countMyRepairs = async (status: string): Promise<number> => {
       try {
         if (all) return await prisma.repair.count({ where: { status } })
         const rows = await prisma.$queryRaw<Array<{ count: bigint }>>`
           SELECT COUNT(*)::bigint AS count FROM repairs
-          WHERE status = ${status} AND (created_by = ${me}::uuid OR created_by IS NULL)`
+          WHERE status = ${status} AND created_by = ${me}::uuid`
         return Number(rows[0]?.count ?? 0)
       } catch {
-        // Column missing (migration not applied yet) → fall back to global count.
-        try {
-          return await prisma.repair.count({ where: { status } })
-        } catch {
-          return 0
-        }
+        // Column missing (migration not applied yet) → fail closed for
+        // personnel (return 0, never the global queue); super_admin path
+        // above already returned.
+        return 0
       }
     }
     const countMyCompletedRepairs = () => countMyRepairs('completed')
     const countMyPendingRepairs = () => countMyRepairs('pending')
+    // Requests badge matches the personnel inbox exactly (strict
+    // recipient_id = me — same filter as getRequests({ forRecipient: true })
+    // behind the requests page). Legacy recipient-less rows are excluded
+    // from both the page and the badge so the count never exceeds what the
+    // login user actually sees. Super admin keeps the global queue count.
+    const myRequestFilter = all
+      ? { status: 'pending' }
+      : { status: 'pending', recipient_id: me }
     // Two sequential batches of 6 (was one 12-way fan-out): the dashboard
     // shares one pooler connection pool, and a 12-wide burst plus the page's
     // own queries was tripping the connection timeout.
@@ -429,18 +470,22 @@ export const getDashboardStats = cache(async function getDashboardStats(): Promi
       }
       return await Promise.all([
         prisma.delivery.count({ where: myDeliveryFilter }),
+        // Stocks + assets are a shared global pool (same as the documents
+        // page, which lists them unfiltered) — the badge stays per-login-user
+        // through the own-data delivery / repair / IAR / issuance counts
+        // below minus this viewer's own views.
         prisma.inventoryItem.count(),
         prisma.asset.count(),
         countMyCompletedRepairs(),
         prisma.iarRecord.count({ where: { delivery: myDeliveriesOrInspected } }),
-        prisma.documentView.count(),
+        // Per-viewer unviewed count (raw SQL so no client regen is needed
+        // for viewer_id): one role's views never shrink another's badge.
+        prisma.$queryRaw<Array<{ count: bigint }>>`
+          SELECT COUNT(*)::bigint AS count FROM document_views WHERE viewer_id = ${me}::uuid`
+          .then((r) => Number(r[0]?.count ?? 0))
+          .catch(() => 0),
       ])
     }
-    // Requests badge matches the personnel inbox (recipient = me + legacy NULL).
-    // Super admin keeps the global queue count.
-    const myRequestFilter = all
-      ? { status: 'pending' }
-      : { status: 'pending', OR: [{ recipient_id: me }, { recipient_id: null }] }
     const [
       totalDeliveries,
       pendingInspections,
@@ -473,6 +518,7 @@ export const getDashboardStats = cache(async function getDashboardStats(): Promi
     console.error('[getDashboardStats]', e)
     return zeros
   }
+  })
 })
 
 export interface MonthlyPoint {
@@ -482,6 +528,8 @@ export interface MonthlyPoint {
 }
 
 export async function getMonthlyOverview(): Promise<MonthlyPoint[]> {
+  const { withScopedCache } = await import('@/lib/personnel-cache')
+  return withScopedCache('personnel:monthly-overview', 60, async () => {
   const now = new Date()
   const months: MonthlyPoint[] = []
   // Own-data only for personnel; super_admin sees all.
@@ -541,6 +589,7 @@ export async function getMonthlyOverview(): Promise<MonthlyPoint[]> {
   }
 
   return months
+  })
 }
 
 export interface RecentDeliveryRow {
@@ -553,6 +602,8 @@ export interface RecentDeliveryRow {
 }
 
 export async function getRecentDeliveries(limit = 5): Promise<RecentDeliveryRow[]> {
+  const { withScopedCache } = await import('@/lib/personnel-cache')
+  return withScopedCache('personnel:recent-deliveries', 60, async () => {
   try {
     const scope = await getPersonnelScope()
     if (scope.isEmpty) return []
@@ -586,6 +637,7 @@ export async function getRecentDeliveries(limit = 5): Promise<RecentDeliveryRow[
     console.error('[getRecentDeliveries]', e)
     return []
   }
+  }, { limit })
 }
 
 // ─── Generated AIR / IAR ───────────────────────────────────────────────────
@@ -922,7 +974,14 @@ export interface IarRecordRow {
 
 /** Every generated / attached AIR for a delivery, newest first. */
 export async function getIarRecords(deliveryId: string): Promise<IarRecordRow[]> {
+
   try {
+    // Same per-delivery cache — IAR page revisits are cache hits.
+    const { withScopedCache } = await import('@/lib/personnel-cache')
+    return await withScopedCache(
+      'personnel:iar-records',
+      30,
+      async () => {
     // Own-data only for personnel; super_admin sees all.
     const scope = await getPersonnelScope()
     if (scope.isEmpty) return []
@@ -969,8 +1028,41 @@ export async function getIarRecords(deliveryId: string): Promise<IarRecordRow[]>
       inspection_date:  r.inspection.inspection_date.toISOString().slice(0, 10),
       inspector_name:   r.inspection.inspector_name,
     }))
+      },
+      { id: deliveryId }
+    )
   } catch (e) {
     console.error('[getIarRecords]', e)
     return []
   }
+}
+
+// ─── IAR sheet snapshot (single round-trip for the cached client IAR page) ─
+
+export interface IarSnapshot {
+  delivery: DeliveryForInspection | null
+  records: IarRecordRow[]
+}
+
+/**
+ * Delivery + IAR history for one IAR sheet. Each inner reader keeps its own
+ * Redis entry, and the assembled snapshot gets a scoped 30s entry on top —
+ * back-navigation is served from the browser cache instantly and only
+ * revalidates silently when stale. Never throws: missing / foreign
+ * deliveries resolve to null so the client page can notFound().
+ */
+export async function getIarSnapshot(deliveryId: string): Promise<IarSnapshot> {
+  const { withScopedCache } = await import('@/lib/personnel-cache')
+  return withScopedCache('personnel:iar-snapshot', 30, async () => {
+    try {
+      const [delivery, records] = await Promise.all([
+        getDeliveryForInspection(deliveryId).catch(() => null),
+        getIarRecords(deliveryId).catch(() => [] as IarRecordRow[]),
+      ])
+      return { delivery, records }
+    } catch (e) {
+      console.error('[getIarSnapshot]', e)
+      return { delivery: null, records: [] }
+    }
+  }, { id: deliveryId })
 }

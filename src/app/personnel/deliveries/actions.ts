@@ -1,6 +1,15 @@
 'use server'
 
-import { revalidatePath } from 'next/cache'
+import { revalidatePath as nextRevalidatePath } from 'next/cache'
+
+// Every Next.js revalidation also busts the Upstash personnel cache so
+// Redis never serves stale lists after a write (fire-and-forget).
+function revalidatePath(path: string) {
+  nextRevalidatePath(path)
+  void import('@/lib/personnel-cache')
+    .then((m) => m.bustPersonnelCache())
+    .catch(() => {})
+}
 import { notFound } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import prisma from '@/lib/prisma'
@@ -12,7 +21,8 @@ import { stockInspectionItems } from '@/lib/stock'
 import { findCatalogEntry, getActiveCatalogEntries, resolveUnitName } from '@/lib/master-data'
 import type { SignupState } from '@/types'
 
-const statuses = ['complete', 'partial'] as const
+const statuses = ['complete', 'partial', 'awaiting'] as const
+const deliveryKinds = ['stock', 'asset'] as const
 const inspectionResults = ['passed', 'partial'] as const
 const recipientRoles = ['Employee', 'PGSO Personnel'] as const
 
@@ -28,7 +38,9 @@ export async function logDelivery(
   formData: FormData
 ): Promise<SignupState> {
   const accountCode = (formData.get('accountCode') as string)?.trim()
+  const deliveryKind = (formData.get('deliveryKind') as string)?.trim()?.toLowerCase()
   const dateSupplied = formData.get('dateSupplied') as string
+  const expectedArrival = formData.get('expectedArrival') as string
   const supplierName = (formData.get('supplierName') as string)?.trim()
   const poReference = (formData.get('poReference') as string)?.trim()
   const deliveryStatus = (
@@ -41,6 +53,10 @@ export async function logDelivery(
     return { error: 'Account code is required — pick one from Master Data.' }
   }
 
+  if (!deliveryKinds.includes(deliveryKind as (typeof deliveryKinds)[number])) {
+    return { error: 'Choose whether this delivery is for Stocks or Assets.' }
+  }
+
   // Strict mode: the catalog is authoritative. Unknown/inactive codes are
   // rejected; type + title always come from the catalog entry.
   const catalogEntry = await findCatalogEntry(accountCode)
@@ -51,7 +67,18 @@ export async function logDelivery(
   const accountTitle = catalogEntry.title
 
   if (!dateSupplied || Number.isNaN(Date.parse(dateSupplied))) {
-    return { error: 'A valid date received is required.' }
+    // Waiting-for-arrival logs carry a target date instead of a received date.
+    if (deliveryStatus !== 'awaiting') {
+      return { error: 'A valid date received is required.' }
+    }
+  }
+
+  if (deliveryStatus === 'awaiting' && (!expectedArrival || Number.isNaN(Date.parse(expectedArrival)))) {
+    return { error: 'A target date of arrival is required for waiting arrivals.' }
+  }
+
+  if (expectedArrival && Number.isNaN(Date.parse(expectedArrival))) {
+    return { error: 'The target date of arrival is not a valid date.' }
   }
 
   if (!supplierName) {
@@ -127,7 +154,9 @@ export async function logDelivery(
           data: {
             supplier: supplierName,
             po_reference: poReference,
-            date_delivered: new Date(dateSupplied),
+            date_delivered: dateSupplied && !Number.isNaN(Date.parse(dateSupplied)) ? new Date(dateSupplied) : null,
+            expected_arrival_date: expectedArrival && !Number.isNaN(Date.parse(expectedArrival)) ? new Date(expectedArrival) : null,
+            delivery_kind: deliveryKind,
             delivery_status: deliveryStatus,
             inspection_status: 'pending',
             received_by: user.id,
@@ -159,7 +188,7 @@ export async function logDelivery(
       module: 'deliveries',
       details: {
         purpose: `Log delivery from ${supplierName}`,
-        summary: `PO ${poReference} · ${parsedItems.length} item(s) · ${deliveryStatus}`,
+        summary: `PO ${poReference} · ${parsedItems.length} item(s) · ${deliveryStatus} · ${deliveryKind}`,
         reference_id: outcome.result.deliveryId,
         supplier: supplierName,
         po_reference: poReference,
@@ -325,6 +354,8 @@ export interface DeliveryDetails {
   supplier: string | null
   po_reference: string | null
   date_delivered: string | null
+  expected_arrival_date: string | null
+  delivery_kind: string | null
   delivery_status: string | null
   inspection_status: string | null
   asset_type: string | null
@@ -342,6 +373,13 @@ export async function getDeliveryDetails(
   deliveryId: string
 ): Promise<DeliveryDetails> {
   try {
+    // Per-delivery Redis cache (30s, per-user) — receipt revisits are
+    // cache hits. Busted automatically by bustPersonnelCache() on writes.
+    const { withScopedCache } = await import('@/lib/personnel-cache')
+    return await withScopedCache(
+      'personnel:delivery-detail',
+      30,
+      async () => {
     const scope = await getPersonnelScope()
     // Fail closed: signed-out callers see nothing (previously fell through
     // to the unfiltered row, costs included).
@@ -383,6 +421,8 @@ export async function getDeliveryDetails(
       supplier: delivery.supplier,
       po_reference: delivery.po_reference,
       date_delivered: delivery.date_delivered?.toISOString().slice(0, 10) ?? null,
+      expected_arrival_date: delivery.expected_arrival_date?.toISOString().slice(0, 10) ?? null,
+      delivery_kind: delivery.delivery_kind,
       delivery_status: delivery.delivery_status,
       inspection_status: delivery.inspection_status,
       asset_type: delivery.asset_type,
@@ -401,6 +441,9 @@ export async function getDeliveryDetails(
         unit_cost: item.unit_cost ? Number(item.unit_cost) : null,
       })),
     }
+      },
+      { id: deliveryId }
+    )
   } catch (e) {
     console.error('[getDeliveryDetails]', e)
     notFound()
@@ -420,12 +463,71 @@ export interface DeliveryFormOptions {
 }
 
 /**
+ * Cached deliveries log for /personnel/deliveries.
+ * Per-user scoped (own rows only; super_admin sees all) — 30s TTL like the
+ * inspections list. Busted automatically by bustPersonnelCache() on any write.
+ */
+export interface CachedDeliveryRow {
+  id: string;
+  supplier: string | null;
+  po_reference: string | null;
+  date_delivered: string | null;
+  expected_arrival_date: string | null;
+  delivery_kind: string | null;
+  delivery_status: string | null;
+  inspection_status: string | null;
+  item_count: number;
+}
+
+export async function getDeliveriesList(): Promise<CachedDeliveryRow[]> {
+  const { withScopedCache } = await import('@/lib/personnel-cache')
+  return withScopedCache('personnel:deliveries-list', 30, async () => {
+    try {
+      const scope = await getPersonnelScope()
+      if (scope.isEmpty || !scope.userId) return []
+      const where = scope.isSuperAdmin ? {} : { received_by: scope.userId }
+      const deliveries = await prisma.delivery.findMany({
+        where,
+        orderBy: { created_at: 'desc' },
+        select: {
+          id: true,
+          supplier: true,
+          po_reference: true,
+          date_delivered: true,
+          expected_arrival_date: true,
+          delivery_kind: true,
+          delivery_status: true,
+          inspection_status: true,
+          _count: { select: { items: true } },
+        },
+      })
+      return deliveries.map((d) => ({
+        id: d.id,
+        supplier: d.supplier,
+        po_reference: d.po_reference,
+        date_delivered: d.date_delivered?.toISOString() ?? null,
+        expected_arrival_date: d.expected_arrival_date?.toISOString() ?? null,
+        delivery_kind: d.delivery_kind,
+        delivery_status: d.delivery_status,
+        inspection_status: d.inspection_status,
+        item_count: d._count.items,
+      }))
+    } catch (e) {
+      console.error('[getDeliveriesList]', e)
+      return []
+    }
+  })
+}
+
+/**
  * Chart-of-accounts options for the Log delivery form, sourced from the
  * Super Admin–managed account catalog (strict mode). Each account code maps
  * to exactly one asset type + title, so picking a code auto-fills the other
  * two fields. No custom codes — unknown codes must be added in Master Data.
  */
 export async function getDeliveryFormOptions(): Promise<DeliveryFormOptions> {
+  const { withCache, cacheKey } = await import('@/lib/personnel-cache')
+  return withCache(cacheKey('personnel:delivery-form-options'), 300, async () => {
   const empty: DeliveryFormOptions = { assetTypes: [], accountTitles: [], codes: [] }
   try {
     const entries = await getActiveCatalogEntries()
@@ -445,4 +547,5 @@ export async function getDeliveryFormOptions(): Promise<DeliveryFormOptions> {
     console.error('[getDeliveryFormOptions]', e)
     return empty
   }
+  })
 }

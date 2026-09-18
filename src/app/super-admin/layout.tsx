@@ -1,22 +1,14 @@
+import { Suspense } from "react";
 import { redirect } from "next/navigation";
 import { SuperAdminChrome } from "@/components/super-admin/SuperAdminChrome";
-import { getDashboardStats } from "@/app/personnel/inspections/actions";
+import { SuperAdminNavbar } from "@/components/super-admin/SuperAdminNavbar";
 import { createClient } from "@/lib/supabase/server";
 import prisma from "@/lib/prisma";
+import { SuperAdminNavbarLoader } from "./navbar-loader";
 
 export const dynamic = "force-dynamic";
 
-async function getPendingAccounts(): Promise<number> {
-  try {
-    return await prisma.profile.count({
-      where: { role: "employee", status: "pending" },
-    });
-  } catch {
-    return 0;
-  }
-}
-
-async function getSidebarUser(): Promise<{ name: string; detail: string }> {
+async function getNavbarUser(): Promise<{ name: string; detail: string }> {
   const fallback = { name: "Super Admin", detail: "Administrator" };
   const supabase = await createClient();
   const {
@@ -48,20 +40,28 @@ export default async function SuperAdminLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const [stats, pendingAccounts, sidebarUser] = await Promise.all([
-    getDashboardStats(),
-    getPendingAccounts(),
-    getSidebarUser(),
-  ]);
+  // Auth guard stays blocking (fast single profile query) so unauthorized
+  // users never see page content. Badge counts stream in via Suspense so
+  // navigation paints without waiting for stats — same pattern as
+  // personnel layout.
+  const navbarUser = await getNavbarUser();
   return (
     <SuperAdminChrome
-      pendingAccounts={pendingAccounts}
-      pendingInspections={stats.pendingInspections}
-      pendingRequests={stats.pendingRequests}
-      pendingRepairs={stats.pendingRepairs}
-      totalDocuments={stats.totalDocuments}
-      userName={sidebarUser.name}
-      userDetail={sidebarUser.detail}
+      navbar={
+        <Suspense
+          fallback={
+            <SuperAdminNavbar
+              userName={navbarUser.name}
+              userDetail={navbarUser.detail}
+            />
+          }
+        >
+          <SuperAdminNavbarLoader
+            userName={navbarUser.name}
+            userDetail={navbarUser.detail}
+          />
+        </Suspense>
+      }
     >
       {children}
     </SuperAdminChrome>

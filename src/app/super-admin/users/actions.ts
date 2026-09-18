@@ -14,6 +14,9 @@ export interface AdminUserRow {
   status: string
   position: string | null
   office: string | null
+  employee_no: string | null
+  department: string | null
+  profile_completed: boolean
   created_at: string | null
 }
 
@@ -46,33 +49,114 @@ async function emailMapFor(ids: string[]): Promise<Map<string, string>> {
   return map
 }
 
+// Explicit column list: `findMany()` without `select` pulls every Prisma
+// model field, which throws P2022 on DBs where migration 25 hasn't run yet.
+const ADMIN_SELECT = {
+  id: true,
+  full_name: true,
+  role: true,
+  status: true,
+  position: true,
+  office: true,
+  created_at: true,
+} as const
+
+// New columns exist only after migration 25 — probe once per process.
+let migration25Applied: boolean | null = null
+
+async function hasMigration25(): Promise<boolean> {
+  if (migration25Applied !== null) return migration25Applied
+  try {
+    await prisma.$queryRawUnsafe(
+      `SELECT "employee_no" FROM "profiles" LIMIT 0`
+    )
+    migration25Applied = true
+  } catch {
+    migration25Applied = false
+  }
+  return migration25Applied
+}
+
+function toAdminRow(
+  r: {
+    id: string
+    full_name: string | null
+    role: string
+    status: string
+    position: string | null
+    office: string | null
+    created_at: Date | null
+  },
+  emails: Map<string, string>,
+  extra?: { employee_no?: string | null; department?: string | null; profile_completed?: boolean | null }
+): AdminUserRow {
+  return {
+    id: r.id,
+    full_name: r.full_name,
+    email: emails.get(r.id) ?? null,
+    role: r.role,
+    status: r.status,
+    position: r.position,
+    office: r.office,
+    employee_no: extra?.employee_no ?? null,
+    department: extra?.department ?? null,
+    profile_completed: extra?.profile_completed ?? false,
+    created_at: r.created_at?.toISOString() ?? null,
+  }
+}
+
+async function extraFor(ids: string[]): Promise<Map<string, { employee_no: string | null; department: string | null; profile_completed: boolean }>> {
+  const out = new Map<string, { employee_no: string | null; department: string | null; profile_completed: boolean }>()
+  if (ids.length === 0 || !(await hasMigration25())) return out
+  try {
+    const rows = await prisma.profile.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, employee_no: true, department: true, profile_completed: true },
+    })
+    for (const r of rows) {
+      out.set(r.id, {
+        employee_no: r.employee_no ?? null,
+        department: r.department ?? null,
+        profile_completed: r.profile_completed ?? false,
+      })
+    }
+  } catch (e) {
+    // Migration probe said yes but columns still missing (replica lag etc.)
+    // — stay degraded rather than crashing the page.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    if ((e as any)?.code === 'P2022') migration25Applied = false
+    else console.error('[users:extra-profile-columns]', e)
+  }
+  return out
+}
+
 export async function getPendingEmployees(): Promise<AdminUserRow[]> {
   try {
     await requireSuperAdmin()
   } catch {
     return []
   }
+  // Same list caching as the other admin pages (30s) — auth stays
+  // outside the cache so failure fallbacks are never stored.
+  const { withScopedCache } = await import('@/lib/personnel-cache')
+  return withScopedCache('super-admin:pending-employees', 30, async () => {
   try {
     const rows = await prisma.profile.findMany({
       where: { role: 'employee', status: 'pending' },
       orderBy: { created_at: 'desc' },
       take: 200,
+      select: ADMIN_SELECT,
     })
-    const emails = await emailMapFor(rows.map((r) => r.id))
-    return rows.map((r) => ({
-      id: r.id,
-      full_name: r.full_name,
-      email: emails.get(r.id) ?? null,
-      role: r.role,
-      status: r.status,
-      position: r.position,
-      office: r.office,
-      created_at: r.created_at?.toISOString() ?? null,
-    }))
+    const [emails, extra] = await Promise.all([
+      emailMapFor(rows.map((r) => r.id)),
+      extraFor(rows.map((r) => r.id)),
+    ])
+    return rows.map((r) => toAdminRow(r, emails, extra.get(r.id)))
   } catch (e) {
     console.error('[getPendingEmployees]', e)
     return []
   }
+  })
 }
 
 export async function getAllUsers(): Promise<AdminUserRow[]> {
@@ -81,26 +165,24 @@ export async function getAllUsers(): Promise<AdminUserRow[]> {
   } catch {
     return []
   }
+  const { withScopedCache } = await import('@/lib/personnel-cache')
+  return withScopedCache('super-admin:all-users', 30, async () => {
   try {
     const rows = await prisma.profile.findMany({
       orderBy: { created_at: 'desc' },
       take: 300,
+      select: ADMIN_SELECT,
     })
-    const emails = await emailMapFor(rows.map((r) => r.id))
-    return rows.map((r) => ({
-      id: r.id,
-      full_name: r.full_name,
-      email: emails.get(r.id) ?? null,
-      role: r.role,
-      status: r.status,
-      position: r.position,
-      office: r.office,
-      created_at: r.created_at?.toISOString() ?? null,
-    }))
+    const [emails, extra] = await Promise.all([
+      emailMapFor(rows.map((r) => r.id)),
+      extraFor(rows.map((r) => r.id)),
+    ])
+    return rows.map((r) => toAdminRow(r, emails, extra.get(r.id)))
   } catch (e) {
     console.error('[getAllUsers]', e)
     return []
   }
+  })
 }
 
 export async function getUserCounts(): Promise<{ pending: number; personnel: number; employees: number }> {
@@ -109,6 +191,8 @@ export async function getUserCounts(): Promise<{ pending: number; personnel: num
   } catch {
     return { pending: 0, personnel: 0, employees: 0 }
   }
+  const { withScopedCache } = await import('@/lib/personnel-cache')
+  return withScopedCache('super-admin:user-counts', 30, async () => {
   try {
     const [pending, personnel, employees] = await Promise.all([
       prisma.profile.count({ where: { role: 'employee', status: 'pending' } }),
@@ -119,13 +203,17 @@ export async function getUserCounts(): Promise<{ pending: number; personnel: num
   } catch {
     return { pending: 0, personnel: 0, employees: 0 }
   }
+  })
 }
 
 async function guardTarget(actorId: string, targetId: string) {
   if (actorId === targetId) {
     throw new Error('You cannot change your own account.')
   }
-  const target = await prisma.profile.findUnique({ where: { id: targetId } })
+    const target = await prisma.profile.findUnique({
+      where: { id: targetId },
+      select: { id: true, full_name: true, role: true, status: true },
+    })
   if (!target) throw new Error('Account not found.')
   if (target.role === 'super_admin') {
     throw new Error('Super Admin accounts cannot be changed here.')
@@ -154,6 +242,8 @@ export async function approveEmployee(targetId: string): Promise<{ ok: boolean; 
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : 'Approval failed.' }
   }
+  const { bustPersonnelCache } = await import('@/lib/personnel-cache')
+  await bustPersonnelCache()
   revalidatePath('/super-admin/users')
   revalidatePath('/super-admin/dashboard')
   return { ok: true }
@@ -184,6 +274,8 @@ export async function rejectEmployee(targetId: string): Promise<{ ok: boolean; e
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : 'Rejection failed.' }
   }
+  const { bustPersonnelCache } = await import('@/lib/personnel-cache')
+  await bustPersonnelCache()
   revalidatePath('/super-admin/users')
   revalidatePath('/super-admin/dashboard')
   return { ok: true }
@@ -205,7 +297,10 @@ export async function setUserActive(
     // revoke this session — the middleware profile-status check signs the
     // account out on its next request instead. The status flip above is the
     // enforcement point.
-    const target = await prisma.profile.findUnique({ where: { id: targetId } })
+  const target = await prisma.profile.findUnique({
+    where: { id: targetId },
+    select: { id: true, full_name: true, role: true, status: true },
+  })
     await writeAuditLog({
       userId: actorId,
       action: active ? 'users:reactivate' : 'users:deactivate',
@@ -219,6 +314,8 @@ export async function setUserActive(
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : 'Update failed.' }
   }
+  const { bustPersonnelCache } = await import('@/lib/personnel-cache')
+  await bustPersonnelCache()
   revalidatePath('/super-admin/users')
   revalidatePath('/super-admin/dashboard')
   return { ok: true }

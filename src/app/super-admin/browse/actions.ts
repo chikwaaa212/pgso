@@ -77,6 +77,11 @@ export interface BrowseDeliveryRow {
 
 export async function browseDeliveries(): Promise<BrowseDeliveryRow[]> {
   if (!(await allowed())) return []
+  // Same caching as the personnel deliveries list (30s scoped — per-user
+  // key so entries can't leak across accounts). Auth stays outside the
+  // cache so failure fallbacks are never stored.
+  const { withScopedCache } = await import('@/lib/personnel-cache')
+  return withScopedCache('super-admin:deliveries-list', 30, async () => {
   try {
     const rows = await prisma.delivery.findMany({
       orderBy: { created_at: 'desc' },
@@ -111,19 +116,29 @@ export async function browseDeliveries(): Promise<BrowseDeliveryRow[]> {
     console.error('[browseDeliveries]', e)
     return []
   }
+  })
 }
 
 export async function browseDelivery(id: string): Promise<DeliveryDetails | null> {
   if (!(await allowed())) return null
+  // Read-only oversight snapshot, cached per record like the personnel
+  // detail snapshots (30s scoped). Auth stays outside the cache.
+  const { withScopedCache } = await import('@/lib/personnel-cache')
+  return withScopedCache('super-admin:delivery-detail', 30, async () => {
   try {
     return await getDeliveryDetails(id)
   } catch {
     return null
   }
+  }, { id })
 }
 
 export async function browseInspections(): Promise<UnifiedInspectionRow[]> {
   if (!(await allowed())) return []
+  // Same list caching as personnel inspections (30s scoped). Auth stays
+  // outside the cache so failure fallbacks are never stored.
+  const { withScopedCache } = await import('@/lib/personnel-cache')
+  return withScopedCache('super-admin:inspections-list', 30, async () => {
   try {
     const rows = await getInspectionsList()
     // Resolve the system user who logged each inspection (same as deliveries' "Logged By").
@@ -148,6 +163,7 @@ export async function browseInspections(): Promise<UnifiedInspectionRow[]> {
     console.error('[browseInspections]', e)
     return []
   }
+  })
 }
 
 export interface BrowseInspectionDetail {
@@ -158,6 +174,9 @@ export interface BrowseInspectionDetail {
 
 export async function browseInspection(deliveryId: string): Promise<BrowseInspectionDetail | null> {
   if (!(await allowed())) return null
+  // Same per-record snapshot caching as browseDelivery above.
+  const { withScopedCache } = await import('@/lib/personnel-cache')
+  return withScopedCache('super-admin:inspection-detail', 30, async () => {
   try {
     const [delivery, history, iar] = await Promise.all([
       getDeliveryForInspection(deliveryId),
@@ -168,26 +187,37 @@ export async function browseInspection(deliveryId: string): Promise<BrowseInspec
   } catch {
     return null
   }
+  }, { id: deliveryId })
 }
 
 export async function browseInventory(): Promise<InventoryRow[]> {
   if (!(await allowed())) return []
+  // Shared stock pool — global (unscoped) key like the personnel
+  // inventory-items cache, same 60s TTL. Auth stays outside the cache.
+  const { withCache, cacheKey } = await import('@/lib/personnel-cache')
+  return withCache(cacheKey('super-admin:inventory-list'), 60, async () => {
   try {
     return await getInventoryItems()
   } catch (e) {
     console.error('[browseInventory]', e)
     return []
   }
+  })
 }
 
 export async function browseAssets(): Promise<UnifiedAssetRow[]> {
   if (!(await allowed())) return []
+  // Same caching as the personnel unified-assets list (60s global —
+  // shared registry pool, not per-user data). Auth stays outside.
+  const { withCache, cacheKey } = await import('@/lib/personnel-cache')
+  return withCache(cacheKey('super-admin:assets-list'), 60, async () => {
   try {
     return await getAllUnifiedAssets()
   } catch (e) {
     console.error('[browseAssets]', e)
     return []
   }
+  })
 }
 
 export async function browseAsset(id: string): Promise<UnifiedAssetRow | null> {
@@ -229,21 +259,31 @@ export async function browseStock(id: string): Promise<StockRow | null> {
 
 export async function browseCategories(): Promise<string[]> {
   if (!(await allowed())) return []
+  // Same caching as the personnel asset-categories list (300s global —
+  // categories change rarely). Auth stays outside the cache.
+  const { withCache, cacheKey } = await import('@/lib/personnel-cache')
+  return withCache(cacheKey('super-admin:asset-categories'), 300, async () => {
   try {
     return await getCategories()
   } catch {
     return []
   }
+  })
 }
 
 export async function browseIssuances(): Promise<BrowseIssuanceRow[]> {
   if (!(await allowed())) return []
+  // Same list caching as personnel issuances (30s scoped — per-user key).
+  // Auth stays outside the cache so failure fallbacks are never stored.
+  const { withScopedCache } = await import('@/lib/personnel-cache')
+  return withScopedCache('super-admin:issuances-list', 30, async () => {
   try {
     return await withIssuanceLoggers(await getIssuances())
   } catch (e) {
     console.error('[browseIssuances]', e)
     return []
   }
+  })
 }
 
 export async function browseIssuance(id: string): Promise<IssuanceDetail | null> {
@@ -277,9 +317,12 @@ export async function browseCompletedRequests(): Promise<RequestRow[]> {
 }
 
 export type BrowseRequestRow = RequestRow & { logged_by: string | null }
-
 export async function browseRequests(): Promise<BrowseRequestRow[]> {
   if (!(await allowed())) return []
+  // Same list caching as personnel requests (30s scoped — per-user key).
+  // Auth stays outside the cache so failure fallbacks are never stored.
+  const { withScopedCache } = await import('@/lib/personnel-cache')
+  return withScopedCache('super-admin:requests-list', 30, async () => {
   try {
     const rows = await getRequests()
     // Requests store the *requesting* employee; the session user who actually
@@ -312,16 +355,33 @@ export async function browseRequests(): Promise<BrowseRequestRow[]> {
     console.error('[browseRequests]', e)
     return []
   }
+  })
+}
+
+/** Single request detail for read-only modals — rides the cached list. */
+export async function browseRequest(id: string): Promise<BrowseRequestRow | null> {
+  if (!(await allowed())) return null
+  try {
+    const rows = await browseRequests()
+    return rows.find((r) => r.id === id) ?? null
+  } catch {
+    return null
+  }
 }
 
 export async function browseRepairs(): Promise<RepairRow[]> {
   if (!(await allowed())) return []
+  // Same list caching as personnel repairs (30s scoped — per-user key).
+  // Auth stays outside the cache so failure fallbacks are never stored.
+  const { withScopedCache } = await import('@/lib/personnel-cache')
+  return withScopedCache('super-admin:repairs-list', 30, async () => {
   try {
     return await getRepairs()
   } catch (e) {
     console.error('[browseRepairs]', e)
     return []
   }
+  })
 }
 
 export async function browseRepair(id: string): Promise<RepairRow | null> {

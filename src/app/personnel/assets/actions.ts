@@ -1,11 +1,21 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidatePath as nextRevalidatePath } from "next/cache";
+
+// Every Next.js revalidation also busts the Upstash personnel cache so
+// Redis never serves stale lists after a write (fire-and-forget).
+function revalidatePath(path: string) {
+  nextRevalidatePath(path);
+  void import("@/lib/personnel-cache")
+    .then((m) => m.bustPersonnelCache())
+    .catch(() => {});
+}
 import ExcelJS from "exceljs";
 import prisma from "@/lib/prisma";
 import { generateAssetQrDataUrl, generateStockQrDataUrl } from "@/lib/qrcode";
 import { ASSET_EXCEL_HEADERS, ASSET_TEMPLATE_SHEET } from "@/lib/asset-excel";
 import { findCatalogEntry, getActiveCatalogEntries, resolveUnitName } from "@/lib/master-data";
+import { fetchCustomBags, type CustomBag } from "./custom-fields";
 
 export interface EditState {
   success?: boolean;
@@ -92,9 +102,13 @@ export interface AssetRow {
   created_at: string | null;
   assigned_to: string | null;
   qr_data_url: string;
+  /** User-defined column values, keyed by custom field key. */
+  custom_fields: CustomBag;
 }
 
 export async function getAssets(): Promise<AssetRow[]> {
+  const { withCache, cacheKey } = await import('@/lib/personnel-cache')
+  return withCache(cacheKey('personnel:assets'), 60, async () => {
   try {
     const assets = await prisma.asset.findMany({
       orderBy: { created_at: "desc" },
@@ -139,10 +153,14 @@ export async function getAssets(): Promise<AssetRow[]> {
       },
     });
 
+    const bags = await fetchCustomBags(
+      assets.map((a) => a.id),
+      []
+    );
+
     const rows: AssetRow[] = await Promise.all(
       assets.map(async (a) => ({
-        id: a.id,
-        account_code: a.account_code,
+        id: a.id,        account_code: a.account_code,
         identifier: a.identifier,
         account_title: a.account_title,
         account_name: a.account_name,
@@ -179,6 +197,7 @@ export async function getAssets(): Promise<AssetRow[]> {
         created_at: a.created_at?.toISOString() ?? null,
         assigned_to: a.assigned_to,
         qr_data_url: await generateAssetQrDataUrl(a.id),
+        custom_fields: bags.get(`asset:${a.id}`) ?? {},
       })),
     );
 
@@ -187,9 +206,12 @@ export async function getAssets(): Promise<AssetRow[]> {
     console.error("[getAssets]", e);
     return [];
   }
+  })
 }
 
 export async function getCategories(): Promise<string[]> {
+  const { withCache, cacheKey } = await import('@/lib/personnel-cache')
+  return withCache(cacheKey('personnel:asset-categories'), 300, async () => {
   try {
     // Strict mode: distinct asset types from the active catalog.
     const entries = await getActiveCatalogEntries();
@@ -205,6 +227,7 @@ export async function getCategories(): Promise<string[]> {
     console.error("[getCategories]", e);
     return [];
   }
+  })
 }
 
 export interface StockRow {
@@ -220,6 +243,8 @@ export interface StockRow {
   location: string | null;
   updated_at: string | null;
   qr_data_url: string;
+  /** User-defined column values, keyed by custom field key. */
+  custom_fields: CustomBag;
 }
 
 export interface UnifiedAssetRow {
@@ -262,6 +287,8 @@ export interface UnifiedAssetRow {
   qr_code: string | null;
   assigned_to: string | null;
   qr_data_url: string;
+  /** User-defined column values, keyed by custom field key. */
+  custom_fields: CustomBag;
 }
 
 function mapStockToUnified(stock: StockRow): UnifiedAssetRow {
@@ -305,6 +332,7 @@ function mapStockToUnified(stock: StockRow): UnifiedAssetRow {
     qr_code: null,
     assigned_to: null,
     qr_data_url: stock.qr_data_url,
+    custom_fields: stock.custom_fields,
   };
 }
 
@@ -316,6 +344,8 @@ function mapAssetToUnified(asset: AssetRow): UnifiedAssetRow {
 }
 
 export async function getStocks(): Promise<StockRow[]> {
+  const { withCache, cacheKey } = await import('@/lib/personnel-cache')
+  return withCache(cacheKey('personnel:stocks'), 60, async () => {
   try {
     const items = await prisma.inventoryItem.findMany({
       orderBy: { item_name: "asc" },
@@ -333,6 +363,11 @@ export async function getStocks(): Promise<StockRow[]> {
       },
     });
 
+    const bags = await fetchCustomBags(
+      [],
+      items.map((i) => i.id)
+    );
+
     const rows: StockRow[] = await Promise.all(
       items.map(async (item) => ({
         id: item.id,
@@ -347,6 +382,7 @@ export async function getStocks(): Promise<StockRow[]> {
         location: item.location,
         updated_at: item.updated_at?.toISOString() ?? null,
         qr_data_url: await generateStockQrDataUrl(item.id),
+        custom_fields: bags.get(`stock:${item.id}`) ?? {},
       })),
     )
 
@@ -355,6 +391,7 @@ export async function getStocks(): Promise<StockRow[]> {
     console.error("[getStocks]", e)
     return []
   }
+  })
 }
 
 export async function getAsset(id: string): Promise<AssetRow | null> {
@@ -404,6 +441,8 @@ export async function getAsset(id: string): Promise<AssetRow | null> {
 
     if (!a) return null
 
+    const bags = await fetchCustomBags([a.id], []);
+
     return {
       id: a.id,
       account_code: a.account_code,
@@ -443,6 +482,7 @@ export async function getAsset(id: string): Promise<AssetRow | null> {
       created_at: a.created_at?.toISOString() ?? null,
       assigned_to: a.assigned_to,
       qr_data_url: await generateAssetQrDataUrl(a.id),
+      custom_fields: bags.get(`asset:${a.id}`) ?? {},
     }
   } catch (e) {
     console.error("[getAsset]", e)
@@ -470,6 +510,8 @@ export async function getStock(id: string): Promise<StockRow | null> {
 
     if (!item) return null
 
+    const bags = await fetchCustomBags([], [item.id]);
+
     return {
       id: item.id,
       item_name: item.item_name,
@@ -483,6 +525,7 @@ export async function getStock(id: string): Promise<StockRow | null> {
       location: item.location,
       updated_at: item.updated_at?.toISOString() ?? null,
       qr_data_url: await generateStockQrDataUrl(item.id),
+      custom_fields: bags.get(`stock:${item.id}`) ?? {},
     }
   } catch (e) {
     console.error("[getStock]", e)
@@ -623,6 +666,8 @@ export async function updateStock(
 }
 
 export async function getAllUnifiedAssets(): Promise<UnifiedAssetRow[]> {
+  const { withCache, cacheKey } = await import('@/lib/personnel-cache')
+  return withCache(cacheKey('personnel:unified-assets'), 60, async () => {
   try {
     const assets = await getAssets();
     const stocks = await getStocks();
@@ -643,6 +688,25 @@ export async function getAllUnifiedAssets(): Promise<UnifiedAssetRow[]> {
     console.error("[getAllUnifiedAssets]", e);
     return [];
   }
+  })
+}
+
+export interface AssetsSnapshot {
+  rows: UnifiedAssetRow[];
+  categories: string[];
+}
+
+/**
+ * Single round-trip for the assets list page (rows + category options),
+ * cached client-side under CLIENT_CACHE_KEYS.assets like the
+ * dashboard / deliveries / inspections / stocks pages.
+ */
+export async function getAssetsSnapshot(): Promise<AssetsSnapshot> {
+  const [rows, categories] = await Promise.all([
+    getAllUnifiedAssets(),
+    getCategories(),
+  ]);
+  return { rows, categories };
 }
 
 export async function getUnifiedAsset(id: string): Promise<UnifiedAssetRow | null> {

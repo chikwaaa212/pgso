@@ -1,6 +1,15 @@
 'use server'
 
-import { revalidatePath } from 'next/cache'
+import { revalidatePath as nextRevalidatePath } from 'next/cache'
+
+// Every Next.js revalidation also busts the Upstash personnel cache so
+// Redis never serves stale lists after a write (fire-and-forget).
+function revalidatePath(path: string) {
+  nextRevalidatePath(path)
+  void import('@/lib/personnel-cache')
+    .then((m) => m.bustPersonnelCache())
+    .catch(() => {})
+}
 import { createClient } from '@/lib/supabase/server'
 import { writeAuditLog } from '@/lib/audit'
 import { stockInspectionItems } from '@/lib/stock'
@@ -11,6 +20,8 @@ export interface InventoryRow {
   id: string
   item_name: string
   account_code: string | null
+  /** Whether the lot came from a Stocks or Assets delivery (null = unknown/manual). */
+  delivery_kind: string | null
   /** Asset type auto-filled from the account code (Master Data catalog). */
   category: string | null
   /** Account title auto-filled from the account code (display-only; no column). */
@@ -27,7 +38,20 @@ export interface InventoryState {
   error?: string
 }
 
+/**
+ * Stock write permissions for the inventory UI. Personnel get a read-only
+ * table — only Super Admin may edit or delete stock items.
+ */
+export async function getStockPermissions(): Promise<{ canManage: boolean }> {
+  const { getPersonnelScope } = await import('@/lib/personnel-scope')
+  const scope = await getPersonnelScope()
+  return { canManage: scope.isSuperAdmin }
+}
+
 export async function getInventoryItems(): Promise<InventoryRow[]> {
+  const { withCache, cacheKey } = await import('@/lib/personnel-cache')
+  // Shared stock pool — global key.
+  return withCache(cacheKey('personnel:inventory-items'), 60, async () => {
   try {
     const rows = await prisma.inventoryItem.findMany({
       orderBy: { item_name: 'asc' },
@@ -35,6 +59,7 @@ export async function getInventoryItems(): Promise<InventoryRow[]> {
         id: true,
         item_name: true,
         account_code: true,
+        delivery_kind: true,
         category: true,
         quantity: true,
         unit: true,
@@ -64,6 +89,7 @@ export async function getInventoryItems(): Promise<InventoryRow[]> {
     console.error('[getInventoryItems]', e)
     return []
   }
+  })
 }
 
 export interface SaveItemInput {
@@ -139,6 +165,12 @@ export async function saveInventoryItem(
 
   try {
     if (input.id) {
+      // Personnel cannot edit stock — updates are Super Admin only.
+      const { getPersonnelScope } = await import('@/lib/personnel-scope')
+      const scope = await getPersonnelScope()
+      if (!scope.isSuperAdmin) {
+        return { error: 'Only Super Admin can edit stock items.' }
+      }
       const exists = await prisma.inventoryItem.findUnique({
         where: { id: input.id },
         select: { id: true },
@@ -174,6 +206,13 @@ export async function deleteInventoryItem(id: string): Promise<InventoryState> {
 
   const user = await requireUser()
   if (!user) return { error: 'You must be signed in to manage stocks.' }
+
+  // Personnel cannot delete stock — Super Admin only.
+  const { getPersonnelScope } = await import('@/lib/personnel-scope')
+  const scope = await getPersonnelScope()
+  if (!scope.isSuperAdmin) {
+    return { error: 'Only Super Admin can delete stock items.' }
+  }
 
   try {
     await prisma.inventoryItem.delete({ where: { id } })

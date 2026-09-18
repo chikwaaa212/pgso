@@ -89,7 +89,7 @@ export function IssuanceAttachButton({
       <Button
         type="button"
         variant="outline"
-        className="gap-2"
+        className="h-8 gap-2 rounded-[4px] px-3.5 text-xs font-semibold"
         disabled={busy}
         onClick={() => inputRef.current?.click()}
       >
@@ -145,7 +145,7 @@ export function IssuanceRemoveButton({
       <Button
         type="button"
         variant="outline"
-        className="gap-2"
+        className="h-8 gap-2 rounded-[4px] px-3.5 text-xs font-semibold"
         disabled={busy}
         onClick={() => void onRemove()}
       >

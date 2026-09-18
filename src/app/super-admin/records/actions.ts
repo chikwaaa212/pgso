@@ -38,6 +38,10 @@ export async function getRecordCounts(): Promise<RecordCounts> {
   } catch {
     return zeros
   }
+  // Same aggregate caching as the dashboard (60s) — auth stays outside
+  // the cache so failure fallbacks are never stored.
+  const { withScopedCache } = await import('@/lib/personnel-cache')
+  return withScopedCache('super-admin:record-counts', 60, async () => {
   try {
     const [assets, stockSkus, documents, iarRecords, deliveries, inspections, issuanceRows] =
       await Promise.all([
@@ -56,6 +60,7 @@ export async function getRecordCounts(): Promise<RecordCounts> {
     console.error('[getRecordCounts]', e)
     return zeros
   }
+  })
 }
 
 export async function getRecentAssets(limit = 10): Promise<RecentAssetRow[]> {
@@ -68,6 +73,8 @@ export async function getRecentAssets(limit = 10): Promise<RecentAssetRow[]> {
   const take = Number.isFinite(limit)
     ? Math.min(Math.max(Math.floor(limit), 1), 100)
     : 10
+  const { withScopedCache } = await import('@/lib/personnel-cache')
+  return withScopedCache('super-admin:recent-assets', 60, async () => {
   try {
     const rows = await prisma.asset.findMany({
       orderBy: { created_at: 'desc' },
@@ -87,4 +94,5 @@ export async function getRecentAssets(limit = 10): Promise<RecentAssetRow[]> {
     console.error('[getRecentAssets]', e)
     return []
   }
+  }, { limit: take })
 }

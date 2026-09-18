@@ -57,6 +57,11 @@ export async function getSuperAdminOverview(): Promise<SuperOverview> {
   } catch {
     return fallback
   }
+  // Same caching as the personnel dashboard aggregates (60s scoped —
+  // per-user key so entries can't leak across accounts). Auth stays
+  // outside the cache so failure fallbacks are never stored.
+  const { withScopedCache } = await import('@/lib/personnel-cache')
+  return withScopedCache('super-admin:overview', 60, async () => {
   try {
     // getDashboardStats is per-request memoized and shared with the layout,
     // so the six overlapping global counts run once (was a second full
@@ -172,4 +177,5 @@ export async function getSuperAdminOverview(): Promise<SuperOverview> {
     console.error('[getSuperAdminOverview]', e)
     return fallback
   }
+  })
 }

@@ -1,11 +1,19 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
-import { Search } from "lucide-react";
+import { useMemo, useState } from "react";
+import { Eye, QrCode, Search, Send } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   Select,
   SelectContent,
@@ -16,9 +24,19 @@ import {
 import { browseAssets, browseCategories } from "../browse/actions";
 import type { UnifiedAssetRow } from "@/app/personnel/assets/actions";
 import { AddAssetDialog, ImportAssetsDialog } from "@/app/personnel/assets/asset-dialogs";
+import {
+  AddColumnDialog,
+  CustomHeaderCells,
+  CustomRowCells,
+  customSearchText,
+  useCustomFields,
+} from "@/app/personnel/assets/custom-columns";
+import { IssuanceEvaluateDialog } from "@/components/personnel/IssuanceDialog";
 import { usePageSize } from "@/hooks/use-page-size";
+import { useCachedAction } from "@/hooks/use-cached-action";
+import { CLIENT_CACHE_KEYS } from "@/lib/client-cache";
+import AssetsLoading from "./loading";
 import styles from "@/app/personnel/dashboard/page.module.css";
-import airStyles from "@/app/personnel/inspections/air-section.module.css";
 import assetStyles from "@/app/personnel/assets/page.module.css";
 
 function tone(status: string | null) {
@@ -61,6 +79,12 @@ const STATUS_FILTERS = [
   { value: "retired", label: "Retired" },
 ] as const;
 
+const SOURCE_FILTERS = [
+  { value: "all", label: "All" },
+  { value: "asset", label: "Asset" },
+  { value: "stock", label: "Stock" },
+] as const;
+
 const PAGE_SIZES = [10, 20, 50, 100];
 
 const norm = (v: string | null | undefined) => (v ?? "").trim().toLowerCase();
@@ -85,11 +109,29 @@ function pageWindow(current: number, total: number) {
 }
 
 export default function SuperAdminAssetsPage() {
-  const [rows, setRows] = useState<UnifiedAssetRow[]>([]);
-  const [categories, setCategories] = useState<string[]>([]);
-  const [loading, setLoading] = useState(true);
+  // Same client caching as the personnel assets page: back-navigation
+  // paints instantly from memory / sessionStorage and only revalidates
+  // silently when stale (60s, matching the server snapshot cache).
+  const {
+    data: snapshot,
+    loading,
+    refresh,
+  } = useCachedAction(
+    CLIENT_CACHE_KEYS.adminAssets,
+    () =>
+      Promise.all([browseAssets(), browseCategories()]).then(
+        ([rows, categories]) => ({ rows, categories })
+      ),
+    { staleTime: 60_000 }
+  );
+  const rows = useMemo(() => snapshot?.rows ?? [], [snapshot]);
+  const categories = useMemo(() => snapshot?.categories ?? [], [snapshot]);
+  // User-defined columns (shared definitions table, stored in the DB).
+  const { fields: customFields, refreshFields: refreshCustomFields } =
+    useCustomFields();
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [sourceFilter, setSourceFilter] = useState("all");
   const [conditionFilter, setConditionFilter] = useState("all");
   const [unitFilter, setUnitFilter] = useState("all");
   const [assetTypeFilter, setAssetTypeFilter] = useState("all");
@@ -99,23 +141,9 @@ export default function SuperAdminAssetsPage() {
   );
   const [page, setPage] = useState(1);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-
-  useEffect(() => {
-    void Promise.all([browseAssets(), browseCategories()]).then(([data, cats]) => {
-      setRows(data);
-      setCategories(cats);
-      setLoading(false);
-    });
-  }, []);
-
-  const reload = () => {
-    setLoading(true);
-    void Promise.all([browseAssets(), browseCategories()]).then(([data, cats]) => {
-      setRows(data);
-      setCategories(cats);
-      setLoading(false);
-    });
-  };
+  const [issuanceOpen, setIssuanceOpen] = useState(false);
+  const [presetAssetId, setPresetAssetId] = useState<string | null>(null);
+  const [qrRow, setQrRow] = useState<UnifiedAssetRow | null>(null);
 
   const resetPage = () => {
     setPage(1);
@@ -129,6 +157,7 @@ export default function SuperAdminAssetsPage() {
   const hasActiveFilters =
     query.trim() !== "" ||
     statusFilter !== "all" ||
+    sourceFilter !== "all" ||
     conditionFilter !== "all" ||
     unitFilter !== "all" ||
     assetTypeFilter !== "all";
@@ -165,6 +194,7 @@ export default function SuperAdminAssetsPage() {
           a.account_number,
           a.obr_number,
           a.dv_number,
+          customSearchText(a),
         ]
           .filter(Boolean)
           .join(" ")
@@ -172,18 +202,30 @@ export default function SuperAdminAssetsPage() {
         if (!hay.includes(q)) return false;
       }
       if (statusFilter !== "all" && norm(a.status) !== statusFilter) return false;
+      if (sourceFilter !== "all" && a.source !== sourceFilter) return false;
       if (conditionFilter !== "all" && norm(a.condition) !== conditionFilter) return false;
       if (unitFilter !== "all" && norm(a.unit) !== unitFilter) return false;
       if (assetTypeFilter !== "all" && norm(a.category) !== assetTypeFilter) return false;
       return true;
     });
-  }, [rows, query, statusFilter, conditionFilter, unitFilter, assetTypeFilter]);
+  }, [rows, query, statusFilter, conditionFilter, unitFilter, assetTypeFilter, sourceFilter]);
 
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
   const safePage = Math.min(page, pageCount);
   const start = (safePage - 1) * pageSize;
   const visible = filtered.slice(start, start + pageSize);
   const { pages } = pageWindow(safePage, pageCount);
+
+  const selectedRow = rows.find((r) => r.id === selectedId) ?? null;
+  const selectedAssignable =
+    selectedRow !== null &&
+    (selectedRow.status ?? "available").trim().toLowerCase() === "available" &&
+    !(typeof selectedRow.quantity === "number" && selectedRow.quantity <= 0) &&
+    selectedRow.assigned_to == null;
+
+  if (loading) {
+    return <AssetsLoading />;
+  }
 
   return (
     <section className={styles.section}>
@@ -197,13 +239,43 @@ export default function SuperAdminAssetsPage() {
           </p>
         </div>
         <div className={styles.actions}>
-          <AddAssetDialog categories={categories} onSuccess={reload} />
-          <ImportAssetsDialog onSuccess={reload} />
+          <Button
+            type="button"
+            disabled={selectedId !== null && !selectedAssignable}
+            title={
+              selectedId !== null && !selectedAssignable
+                ? "Selected asset is already assigned or out of stock"
+                : "Issue the selected asset"
+            }
+            onClick={() => {
+              setPresetAssetId(selectedId);
+              setIssuanceOpen(true);
+            }}
+            className="h-8 gap-2 rounded-[4px] px-3.5 text-xs font-semibold"
+          >
+            Issue / Assign
+          </Button>
+          <AddAssetDialog
+            categories={categories}
+            onSuccess={() => refresh()}
+            triggerClassName="h-8 gap-2 rounded-[4px] px-3.5 text-xs font-semibold"
+          />
+          <ImportAssetsDialog
+            onSuccess={() => refresh()}
+            triggerClassName="h-8 gap-2 rounded-[4px] px-3.5 text-xs font-semibold"
+          />
+          <AddColumnDialog
+            onSuccess={() => {
+              refreshCustomFields();
+              refresh();
+            }}
+            triggerClassName="h-8 gap-2 rounded-[4px] px-3.5 text-xs font-semibold"
+          />
         </div>
       </div>
 
       <Card className={styles.panel}>
-        <div className={airStyles.controls}>
+        <div className={assetStyles.controlsRight}>
           <div className={assetStyles.topRow}>
             <div className={assetStyles.searchWrap}>
               <Search className={assetStyles.searchIcon} size={16} />
@@ -218,6 +290,29 @@ export default function SuperAdminAssetsPage() {
                 className={assetStyles.search}
                 aria-label="Search assets"
               />
+            </div>
+            <div className={assetStyles.filterGroup}>
+              <label className={assetStyles.filterLabel} htmlFor="admin-assets-filter-source">
+                Type
+              </label>
+              <Select
+                value={sourceFilter}
+                onValueChange={(v) => {
+                  setSourceFilter(v);
+                  resetPage();
+                }}
+              >
+                <SelectTrigger id="admin-assets-filter-source" size="sm" className={assetStyles.filterSelect}>
+                  <SelectValue placeholder="All" />
+                </SelectTrigger>
+                <SelectContent>
+                  {SOURCE_FILTERS.map((f) => (
+                    <SelectItem key={f.value} value={f.value}>
+                      {f.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div className={assetStyles.filterGroup}>
               <label className={assetStyles.filterLabel} htmlFor="admin-assets-filter-status">
@@ -323,6 +418,7 @@ export default function SuperAdminAssetsPage() {
                   onClick={() => {
                     setQuery("");
                     setStatusFilter("all");
+                    setSourceFilter("all");
                     setConditionFilter("all");
                     setUnitFilter("all");
                     setAssetTypeFilter("all");
@@ -335,11 +431,28 @@ export default function SuperAdminAssetsPage() {
           </div>
         </div>
 
-        {loading ? (
-          <div className={styles.emptyState}>
-            <p className={styles.panelSub}>Loading assets…</p>
-          </div>
-        ) : filtered.length === 0 ? (
+        <div className={assetStyles.legend} aria-label="Row actions legend">
+          <span className={assetStyles.legendItem}>
+            <span className={assetStyles.legendIcon} aria-hidden="true">
+              <Eye size={14} />
+            </span>
+            View details
+          </span>
+          <span className={assetStyles.legendItem}>
+            <span className={assetStyles.legendIcon} aria-hidden="true">
+              <Send size={14} />
+            </span>
+            Issue asset
+          </span>
+          <span className={assetStyles.legendItem}>
+            <span className={assetStyles.legendIcon} aria-hidden="true">
+              <QrCode size={14} />
+            </span>
+            Show QR code
+          </span>
+        </div>
+
+        {filtered.length === 0 ? (
           <div className={styles.emptyState}>
             <p className={styles.panelSub}>
               {rows.length === 0
@@ -388,6 +501,7 @@ export default function SuperAdminAssetsPage() {
                     <th className={assetStyles.colBase}>DV Number</th>
                     <th className={assetStyles.colBase}>Date Received</th>
                     <th className={assetStyles.colBase}>Created</th>
+                    <CustomHeaderCells fields={customFields} />
                   </tr>
                 </thead>
                 <tbody>
@@ -399,11 +513,26 @@ export default function SuperAdminAssetsPage() {
                     const outOfStock =
                       typeof a.quantity === "number" && a.quantity <= 0;
                     const alreadyAssigned = a.assigned_to != null;
+                    const assignable =
+                      statusKey === "available" &&
+                      !outOfStock &&
+                      !alreadyAssigned;
+                    const issueBlockReason = alreadyAssigned
+                      ? "Already assigned"
+                      : outOfStock
+                        ? "Out of stock"
+                        : statusKey !== "available"
+                          ? label(a.status)
+                          : null;
                     return (
                       <tr
                         key={a.id}
                         className={
-                          isSelected ? assetStyles.selectedRow : assetStyles.selectableRow
+                          isSelected
+                            ? assetStyles.selectedRow
+                            : alreadyAssigned
+                              ? assetStyles.issuedRow
+                              : assetStyles.selectableRow
                         }
                         data-selected={isSelected ? "true" : undefined}
                         aria-selected={isSelected}
@@ -427,17 +556,38 @@ export default function SuperAdminAssetsPage() {
                           <span className="inline-flex items-center gap-1.5">
                             <Link
                               href={`/super-admin/assets/${a.id}`}
+                              className={assetStyles.iconBtn}
+                              title="See details"
+                              aria-label={`See details of ${a.article ?? a.account_code ?? "asset"}`}
                             >
-                              <Button type="button" variant="outline" size="sm">
-                                View Details
-                              </Button>
+                              <Eye size={16} />
                             </Link>
-                            <span
-                              className={styles.status}
-                              data-tone={alreadyAssigned ? "warn" : "ok"}
+                            <button
+                              type="button"
+                              className={assetStyles.iconBtn}
+                              disabled={!assignable}
+                              title={
+                                issueBlockReason
+                                  ? `Cannot issue — ${issueBlockReason.toLowerCase()}`
+                                  : "Issue this asset"
+                              }
+                              aria-label="Issue this asset"
+                              onClick={() => {
+                                setPresetAssetId(a.id);
+                                setIssuanceOpen(true);
+                              }}
                             >
-                              {alreadyAssigned ? "Issued" : "Not issued"}
-                            </span>
+                              <Send size={16} />
+                            </button>
+                            <button
+                              type="button"
+                              className={assetStyles.iconBtn}
+                              title="Show QR code"
+                              aria-label={`Show QR code of ${a.article ?? a.account_code ?? "asset"}`}
+                              onClick={() => setQrRow(a)}
+                            >
+                              <QrCode size={16} />
+                            </button>
                           </span>
                         </td>
                         <td className={assetStyles.colBase}>
@@ -500,6 +650,7 @@ export default function SuperAdminAssetsPage() {
                         <td className={assetStyles.colBase}>{a.dv_number ?? "—"}</td>
                         <td className={assetStyles.colBase}>{fmtDate(a.date_received)}</td>
                         <td className={assetStyles.colBase}>{fmtDate(a.created_at)}</td>
+                        <CustomRowCells row={a} fields={customFields} onSaved={() => refresh()} />
                       </tr>
                     );
                   })}
@@ -575,6 +726,67 @@ export default function SuperAdminAssetsPage() {
           </>
         )}
       </Card>
+
+      <Dialog
+        open={qrRow !== null}
+        onOpenChange={(v) => {
+          if (!v) setQrRow(null);
+        }}
+      >
+        <DialogContent className="bg-white sm:max-w-xs dark:bg-white">
+          <DialogHeader>
+            <DialogTitle>QR code</DialogTitle>
+            <DialogDescription>
+              {qrRow
+                ? `${qrRow.source === "stock" ? "Stock" : "Asset"} — ${qrRow.article ?? qrRow.account_code ?? "—"}`
+                : "—"}
+            </DialogDescription>
+          </DialogHeader>
+          <div className={assetStyles.qrOverlayBody}>
+            {qrRow?.qr_data_url ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={qrRow.qr_data_url}
+                alt={`QR code for ${qrRow.qr_code ?? qrRow.account_code ?? "asset"}`}
+                className={assetStyles.qrOverlayImg}
+              />
+            ) : (
+              <span className={assetStyles.qrPlaceholder}>No QR code</span>
+            )}
+            <p className={assetStyles.qrValue}>
+              {qrRow?.qr_code ?? qrRow?.account_code ?? "—"}
+            </p>
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setQrRow(null)}
+              className="h-8 rounded-[4px] px-3.5 text-xs font-semibold"
+            >
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {issuanceOpen ? (
+        <IssuanceEvaluateDialog
+          key={presetAssetId ?? "direct"}
+          open={issuanceOpen}
+          onOpenChange={(v) => {
+            setIssuanceOpen(v);
+            if (!v) setPresetAssetId(null);
+          }}
+          mode="direct"
+          presetAssetId={presetAssetId}
+          onSuccess={() => {
+            setIssuanceOpen(false);
+            setPresetAssetId(null);
+            refresh();
+          }}
+        />
+      ) : null}
     </section>
   );
 }

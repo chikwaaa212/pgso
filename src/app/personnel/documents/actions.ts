@@ -3,22 +3,41 @@
 import prisma from '@/lib/prisma'
 import { getPersonnelScope } from '@/lib/personnel-scope'
 import { VIEWED_DOC_TYPES } from './document-types'
+import { getInspectionsList, type UnifiedInspectionRow } from '../inspections/actions'
+import { getInventoryItems, type InventoryRow } from '../inventory/actions'
+import { getAllUnifiedAssets, type UnifiedAssetRow } from '../assets/actions'
+import { getRepairs, type RepairRow } from '../repairs/actions'
+import { getParReports, getIcsReports, type IssuanceRecordRow } from '../issuances/actions'
 
 // ─── Viewed receipts ─────────────────────────────────────────────────────────
-// Tracks which document receipts have been opened so sidebar badges count
-// only unviewed documents. Keys are `${doc_type}:${doc_id}` with doc_type in
-// 'delivery' | 'inspection' | 'stock' | 'asset' | 'repair' | 'iar' | 'par' | 'ics'.
+// Tracks which document receipts each user opened so sidebar badges count
+// only THEIR unviewed documents. Keys are `${doc_type}:${doc_id}` with
+// doc_type in 'delivery' | 'inspection' | 'stock' | 'asset' | 'repair' |
+// 'iar' | 'par' | 'ics'. Views are per-viewer: one role opening a receipt
+// never clears the unread state another role sees.
 
 export async function getViewedDocKeys(): Promise<string[]> {
+  // Per-user read (raw SQL so no client regen is needed for viewer_id).
+  // Signed-out callers see nothing as viewed.
+  let viewer: string | null = null
   try {
-    const rows = await prisma.documentView.findMany({
-      select: { doc_type: true, doc_id: true },
-    })
-    return rows.map((r) => `${r.doc_type}:${r.doc_id}`)
-  } catch (e) {
-    console.error('[getViewedDocKeys]', e)
+    const scope = await getPersonnelScope()
+    if (scope.isEmpty || !scope.userId) return []
+    viewer = scope.userId
+  } catch {
     return []
   }
+  const { withScopedCache } = await import('@/lib/personnel-cache')
+  return withScopedCache('personnel:viewed-doc-keys', 30, async () => {
+    try {
+      const rows = await prisma.$queryRaw<Array<{ doc_type: string; doc_id: string }>>`
+        SELECT doc_type, doc_id::text AS doc_id FROM document_views WHERE viewer_id = ${viewer}::uuid`
+      return rows.map((r) => `${r.doc_type}:${r.doc_id}`)
+    } catch (e) {
+      console.error('[getViewedDocKeys]', e)
+      return []
+    }
+  })
 }
 
 export async function markDocumentViewed(
@@ -30,12 +49,24 @@ export async function markDocumentViewed(
     !docId?.trim()
   )
     return { error: 'Invalid document.' }
+  let viewer: string | null = null
   try {
-    await prisma.documentView.upsert({
-      where: { doc_type_doc_id: { doc_type: docType, doc_id: docId } },
-      update: {},
-      create: { doc_type: docType, doc_id: docId },
-    })
+    const scope = await getPersonnelScope()
+    if (scope.isEmpty || !scope.userId) return { error: 'You must be signed in.' }
+    viewer = scope.userId
+  } catch {
+    return { error: 'You must be signed in.' }
+  }
+  try {
+    // Per-viewer upsert (raw SQL so no client regen is needed for
+    // viewer_id) — one role's view never touches another role's state.
+    const { randomUUID } = await import('crypto')
+    await prisma.$executeRaw`
+      INSERT INTO document_views (id, doc_type, doc_id, viewer_id)
+      VALUES (${randomUUID()}::uuid, ${docType}, ${docId}::uuid, ${viewer}::uuid)
+      ON CONFLICT (doc_type, doc_id, viewer_id) DO NOTHING`
+    const { bustPersonnelCache } = await import('@/lib/personnel-cache')
+    await bustPersonnelCache()
     return { success: true }
   } catch (e) {
     console.error('[markDocumentViewed]', e)
@@ -59,6 +90,8 @@ export interface DeliveryDocumentRow {
 
 /** Every logged delivery — the same receipt record shown on Deliveries. */
 export async function getDeliveryDocuments(): Promise<DeliveryDocumentRow[]> {
+  const { withScopedCache } = await import('@/lib/personnel-cache')
+  return withScopedCache('personnel:delivery-documents', 30, async () => {
   try {
     // Own-data only for personnel; super_admin sees all.
     const scope = await getPersonnelScope()
@@ -84,6 +117,7 @@ export async function getDeliveryDocuments(): Promise<DeliveryDocumentRow[]> {
     console.error('[getDeliveryDocuments]', e)
     return []
   }
+  })
 }
 
 // ─── IAR reports (all generated / attached documentation) ───────────────────
@@ -104,8 +138,51 @@ export interface IarReportRow {
   created_at: string | null
 }
 
-/** Every IAR ever generated or attached, newest first, across all deliveries. */
+export interface DocumentsSnapshot {
+  deliveries: DeliveryDocumentRow[]
+  inspections: UnifiedInspectionRow[]
+  stocks: InventoryRow[]
+  /** QR payloads blanked — the documents tables/receipts never render them. */
+  assets: UnifiedAssetRow[]
+  repairs: RepairRow[]
+  iars: IarReportRow[]
+  pars: IssuanceRecordRow[]
+  icss: IssuanceRecordRow[]
+  viewedKeys: string[]
+}
+
+/**
+ * Single round-trip for the documents page (all 8 tabs + viewed keys),
+ * cached client-side under CLIENT_CACHE_KEYS.documents like the
+ * dashboard / deliveries / inspections / stocks / assets pages.
+ */
+export async function getDocumentsSnapshot(): Promise<DocumentsSnapshot> {
+  const [d, i, s, a, rep, r, p, c, v] = await Promise.all([
+    getDeliveryDocuments(),
+    getInspectionsList(),
+    getInventoryItems(),
+    getAllUnifiedAssets(),
+    getRepairs(),
+    getAllIarReports(),
+    getParReports(),
+    getIcsReports(),
+    getViewedDocKeys(),
+  ])
+  return {
+    deliveries: d,
+    inspections: i,
+    stocks: s,
+    assets: a.map((row) => ({ ...row, qr_data_url: '' })),
+    repairs: rep,
+    iars: r,
+    pars: p,
+    icss: c,
+    viewedKeys: v,
+  }
+}
 export async function getAllIarReports(): Promise<IarReportRow[]> {
+  const { withScopedCache } = await import('@/lib/personnel-cache')
+  return withScopedCache('personnel:iar-reports', 30, async () => {
   try {
     // Own-data only for personnel; super_admin sees all.
     const scope = await getPersonnelScope()
@@ -156,4 +233,5 @@ export async function getAllIarReports(): Promise<IarReportRow[]> {
     console.error('[getAllIarReports]', e)
     return []
   }
+  })
 }

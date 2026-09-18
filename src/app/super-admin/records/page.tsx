@@ -1,15 +1,25 @@
-import Link from "next/link";
+"use client";
+
+import { useMemo } from "react";
 import { Card } from "@/components/ui/card";
 import { label } from "@/lib/labels";
 import { getRecordCounts, getRecentAssets } from "./actions";
-import actionStyles from "@/app/personnel/dashboard/page.module.css";
+import { browseAsset } from "../browse/actions";
+import type { UnifiedAssetRow } from "@/app/personnel/assets/actions";
 import {
   getLowStockItems,
   getRecentIssuances,
 } from "@/app/personnel/dashboard/actions";
+import { useCachedAction } from "@/hooks/use-cached-action";
+import { useReceipt } from "@/hooks/use-receipt";
+import { CLIENT_CACHE_KEYS } from "@/lib/client-cache";
+import { ReceiptLoading } from "@/components/personnel/ReceiptLoading";
+import { ReceiptOverlay } from "@/app/personnel/documents/receipt-overlay";
+import { AssetReceipt } from "@/app/personnel/assets/asset-receipt";
+import receipt from "@/app/personnel/inspections/components/receipt.module.css";
+import RecordsLoading from "./loading";
+import actionStyles from "@/app/personnel/dashboard/page.module.css";
 import styles from "./page.module.css";
-
-export const dynamic = "force-dynamic";
 
 function fmtDate(iso: string | null) {
   if (!iso) return "—";
@@ -23,21 +33,50 @@ function fmtDate(iso: string | null) {
   });
 }
 
-export default async function SuperAdminRecordsPage() {
-  const [counts, assets, lowStock, issuances] = await Promise.all([
-    getRecordCounts(),
-    getRecentAssets(10),
-    getLowStockItems(8),
-    getRecentIssuances(8),
-  ]);
+export default function SuperAdminRecordsPage() {
+  // Cached snapshot (counts + 3 recent lists): back-navigation paints
+  // instantly from memory / sessionStorage and only revalidates silently
+  // when stale (60s, matching the server caches) — same SWR pattern as
+  // the other admin pages.
+  const { data: snapshot, loading } = useCachedAction(
+    CLIENT_CACHE_KEYS.adminRecords,
+    () =>
+      Promise.all([
+        getRecordCounts(),
+        getRecentAssets(10),
+        getLowStockItems(8),
+        getRecentIssuances(8),
+      ]).then(([counts, assets, lowStock, issuances]) => ({
+        counts,
+        assets,
+        lowStock,
+        issuances,
+      })),
+    { staleTime: 60_000 }
+  );
+  const counts = snapshot?.counts;
+  const assets = useMemo(() => snapshot?.assets ?? [], [snapshot]);
+  const lowStock = useMemo(() => snapshot?.lowStock ?? [], [snapshot]);
+  const issuances = useMemo(() => snapshot?.issuances ?? [], [snapshot]);
+
+  // Overlay asset viewer with per-record client caching (same shared
+  // scheme as the other admin pages — admin-prefixed keys keep per-role
+  // caches separate): viewing a record opens a modal, not a new page.
+  const viewer = useReceipt<UnifiedAssetRow | null>();
+  const openAsset = (id: string) =>
+    viewer.open(id, `admin-asset:${id}`, () => browseAsset(id));
+
+  if (loading) {
+    return <RecordsLoading />;
+  }
 
   const cards = [
-    { label: "Assets", value: counts.assets },
-    { label: "Stock SKUs", value: counts.stockSkus },
-    { label: "IAR records", value: counts.iarRecords },
-    { label: "PAR / ICS", value: counts.issuances },
-    { label: "Deliveries", value: counts.deliveries },
-    { label: "Inspections", value: counts.inspections },
+    { label: "Assets", value: counts?.assets ?? 0 },
+    { label: "Stock SKUs", value: counts?.stockSkus ?? 0 },
+    { label: "IAR records", value: counts?.iarRecords ?? 0 },
+    { label: "PAR / ICS", value: counts?.issuances ?? 0 },
+    { label: "Deliveries", value: counts?.deliveries ?? 0 },
+    { label: "Inspections", value: counts?.inspections ?? 0 },
   ];
 
   return (
@@ -92,13 +131,14 @@ export default async function SuperAdminRecordsPage() {
                   </td>
                   <td>{a.location ?? "—"}</td>
                   <td>
-                    <Link
-                      href={`/super-admin/assets/${a.id}`}
-                      className={actionStyles.inspectLinkSecondary}
+                    <button
+                      type="button"
+                      className={`${actionStyles.inspectLinkSecondary} cursor-pointer`}
                       aria-label={`View details for asset ${a.article ?? a.id.slice(0, 8).toUpperCase()}`}
+                      onClick={() => openAsset(a.id)}
                     >
                       View Details
-                    </Link>
+                    </button>
                   </td>
                 </tr>
               ))}
@@ -181,6 +221,26 @@ export default async function SuperAdminRecordsPage() {
           </table>
         </div>
       </Card>
+
+      <ReceiptOverlay
+        open={viewer.selectedId !== null}
+        title="Asset receipt"
+        onClose={viewer.close}
+      >
+        {viewer.docLoading ? (
+          <ReceiptLoading label="Loading asset…" />
+        ) : !viewer.doc ? (
+          <div className={styles.emptyState}>
+            <p className={styles.panelSub}>
+              This record is no longer available.
+            </p>
+          </div>
+        ) : (
+          <div className={receipt.receiptStack} style={{ maxWidth: "none" }}>
+            <AssetReceipt asset={viewer.doc} />
+          </div>
+        )}
+      </ReceiptOverlay>
     </section>
   );
 }

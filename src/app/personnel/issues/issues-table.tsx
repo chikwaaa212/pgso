@@ -145,8 +145,8 @@ export function IssuesTable({
   return (
     <div>
       <div className={airStyles.controls}>
-        <div className={assetStyles.topRow}>
-          <div className={assetStyles.searchWrap}>
+        <div className={assetStyles.topRow} style={{ justifyContent: "flex-end" }}>
+          <div className={assetStyles.searchWrap} style={{ flex: "0 1 22rem" }}>
             <Search className={assetStyles.searchIcon} size={16} />
             <Input
               type="search"
@@ -157,7 +157,7 @@ export function IssuesTable({
               aria-label="Search issued items"
             />
           </div>
-          <div className={assetStyles.filterGroup}>
+          <div className={assetStyles.filterGroup} style={{ flex: "0 0 10rem" }}>
             <label className={assetStyles.filterLabel} htmlFor="issues-filter-doc">
               Doc
             </label>
@@ -172,7 +172,7 @@ export function IssuesTable({
               </SelectContent>
             </Select>
           </div>
-          <div className={assetStyles.filterGroup}>
+          <div className={assetStyles.filterGroup} style={{ flex: "0 0 10rem" }}>
             <label className={assetStyles.filterLabel} htmlFor="issues-filter-type">
               Asset type
             </label>
@@ -195,7 +195,7 @@ export function IssuesTable({
               type="button"
               variant="ghost"
               size="sm"
-              className={assetStyles.filterBtn}
+              className={`${assetStyles.filterBtn} h-8 rounded-[4px] px-3.5 text-xs font-semibold`}
               onClick={() => {
                 setQuery("");
                 setDocFilter("all");
@@ -264,22 +264,12 @@ export function IssuesTable({
                         className="inline-flex items-center gap-2"
                         style={{ whiteSpace: "nowrap", flexWrap: "nowrap" }}
                       >
-                        {r.qr_data_url ? (
-                          <span className={qr.thumb}>
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img
-                              src={r.qr_data_url}
-                              alt={`QR record for ${r.doc_no ?? r.doc_type} issued to ${r.employee_name}`}
-                            />
-                          </span>
-                        ) : (
-                          <span className={styles.panelSub}>No QR</span>
-                        )}
                         <Button
                           type="button"
                           variant="outline"
                           size="sm"
                           onClick={() => openRecord(r)}
+                          className="h-8 rounded-[4px] px-3.5 text-xs font-semibold"
                         >
                           View QR
                         </Button>

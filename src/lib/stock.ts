@@ -31,6 +31,7 @@ export async function stockInspectionItems(
       delivery: {
         select: {
           account_code: true,
+          delivery_kind: true,
         items: {
             select: {
               id: true,
@@ -70,6 +71,7 @@ export async function stockInspectionItems(
   let added = 0;
   let costsFixed = 0;
   const accountCode = inspection.delivery.account_code?.trim() || null;
+  const deliveryKind = inspection.delivery.delivery_kind?.trim() || null;
 
   await prisma.$transaction(async (tx) => {
     for (const item of inspection.delivery.items) {
@@ -84,7 +86,7 @@ export async function stockInspectionItems(
             item_name: { equals: name, mode: "insensitive" },
             unit: item.unit,
           },
-          select: { id: true, account_code: true, unit_cost: true },
+          select: { id: true, account_code: true, delivery_kind: true, unit_cost: true },
         });
 
         if (existing) {
@@ -96,6 +98,10 @@ export async function stockInspectionItems(
           // fill the delivery account code when the row has none yet
           if (!existing.account_code && accountCode) {
             patch.account_code = accountCode;
+          }
+          // fill the delivery kind (stocks/assets) when the row has none yet
+          if (!existing.delivery_kind && deliveryKind) {
+            patch.delivery_kind = deliveryKind;
           }
           // Backfill (or refresh to the latest delivery) cost even when
           // nothing new is added — otherwise rows stocked before the
@@ -122,6 +128,7 @@ export async function stockInspectionItems(
               unit: item.unit,
               quantity: addable,
               account_code: accountCode,
+              delivery_kind: deliveryKind,
               ...(item.unit_cost != null
                 ? { unit_cost: item.unit_cost }
                 : {}),

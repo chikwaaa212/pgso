@@ -1,6 +1,15 @@
 'use server'
 
-import { revalidatePath } from 'next/cache'
+import { revalidatePath as nextRevalidatePath } from 'next/cache'
+
+// Every Next.js revalidation also busts the Upstash personnel cache so
+// Redis never serves stale lists after a write (fire-and-forget).
+function revalidatePath(path: string) {
+  nextRevalidatePath(path)
+  void import('@/lib/personnel-cache')
+    .then((m) => m.bustPersonnelCache())
+    .catch(() => {})
+}
 import { createClient } from '@/lib/supabase/server'
 import prisma from '@/lib/prisma'
 import { writeAuditLog } from '@/lib/audit'
@@ -36,6 +45,8 @@ export interface RequestRow {
   recipient_name: string | null
   asset_id: string | null
   asset_label: string | null
+  /** Account code of the requested item(s), distinct + joined. */
+  account_code: string | null
   /** Structured line items (new) — legacy rows synthesize one from asset_id. */
   lines: RequestLine[]
   item_count: number
@@ -55,13 +66,52 @@ function assetLabel(a: {
   return bits.length > 0 ? bits.join(' — ').slice(0, 80) : 'Asset'
 }
 
+/** Label-only asset map (id → display label + account code) without the cost of
+ * getAllUnifiedAssets(), which generates a QR data URL per row. */
+async function getAssetLabelMap(): Promise<
+  Map<string, { label: string; account_code: string | null }>
+> {
+  const [assetRows, stockRows] = await Promise.all([
+    prisma.asset.findMany({
+      select: {
+        id: true,
+        qr_code: true,
+        account_code: true,
+        article: true,
+        description: true,
+      },
+    }),
+    prisma.inventoryItem.findMany({
+      select: { id: true, item_name: true, account_code: true },
+    }),
+  ])
+  const labels = new Map<string, { label: string; account_code: string | null }>()
+  for (const a of assetRows)
+    labels.set(a.id, { label: assetLabel(a), account_code: a.account_code })
+  for (const s of stockRows) {
+    labels.set(s.id, {
+      label: assetLabel({
+        qr_code: null,
+        account_code: s.account_code,
+        article: s.item_name,
+        description: null,
+      }),
+      account_code: s.account_code,
+    })
+  }
+  return labels
+}
+
 /** Every employee request, newest first, with employee + asset labels.
  * Pass `{ forRecipient: true }` and personnel only see requests sent to them
- * (plus legacy rows filed before recipients existed). Fails closed: without
- * an authenticated user it returns nothing instead of the whole queue. */
+ * (strict `recipient_id` match — legacy recipient-less rows are excluded).
+ * Fails closed: without an authenticated user it returns nothing instead of
+ * the whole queue. */
 export async function getRequests(filter?: {
   forRecipient?: boolean
 }): Promise<RequestRow[]> {
+  const { withScopedCache } = await import('@/lib/personnel-cache')
+  return withScopedCache('personnel:requests', 30, async () => {
   try {
     let recipientId: string | null = null
     if (filter?.forRecipient) {
@@ -78,22 +128,25 @@ export async function getRequests(filter?: {
       // the unfiltered queue and leak other personnel's requests.
       if (recipientId === null) return []
     }
-    const [requests, profiles, assets] = await Promise.all([
+    // Label-only lookup: getRequests only needs asset labels, so fetch two
+    // slim selects instead of getAllUnifiedAssets() — the full build
+    // generates a QR data URL per asset/stock row, which dominated this
+    // query's cost while rendering zero QR codes on this page.
+    const [requests, profiles, labels] = await Promise.all([
       prisma.request.findMany({
         where:
           recipientId !== null
-            ? { OR: [{ recipient_id: recipientId }, { recipient_id: null }] }
+            ? { recipient_id: recipientId }
             : undefined,
         orderBy: { date_requested: 'desc' },
       }),
       prisma.profile.findMany({
         select: { id: true, full_name: true },
       }),
-      getAllUnifiedAssets(),
+      getAssetLabelMap(),
     ])
 
     const names = new Map(profiles.map((p) => [p.id, p.full_name ?? '—']))
-    const labels = new Map(assets.map((a) => [a.id, assetLabel(a)]))
     const lineMap = await listRequestLines(requests.map((r) => r.id))
 
     return await Promise.all(requests.map(async (r) => {
@@ -120,7 +173,7 @@ export async function getRequests(filter?: {
           : lines.length === 1
             ? lineLabel(lines[0], labels)
             : r.asset_id
-              ? (labels.get(r.asset_id) ?? '—')
+              ? (labels.get(r.asset_id)?.label ?? '—')
               : null
       return {
         id: r.id,
@@ -135,6 +188,7 @@ export async function getRequests(filter?: {
         recipient_name: r.recipient_id ? (names.get(r.recipient_id) ?? 'Unknown') : null,
         asset_id: r.asset_id,
         asset_label: label,
+        account_code: lineAccountCodes(lines, labels, r.asset_id),
         lines,
         item_count: lines.length,
       }
@@ -143,19 +197,56 @@ export async function getRequests(filter?: {
     console.error('[getRequests]', e)
     return []
   }
+  }, { forRecipient: filter?.forRecipient ?? false })
+}
+
+export interface RequestsSnapshot {
+  rows: RequestRow[]
+}
+
+/**
+ * Single round-trip for the personnel requests page (own queue),
+ * cached client-side under CLIENT_CACHE_KEYS.requests like the
+ * dashboard / deliveries / inspections / stocks / assets / documents /
+ * issues pages.
+ */
+export async function getRequestsSnapshot(): Promise<RequestsSnapshot> {
+  const rows = await getRequests({ forRecipient: true })
+  return { rows }
 }
 
 /** Display label for one request line. */
 function lineLabel(
   line: RequestLine,
-  labels: Map<string, string>
+  labels: Map<string, { label: string; account_code: string | null }>
 ): string {
   if (line.asset_id) {
-    const saved = labels.get(line.asset_id)
+    const saved = labels.get(line.asset_id)?.label
     if (saved) return line.quantity > 1 ? `${saved} ×${line.quantity}` : saved
   }
   const text = line.description.trim().slice(0, 80) || 'Item'
   return line.quantity > 1 ? `${text} ×${line.quantity}` : text
+}
+
+/** Distinct account codes for a request's lines + legacy asset ref. */
+function lineAccountCodes(
+  lines: RequestLine[],
+  labels: Map<string, { label: string; account_code: string | null }>,
+  legacyAssetId: string | null
+): string | null {
+  const codes = new Set<string>()
+  for (const l of lines) {
+    if (l.asset_id) {
+      const code = labels.get(l.asset_id)?.account_code?.trim()
+      if (code) codes.add(code)
+    }
+  }
+  if (legacyAssetId) {
+    const code = labels.get(legacyAssetId)?.account_code?.trim()
+    if (code) codes.add(code)
+  }
+  if (codes.size === 0) return null
+  return [...codes].join(', ')
 }
 
 interface RequestItemDbRow {
@@ -260,6 +351,8 @@ export async function getRequestFormOptions(): Promise<{
   employees: EmployeeOption[]
   assets: AssetOption[]
 }> {
+  const { withCache, cacheKey } = await import('@/lib/personnel-cache')
+  return withCache(cacheKey('personnel:request-form-options'), 60, async () => {
   try {
     const [profiles, assets] = await Promise.all([
       // Only employees can file requests — personnel cannot request.
@@ -297,6 +390,7 @@ export async function getRequestFormOptions(): Promise<{
     console.error('[getRequestFormOptions]', e)
     return { employees: [], assets: [] }
   }
+  })
 }
 
 // ─── Create ──────────────────────────────────────────────────────────────────
@@ -637,6 +731,11 @@ export async function createRequest(
     // best-effort only
   }
 
+  // Await the Redis bust BEFORE reporting success: revalidatePath() below
+  // only fires it off, and the client's immediate refetch would otherwise
+  // win the race, serve pre-write rows, and re-cache them as fresh.
+  const { bustPersonnelCache } = await import('@/lib/personnel-cache')
+  await bustPersonnelCache()
   revalidatePath('/personnel/requests')
   return { success: true }
 }
@@ -736,6 +835,9 @@ export async function createStockReplenishment(
       // best-effort only
     }
 
+    // Await the Redis bust BEFORE reporting success (see createRequest).
+    const { bustPersonnelCache: bustStockCache } = await import('@/lib/personnel-cache')
+    await bustStockCache()
     revalidatePath('/personnel/requests')
     revalidatePath('/personnel/inventory')
     revalidatePath('/super-admin/requests')
@@ -915,12 +1017,16 @@ export async function setRequestStatus(
         ])
         if (asset || stock) {
           const repairDesc = parseRepairDescription(current.description)
-          // created_by = approver so the auto ticket shows under their own repairs.
+          // Owner = the personnel the employee sent the request TO
+          // (recipient_id), so the ticket lands in their repairs queue —
+          // not whoever happened to click Approve. Falls back to the
+          // approver only for legacy recipient-less requests.
+          const ticketOwnerId = current.recipient_id ?? actingUser?.id ?? null
           try {
             const { randomUUID } = await import('crypto')
             await prisma.$executeRaw`
               INSERT INTO repairs (id, asset_id, reported_by, repair_date, description, status, created_by)
-              VALUES (${randomUUID()}::uuid, ${current.asset_id}::uuid, ${current.employee_id}::uuid, NOW()::date, ${repairDesc}, 'pending', ${actingUser?.id ?? null}::uuid)`
+              VALUES (${randomUUID()}::uuid, ${current.asset_id}::uuid, ${current.employee_id}::uuid, NOW()::date, ${repairDesc}, 'pending', ${ticketOwnerId}::uuid)`
           } catch {
             await prisma.repair.create({
               data: {
@@ -962,6 +1068,11 @@ export async function setRequestStatus(
     // best-effort only
   }
 
+  // Await the Redis bust BEFORE reporting success (see createRequest):
+  // otherwise the client's immediate refetch wins the race and the refresh
+  // shows the pre-write status.
+  const { bustPersonnelCache: bustRequestCache } = await import('@/lib/personnel-cache')
+  await bustRequestCache()
   revalidatePath('/personnel/requests')
   revalidatePath('/personnel/repairs')
   return { success: true }
@@ -1019,12 +1130,11 @@ export async function getCompletedRequestQr(
     if ((current.status ?? 'pending') !== 'completed')
       return { error: 'QR is available only for completed requests.' }
 
-    const [profiles, assets] = await Promise.all([
+    const [profiles, labels] = await Promise.all([
       prisma.profile.findMany({ select: { id: true, full_name: true } }),
-      getAllUnifiedAssets(),
+      getAssetLabelMap(),
     ])
     const names = new Map(profiles.map((p) => [p.id, p.full_name ?? '—']))
-    const labels = new Map(assets.map((a) => [a.id, assetLabel(a)]))
     const lineMap = await listRequestLines([current.id])
     const stored = lineMap.get(current.id) ?? []
     const lines: RequestLine[] =
@@ -1047,7 +1157,7 @@ export async function getCompletedRequestQr(
         : lines.length === 1
           ? lineLabel(lines[0], labels)
           : current.asset_id
-            ? (labels.get(current.asset_id) ?? '—')
+            ? (labels.get(current.asset_id)?.label ?? '—')
             : null
 
     const employee_name = names.get(current.employee_id) ?? 'Unknown employee'

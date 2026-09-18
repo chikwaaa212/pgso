@@ -34,8 +34,14 @@ function asText(value: unknown): string | null {
 /**
  * All audit logs created by the currently signed-in user,
  * newest first. Never throws — returns [] on failure.
+ *
+ * Per-user scoped Redis cache (30s TTL, same as the deliveries list).
+ * Busted automatically by bustPersonnelCache() on any write, so the
+ * trail stays fresh without hammering the DB on every navigation.
  */
 export async function getMyLogs(): Promise<LogRow[]> {
+  const { withScopedCache } = await import('@/lib/personnel-cache')
+  return withScopedCache('personnel:logs-list', 30, async () => {
   try {
     const supabase = await createClient()
     const {
@@ -80,4 +86,5 @@ export async function getMyLogs(): Promise<LogRow[]> {
     console.error('[getMyLogs]', e)
     return []
   }
+  })
 }

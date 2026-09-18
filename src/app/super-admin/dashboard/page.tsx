@@ -7,7 +7,7 @@ import { getSuperAdminOverview } from './stats'
 import { getAnalytics } from './analytics'
 import { AnalyticsGrid } from './analytics-charts'
 import { getMonthlyOverview } from '@/app/personnel/inspections/actions'
-import { OverviewChart } from '@/app/personnel/dashboard/overview-chart'
+import { DeliveryInspectionChart } from './delivery-inspection-chart'
 import styles from './page.module.css'
 
 function fmtDateTime(iso: string | null) {
@@ -43,7 +43,7 @@ export default async function SuperAdminDashboard() {
           busiest && busiest.deliveries > 0 ? `, busiest in ${busiest.month} (${busiest.deliveries})` : ''
         }. ${
           deliveryGap > 0
-            ? `${deliveryGap} deliver${deliveryGap === 1 ? 'y still needs' : 'ies still need'} inspection — the gap between the bars is your inspection backlog.`
+            ? `${deliveryGap} deliver${deliveryGap === 1 ? 'y still needs' : 'ies still need'} inspection — the gap between the bars and the line is your inspection backlog.`
             : 'Inspections are keeping pace with receipts — no backlog building up.'
         }`
   const activeRepairs = ops.pendingRepairs + ops.inProgressRepairs
@@ -85,11 +85,7 @@ export default async function SuperAdminDashboard() {
       </div>
 
       <div className={styles.chartWrap}>
-        <OverviewChart data={monthly} />
-        <p className={styles.chartCaption}>
-          <strong>What this means: </strong>
-          {deliveryTrendInsight}
-        </p>
+        <DeliveryInspectionChart data={monthly} insight={deliveryTrendInsight} />
       </div>
 
       {analytics ? (

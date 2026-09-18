@@ -9,6 +9,7 @@ import {
   attachIarImage,
   removeIarImage,
 } from "@/app/personnel/inspections/actions";
+import { CLIENT_CACHE_KEYS, bustClientCache } from "@/lib/client-cache";
 
 const BUCKET = "iar-attachments";
 const MAX_BYTES = 8 * 1024 * 1024;
@@ -69,6 +70,12 @@ export function IarAttachButton({
         throw new Error(res.error ?? "Failed to attach the IAR image.");
       }
       if (res.stockWarning) setNotice(res.stockWarning);
+      bustClientCache([
+        CLIENT_CACHE_KEYS.inspections,
+        CLIENT_CACHE_KEYS.dashboard,
+        CLIENT_CACHE_KEYS.inventory,
+        CLIENT_CACHE_KEYS.iar,
+      ]);
       router.refresh();
       onDone?.();
     } catch (e) {
@@ -92,7 +99,7 @@ export function IarAttachButton({
       <Button
         type="button"
         variant="outline"
-        className="gap-2"
+        className="h-8 gap-2 rounded-[4px] px-3.5 text-xs font-semibold"
         disabled={busy}
         onClick={() => inputRef.current?.click()}
       >
@@ -144,6 +151,12 @@ export function IarRemoveButton({
       }
       const res = await removeIarImage(deliveryId, recordId);
       if (!res.success) throw new Error(res.error ?? "Remove failed.");
+      bustClientCache([
+        CLIENT_CACHE_KEYS.inspections,
+        CLIENT_CACHE_KEYS.dashboard,
+        CLIENT_CACHE_KEYS.inventory,
+        CLIENT_CACHE_KEYS.iar,
+      ]);
       router.refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Remove failed.");
@@ -157,7 +170,7 @@ export function IarRemoveButton({
       <Button
         type="button"
         variant="outline"
-        className="gap-2"
+        className="h-8 gap-2 rounded-[4px] px-3.5 text-xs font-semibold"
         disabled={busy}
         onClick={() => void onRemove()}
       >

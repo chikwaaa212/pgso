@@ -1,6 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
+
 import { createClient } from '@/lib/supabase/server'
 import { writeAuditLog } from '@/lib/audit'
 import { getPersonnelScope } from '@/lib/personnel-scope'
@@ -277,6 +278,8 @@ async function fetchEmployeeNames(ids: string[]): Promise<Map<string, string>> {
 
 /** Every PAR/ICS issuance, newest first. Missing table → [] (run migration 13). */
 export async function getIssuances(): Promise<IssuanceRecordRow[]> {
+  const { withScopedCache } = await import('@/lib/personnel-cache')
+  return withScopedCache('personnel:issuances', 30, async () => {
   try {
     const rows = await listIssuanceRows()
     const names = await fetchEmployeeNames([...new Set(rows.map((r) => r.employee_id))])
@@ -331,6 +334,7 @@ export async function getIssuances(): Promise<IssuanceRecordRow[]> {
     console.error('[getIssuances]', e)
     return []
   }
+  })
 }
 
 export async function getParReports(): Promise<IssuanceRecordRow[]> {
@@ -341,8 +345,20 @@ export async function getIcsReports(): Promise<IssuanceRecordRow[]> {
   return (await getIssuances()).filter((r) => r.doc_type === 'ICS')
 }
 
-/** Single issuance with live asset/stock snapshots for the sheet. */
+/** Single issuance with live asset/stock snapshots for the sheet.
+ * Per-record scoped Redis cache (30s) — overlay revisits are cache hits.
+ * Busted automatically by bustPersonnelCache() on writes. */
 export async function getIssuance(id: string): Promise<IssuanceDetail | null> {
+  const { withScopedCache } = await import('@/lib/personnel-cache')
+  return withScopedCache(
+    'personnel:issuance-detail',
+    30,
+    () => fetchIssuance(id),
+    { id }
+  )
+}
+
+async function fetchIssuance(id: string): Promise<IssuanceDetail | null> {
   try {
     const r = await getIssuanceRow(id)
     if (!r) return null
@@ -458,6 +474,8 @@ export async function getIssuanceFormOptions(): Promise<{
   employees: IssuanceEmployeeOption[]
   items: IssuanceAssetOption[]
 }> {
+  const { withCache, cacheKey } = await import('@/lib/personnel-cache')
+  return withCache(cacheKey('personnel:issuance-form-options'), 60, async () => {
   try {
     // Profiles via raw SQL: position/office (migration 14) may postdate the
     // generated client — same pattern as issuance_records / request_items.
@@ -533,6 +551,7 @@ export async function getIssuanceFormOptions(): Promise<{
     console.error('[getIssuanceFormOptions]', e)
     return { employees: [], items: [] }
   }
+  })
 }
 
 // ─── Shared evaluation input ─────────────────────────────────────────────────
@@ -828,6 +847,11 @@ async function evaluateAndAssign(
       return newId
     })
 
+    // Await the single Redis bust BEFORE revalidating/reporting success:
+    // the client's immediate refetch must not re-cache pre-write rows as
+    // fresh. revalidatePath() below is pure Next.js (no hidden extra busts).
+    const { bustPersonnelCache } = await import('@/lib/personnel-cache')
+    await bustPersonnelCache()
     revalidatePath('/personnel/documents')
     revalidatePath('/personnel/issuances')
     revalidatePath(`/personnel/issuances/${recordId}`)
@@ -1366,6 +1390,12 @@ export async function approveRequestWithIssuance(
       return id
     })
 
+    // One awaited bust BEFORE revalidating: the client's immediate refetch
+    // must not re-cache pre-write rows as fresh. Pure Next revalidations
+    // below — no per-path bust fan-out (that stormed Upstash with ~6 busts
+    // per write and stalled actions for seconds).
+    const { bustPersonnelCache } = await import('@/lib/personnel-cache')
+    await bustPersonnelCache()
     revalidatePath('/personnel/documents')
     revalidatePath('/personnel/issuances')
     revalidatePath(`/personnel/issuances/${newId}`)
@@ -1417,6 +1447,8 @@ export async function attachIssuanceScan(
     if (!existing) return { error: 'Issuance record not found.' }
     await prisma.$executeRaw`
       UPDATE issuance_records SET image_url = ${url} WHERE id = ${issuanceId}::uuid`
+    const { bustPersonnelCache } = await import('@/lib/personnel-cache')
+    await bustPersonnelCache()
     revalidatePath('/personnel/documents')
     revalidatePath(`/personnel/issuances/${issuanceId}`)
     return { success: true }
@@ -1435,6 +1467,8 @@ export async function removeIssuanceScan(
   try {
     await prisma.$executeRaw`
       UPDATE issuance_records SET image_url = NULL WHERE id = ${issuanceId}::uuid`
+    const { bustPersonnelCache } = await import('@/lib/personnel-cache')
+    await bustPersonnelCache()
     revalidatePath('/personnel/documents')
     revalidatePath(`/personnel/issuances/${issuanceId}`)
     return { success: true }

@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { DatePicker } from "@/components/ui/date-picker";
 import {
   Select,
   SelectContent,
@@ -62,6 +63,21 @@ function Field({
 
 function toIso(d: Date | undefined) {
   return d ? d.toISOString().slice(0, 10) : "";
+}
+
+/** Local YYYY-MM-DD (no UTC shift — toISOString would move the day back). */
+function formatLocalDate(d: Date): string {
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${m}-${day}`;
+}
+
+/** Parse a YYYY-MM-DD string as a local date (no UTC shift). */
+function parseLocalDate(value: string): Date | undefined {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
+  if (!match) return undefined;
+  const d = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  return Number.isNaN(d.getTime()) ? undefined : d;
 }
 
 export interface IssuanceRequestLinePrefill {
@@ -141,7 +157,8 @@ export function IssuanceEvaluateDialog({
   presetAssetId?: string | null;
   onSuccess?: () => void;
 }) {
-  const today = new Date().toISOString().slice(0, 10);
+  const now = new Date();
+  const today = formatLocalDate(now);
   const [employees, setEmployees] = useState<IssuanceEmployeeOption[]>([]);
   const [items, setItems] = useState<IssuanceAssetOption[]>([]);
   const [optionsError, setOptionsError] = useState("");
@@ -562,7 +579,12 @@ export function IssuanceEvaluateDialog({
 
           {mode === "approve-request" ? (
             <div className="sm:col-span-2">
-              <Button type="button" variant="outline" onClick={addRow}>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={addRow}
+                className="h-8 rounded-[4px] px-3.5 text-xs font-semibold"
+              >
                 Add another item
               </Button>
             </div>
@@ -702,10 +724,10 @@ export function IssuanceEvaluateDialog({
                 />
               </Field>
               <Field label="Document date" required>
-                <Input className="w-full"
-                  type="date"
-                  value={docDate}
-                  onChange={(e) => setDocDate(e.target.value)}
+                <DatePicker
+                  value={parseLocalDate(docDate)}
+                  onChange={(d) => setDocDate(d ? formatLocalDate(d) : "")}
+                  placeholder="Pick a date"
                 />
               </Field>
               {!multi ? (
@@ -823,10 +845,16 @@ export function IssuanceEvaluateDialog({
             variant="outline"
             onClick={() => onOpenChange(false)}
             disabled={saving}
+            className="h-8 rounded-[4px] px-3.5 text-xs font-semibold"
           >
             Cancel
           </Button>
-          <Button type="button" disabled={!canSubmit || saving} onClick={() => void submit()}>
+          <Button
+            type="button"
+            disabled={!canSubmit || saving}
+            onClick={() => void submit()}
+            className="h-8 gap-2 rounded-[4px] px-3.5 text-xs font-semibold"
+          >
             {saving ? (
               <>
                 <Loader2 className="h-4 w-4 animate-spin" />

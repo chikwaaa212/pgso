@@ -1,15 +1,41 @@
+"use client";
+
+import { useMemo } from "react";
 import { Card } from "@/components/ui/card";
 import { label } from "@/lib/labels";
-import { getCatalog, getUnits } from "./actions";
-import { AddCatalogForm, AddUnitForm, CatalogEdit, CatalogToggle, ImportCatalogDialog, UnitToggle } from "./master-forms";
+import { getCatalog, getDepartments, getUnits } from "./actions";
+import { AddCatalogForm, AddDepartmentForm, AddUnitForm, CatalogEdit, CatalogToggle, DepartmentToggle, ImportCatalogDialog, UnitToggle } from "./master-forms";
+import { useCachedAction } from "@/hooks/use-cached-action";
+import { CLIENT_CACHE_KEYS } from "@/lib/client-cache";
+import MasterDataLoading from "./loading";
 import styles from "./page.module.css";
 
-export const dynamic = "force-dynamic";
+export default function SuperAdminMasterDataPage() {
+  // Cached snapshot (units + catalog): back-navigation paints instantly
+  // from memory / sessionStorage and only revalidates silently when stale
+  // (60s, matching the server caches) — same SWR pattern as the other
+  // admin pages. Writes bust + revalidate through the forms.
+  const { data: snapshot, loading } = useCachedAction(
+    CLIENT_CACHE_KEYS.adminMasterData,
+    () =>
+      Promise.all([getUnits(), getCatalog(), getDepartments()]).then(([units, catalog, departments]) => ({
+        units,
+        catalog,
+        departments,
+      })),
+    { staleTime: 60_000 }
+  );
+  const units = useMemo(() => snapshot?.units ?? [], [snapshot]);
+  const catalog = useMemo(() => snapshot?.catalog ?? [], [snapshot]);
+  const departments = useMemo(() => snapshot?.departments ?? [], [snapshot]);
 
-export default async function SuperAdminMasterDataPage() {
-  const [units, catalog] = await Promise.all([getUnits(), getCatalog()]);
+  if (loading) {
+    return <MasterDataLoading />;
+  }
+
   const activeUnits = units.filter((u) => u.status === "active").length;
   const activeCatalog = catalog.filter((c) => c.status === "active").length;
+  const activeDepartments = departments.filter((d) => d.status === "active").length;
 
   return (
     <section className={styles.section}>
@@ -17,17 +43,72 @@ export default async function SuperAdminMasterDataPage() {
       <div>
         <h1 className={styles.title}>Master Data</h1>
         <p className={styles.subtitle}>
-          {activeUnits} active units · {activeCatalog} active catalog entries. Personnel
+          {activeUnits} active units · {activeCatalog} active catalog entries · {activeDepartments} active departments. Personnel
           pick from these lists — deactivation is blocked while a value is in use.
         </p>
       </div>
 
       <Card className={styles.panel}>
-        <h2 className={styles.panelTitle}>Units</h2>
-        <p className={styles.panelSub}>
-          Lowercase canonical names (e.g. piece, set, box). Abbreviations optional.
-        </p>
-        <AddUnitForm />
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "1rem", flexWrap: "nowrap" }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <h2 className={styles.panelTitle}>Departments</h2>
+            <p className={styles.panelSub}>
+              Saved to the database. Personnel select their assigned department from the account menu.
+            </p>
+          </div>
+          <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", alignItems: "center", flexShrink: 0 }}>
+            <AddDepartmentForm />
+          </div>
+        </div>
+        <div className={styles.tableWrap}>
+          <table className={styles.table}>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Description</th>
+                <th>Assigned</th>
+                <th>Status</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {departments.map((d) => (
+                <tr key={d.id}>
+                  <td>{d.name}</td>
+                  <td>{d.description ?? "—"}</td>
+                  <td>{d.usage}</td>
+                  <td>
+                    <span className={styles.status} data-tone={d.status === "active" ? "ok" : "bad"}>
+                      {label(d.status)}
+                    </span>
+                  </td>
+                  <td>
+                    <DepartmentToggle id={d.id} name={d.name} isActive={d.status === "active"} />
+                  </td>
+                </tr>
+              ))}
+              {departments.length === 0 && (
+                <tr>
+                  <td colSpan={5} className={styles.empty}>No departments yet — add the first one above.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
+      <Card className={styles.panel}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "1rem", flexWrap: "nowrap" }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <h2 className={styles.panelTitle}>Units</h2>
+            <p className={styles.panelSub}>
+              Lowercase canonical names (e.g. piece, set, box). Abbreviations optional.
+            </p>
+          </div>
+          <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", alignItems: "center", flexShrink: 0 }}>
+            <AddUnitForm />
+          </div>
+        </div>
         <div className={styles.tableWrap}>
           <table className={styles.table}>
             <thead>
@@ -78,10 +159,10 @@ export default async function SuperAdminMasterDataPage() {
             </p>
           </div>
           <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", alignItems: "center", flexShrink: 0 }}>
+            <AddCatalogForm />
             <ImportCatalogDialog />
           </div>
         </div>
-        <AddCatalogForm />
         <div className={styles.tableWrap}>
           <table className={styles.table}>
             <thead>

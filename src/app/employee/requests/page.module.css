@@ -121,6 +121,11 @@
   padding: 1rem;
   font-size: 0.875rem;
   color: var(--color-navy-500);
+  text-align: center;
+}
+
+.table td.empty {
+  text-align: center;
 }
 
 .downloadLink {

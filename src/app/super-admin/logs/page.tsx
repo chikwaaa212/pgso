@@ -1,9 +1,24 @@
-import { Card } from "@/components/ui/card";
-import { label } from "@/lib/labels";
-import { getAllLogs, getLogModules } from "./actions";
-import styles from "./page.module.css";
+"use client";
 
-export const dynamic = "force-dynamic";
+import { useMemo, useState } from "react";
+import { Card } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { label } from "@/lib/labels";
+import { getAllLogs } from "./actions";
+import { TablePager } from "@/components/personnel/TablePager";
+import { usePageSize } from "@/hooks/use-page-size";
+import { useCachedAction } from "@/hooks/use-cached-action";
+import { CLIENT_CACHE_KEYS } from "@/lib/client-cache";
+import LogsLoading from "./loading";
+import styles from "./page.module.css";
+import air from "@/app/personnel/inspections/air-section.module.css";
 
 function fmtDateTime(iso: string | null) {
   if (!iso) return "—";
@@ -19,18 +34,48 @@ function fmtDateTime(iso: string | null) {
   });
 }
 
-export default async function SuperAdminLogsPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ module?: string; q?: string }>;
-}) {
-  const params = await searchParams;
-  const activeModule = params.module ?? "all";
-  const q = params.q ?? "";
-  const [modules, rows] = await Promise.all([
-    getLogModules(),
-    getAllLogs({ module: activeModule, q }),
-  ]);
+export default function SuperAdminLogsPage() {
+  // Same client caching as the personnel logs page: back-navigation
+  // paints instantly from memory / sessionStorage and only revalidates
+  // silently when stale (30s, matching the server list cache).
+  const { data, loading } = useCachedAction(
+    CLIENT_CACHE_KEYS.adminLogs,
+    getAllLogs,
+    { staleTime: 30_000 }
+  );
+  const rows = useMemo(() => data ?? [], [data]);
+  const [query, setQuery] = useState("");
+  const [moduleFilter, setModuleFilter] = useState("all");
+  const [pageSize, setPageSize] = usePageSize("pgso:admin:logs", 10);
+  const [page, setPage] = useState(1);
+
+  const modules = useMemo(() => {
+    const set = new Set(rows.map((r) => r.module).filter(Boolean));
+    return ["all", ...[...set].sort((a, b) => a.localeCompare(b))];
+  }, [rows]);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return rows.filter((r) => {
+      if (moduleFilter !== "all" && r.module !== moduleFilter) return false;
+      if (!q) return true;
+      return [r.action, r.module, r.user_name, r.purpose ?? "", r.summary ?? ""]
+        .join(" ")
+        .toLowerCase()
+        .includes(q);
+    });
+  }, [rows, query, moduleFilter]);
+
+  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const safePage = Math.min(Math.max(1, page), pageCount);
+  const visible = filtered.slice(
+    (safePage - 1) * pageSize,
+    (safePage - 1) * pageSize + pageSize
+  );
+
+  if (loading) {
+    return <LogsLoading />;
+  }
 
   return (
     <section className={styles.section}>
@@ -38,63 +83,44 @@ export default async function SuperAdminLogsPage({
       <div>
         <h1 className={styles.title}>System Logs</h1>
         <p className={styles.subtitle}>
-          {rows.length} {rows.length === 1 ? "entry" : "entries"} across all
-          users — newest first.
+          {filtered.length} of {rows.length}{" "}
+          {rows.length === 1 ? "entry" : "entries"} across all users — newest
+          first.
         </p>
       </div>
 
       <Card className={styles.panel}>
-        <form
-          method="get"
-          style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", marginBottom: "1rem" }}
-        >
-          <select
-            name="module"
-            defaultValue={activeModule}
-            aria-label="Filter by module"
-            style={{
-              borderRadius: "0.375rem",
-              border: "1px solid var(--color-navy-300)",
-              padding: "0.5rem 0.75rem",
-              fontSize: "0.8125rem",
+        <div className={air.controls}>
+          <Input
+            type="search"
+            value={query}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              setPage(1);
             }}
-          >
-            <option value="all">All modules</option>
-            {modules.map((m) => (
-              <option key={m} value={m}>
-                {label(m)}
-              </option>
-            ))}
-          </select>
-          <input
-            name="q"
-            defaultValue={q}
-            placeholder="Search action or module…"
+            placeholder="Search action, user, module…"
+            className={air.search}
             aria-label="Search logs"
-            style={{
-              borderRadius: "0.375rem",
-              border: "1px solid var(--color-navy-300)",
-              padding: "0.5rem 0.75rem",
-              fontSize: "0.8125rem",
-              minWidth: "12rem",
-            }}
           />
-          <button
-            type="submit"
-            style={{
-              borderRadius: "0.375rem",
-              border: "1px solid var(--color-navy-600)",
-              background: "var(--color-navy-900)",
-              color: "#fff",
-              padding: "0.5rem 1rem",
-              fontSize: "0.8125rem",
-              fontWeight: 600,
-              cursor: "pointer",
+          <Select
+            value={moduleFilter}
+            onValueChange={(v) => {
+              setModuleFilter(v);
+              setPage(1);
             }}
           >
-            Filter
-          </button>
-        </form>
+            <SelectTrigger className="w-44" aria-label="Filter by module">
+              <SelectValue placeholder="Module: All" />
+            </SelectTrigger>
+            <SelectContent>
+              {modules.map((m) => (
+                <SelectItem key={m} value={m}>
+                  {m === "all" ? "Module: All" : label(m)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
 
         <div className={styles.tableWrap}>
           <table className={styles.table}>
@@ -108,7 +134,7 @@ export default async function SuperAdminLogsPage({
               </tr>
             </thead>
             <tbody>
-              {rows.map((r) => (
+              {visible.map((r) => (
                 <tr key={r.id}>
                   <td>{fmtDateTime(r.created_at)}</td>
                   <td>{r.user_name}</td>
@@ -123,7 +149,7 @@ export default async function SuperAdminLogsPage({
                   </td>
                 </tr>
               ))}
-              {rows.length === 0 && (
+              {filtered.length === 0 && (
                 <tr>
                   <td colSpan={5} className={styles.empty}>
                     No log entries match this filter.
@@ -133,6 +159,16 @@ export default async function SuperAdminLogsPage({
             </tbody>
           </table>
         </div>
+        {filtered.length > 0 ? (
+          <TablePager
+            id="admin-logs"
+            total={filtered.length}
+            pageSize={pageSize}
+            page={safePage}
+            onPageSizeChange={setPageSize}
+            onPageChange={setPage}
+          />
+        ) : null}
       </Card>
     </section>
   );

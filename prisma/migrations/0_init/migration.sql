@@ -145,4 +145,3 @@ CREATE TABLE "idempotency_keys" (
 
 CREATE UNIQUE INDEX "assets_property_number_key" ON "assets"("property_number");
 CREATE UNIQUE INDEX "assets_qr_code_key" ON "assets"("qr_code");
-CREATE UNIQUE INDEX "documents_reference_number_key" ON "documents"("reference_number");

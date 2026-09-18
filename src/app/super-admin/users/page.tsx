@@ -1,11 +1,18 @@
+"use client";
+
 import Link from "next/link";
+import { useMemo, useState } from "react";
 import { Card } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { label } from "@/lib/labels";
 import { getAllUsers, getPendingEmployees, getUserCounts } from "./actions";
 import { ActiveToggle, PendingRowActions } from "./user-actions";
+import { TablePager } from "@/components/personnel/TablePager";
+import { usePageSize } from "@/hooks/use-page-size";
+import { useCachedAction } from "@/hooks/use-cached-action";
+import { CLIENT_CACHE_KEYS } from "@/lib/client-cache";
+import UsersLoading from "./loading";
 import styles from "./page.module.css";
-
-export const dynamic = "force-dynamic";
 
 function fmtDate(iso: string | null) {
   if (!iso) return "—";
@@ -31,14 +38,55 @@ function statusTone(status: string) {
   return "bad";
 }
 
-export default async function SuperAdminUsersPage() {
-  const [pending, users, counts] = await Promise.all([
-    getPendingEmployees(),
-    getAllUsers(),
-    getUserCounts(),
-  ]);
+export default function SuperAdminUsersPage() {
+  // Cached snapshot (pending + roster + counts): back-navigation paints
+  // instantly from memory / sessionStorage and only revalidates silently
+  // when stale (30s, matching the server caches) — same SWR pattern as
+  // the other admin pages.
+  const { data: snapshot, loading, refresh } = useCachedAction(
+    CLIENT_CACHE_KEYS.adminUsers,
+    () =>
+      Promise.all([getPendingEmployees(), getAllUsers(), getUserCounts()]).then(
+        ([pending, users, counts]) => ({ pending, users, counts })
+      ),
+    { staleTime: 30_000 }
+  );
+  const pending = useMemo(() => snapshot?.pending ?? [], [snapshot]);
+  const users = useMemo(() => snapshot?.users ?? [], [snapshot]);
+  const counts = snapshot?.counts ?? { pending: 0, personnel: 0, employees: 0 };
+  const [query, setQuery] = useState("");
+  const [pageSize, setPageSize] = usePageSize("pgso:admin:users", 10);
+  const [page, setPage] = useState(1);
+
+  if (loading) {
+    return <UsersLoading />;
+  }
 
   const roster = users.filter((u) => u.status !== "pending" || u.role !== "employee");
+  const q = query.trim().toLowerCase();
+  const filteredRoster = q === ""
+    ? roster
+      : roster.filter((u) =>
+        [
+          u.full_name ?? "",
+          u.email ?? "",
+          roleLabel(u.role),
+          u.status,
+          u.position ?? "",
+          u.office ?? "",
+          u.employee_no ?? "",
+          u.department ?? "",
+        ]
+          .join(" ")
+          .toLowerCase()
+          .includes(q)
+      );
+  const pageCount = Math.max(1, Math.ceil(filteredRoster.length / pageSize));
+  const safePage = Math.min(Math.max(1, page), pageCount);
+  const visibleRoster = filteredRoster.slice(
+    (safePage - 1) * pageSize,
+    (safePage - 1) * pageSize + pageSize
+  );
 
   return (
     <section className={styles.section}>
@@ -59,19 +107,19 @@ export default async function SuperAdminUsersPage() {
           inactive and are signed out.
         </p>
         {pending.length === 0 ? (
-          <p className={styles.empty}>No pending approvals — queue is clear.</p>
+          <p className={styles.emptyCenter}>No pending approvals — queue is clear.</p>
         ) : (
-          <div className={styles.tableWrap}>
-            <table className={styles.table}>
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Email</th>
-                  <th>Requested</th>
-                  <th>Status</th>
-                  <th>Decision</th>
-                </tr>
-              </thead>
+        <div className={`${styles.tableWrap} pgso-no-scrollbar`}>
+          <table className={styles.table}>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Email</th>
+                <th>Requested</th>
+                <th>Status</th>
+                <th>Decision</th>
+              </tr>
+            </thead>
               <tbody>
                 {pending.map((u) => (
                   <tr key={u.id}>
@@ -84,7 +132,11 @@ export default async function SuperAdminUsersPage() {
                       </span>
                     </td>
                     <td>
-                      <PendingRowActions userId={u.id} name={u.full_name ?? u.email ?? "account"} />
+                      <PendingRowActions
+                        userId={u.id}
+                        name={u.full_name ?? u.email ?? "account"}
+                        onSuccess={() => refresh()}
+                      />
                     </td>
                   </tr>
                 ))}
@@ -103,7 +155,19 @@ export default async function SuperAdminUsersPage() {
           </Link>
           . You cannot change your own account or any Super Admin here.
         </p>
-        <div className={styles.tableWrap}>
+        <div className={styles.searchRow}>
+          <Input
+            type="search"
+            value={query}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              setPage(1);
+            }}
+            placeholder="Search name, email, role, office…"
+            aria-label="Search accounts"
+          />
+        </div>
+        <div className={`${styles.tableWrap} pgso-no-scrollbar`}>
           <table className={styles.table}>
             <thead>
               <tr>
@@ -117,7 +181,7 @@ export default async function SuperAdminUsersPage() {
               </tr>
             </thead>
             <tbody>
-              {roster.map((u) => {
+              {visibleRoster.map((u) => {
                 const locked = u.role === "super_admin";
                 const isActive = u.status === "active";
                 return (
@@ -130,7 +194,7 @@ export default async function SuperAdminUsersPage() {
                         {label(u.status)}
                       </span>
                     </td>
-                    <td>{[u.position, u.office].filter(Boolean).join(" · ") || "—"}</td>
+                    <td>{[u.position, u.department, u.office].filter(Boolean).join(" · ") || "—"}</td>
                     <td>{fmtDate(u.created_at)}</td>
                     <td>
                       {locked ? (
@@ -140,6 +204,7 @@ export default async function SuperAdminUsersPage() {
                           userId={u.id}
                           name={u.full_name ?? u.email ?? "account"}
                           isActive={isActive}
+                          onSuccess={() => refresh()}
                         />
                       )}
                     </td>
@@ -149,6 +214,16 @@ export default async function SuperAdminUsersPage() {
             </tbody>
           </table>
         </div>
+        {filteredRoster.length > 0 ? (
+          <TablePager
+            id="admin-users"
+            total={filteredRoster.length}
+            pageSize={pageSize}
+            page={safePage}
+            onPageSizeChange={setPageSize}
+            onPageChange={setPage}
+          />
+        ) : null}
       </Card>
     </section>
   );

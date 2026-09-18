@@ -17,6 +17,17 @@ model Profile {
   office     String?   @db.VarChar
   created_at DateTime? @default(now()) @db.Timestamptz
 
+  // Employee profile completion (first login after approval).
+  prefix               String?   @db.VarChar(20)
+  first_name           String?   @db.VarChar(100)
+  middle_name          String?   @db.VarChar(100)
+  last_name            String?   @db.VarChar(100)
+  suffix               String?   @db.VarChar(20)
+  employee_no          String?   @unique @db.VarChar(50)
+  department           String?   @db.VarChar(255)
+  profile_completed    Boolean   @default(false)
+  profile_completed_at DateTime? @db.Timestamptz
+
   @@map("profiles")
 }
 
@@ -60,6 +71,7 @@ model Asset {
   assigned_to              String?   @db.Uuid
   created_at               DateTime? @default(now()) @db.Timestamptz
   documents                Document[]
+  custom_fields            Json?     @db.JsonB
 
   @@map("assets")
 }
@@ -69,6 +81,8 @@ model Delivery {
   po_reference      String?        @db.VarChar
   supplier          String?        @db.VarChar
   date_delivered    DateTime?      @db.Date
+  expected_arrival_date DateTime?  @db.Date
+  delivery_kind     String?        @db.VarChar
   delivery_status   String?        @default("complete") @db.VarChar
   inspection_status String?        @default("pending") @db.VarChar
   received_by       String         @db.Uuid
@@ -154,6 +168,7 @@ model InventoryItem {
   item_name        String   @db.VarChar
   category         String?  @db.VarChar
   account_code     String?  @db.VarChar
+  delivery_kind    String?  @db.VarChar
   quantity         Int
   unit             String?  @db.VarChar
   unit_cost        Decimal? @db.Decimal(12, 2)
@@ -162,8 +177,20 @@ model InventoryItem {
   location         String?  @db.VarChar
   updated_at       DateTime? @default(now()) @db.Timestamptz
   documents        Document[]
+  custom_fields    Json?     @db.JsonB
 
   @@map("inventory")
+}
+
+model AssetCustomField {
+  id         String    @id @default(uuid()) @db.Uuid
+  field_key  String    @unique @db.VarChar(60)
+  label      String    @db.VarChar(80)
+  field_type String    @default("text") @db.VarChar(10)
+  created_by String?   @db.Uuid
+  created_at DateTime? @default(now()) @db.Timestamptz
+
+  @@map("asset_custom_fields")
 }
 
 model Repair {
@@ -261,9 +288,11 @@ model DocumentView {
   id         String   @id @default(uuid()) @db.Uuid
   doc_type   String   @db.VarChar
   doc_id     String   @db.Uuid
+  viewer_id  String?  @db.Uuid
   viewed_at  DateTime? @default(now()) @db.Timestamptz
 
   @@unique([doc_type, doc_id])
+  @@unique([doc_type, doc_id, viewer_id])
   @@index([doc_type])
   @@map("document_views")
 }
@@ -304,6 +333,17 @@ model Unit {
   @@map("units")
 }
 
+model Department {
+  id          String    @id @default(uuid()) @db.Uuid
+  name        String    @unique @db.VarChar
+  description String?
+  status      String    @default("active") @db.VarChar
+  created_by  String?   @db.Uuid
+  created_at  DateTime? @default(now()) @db.Timestamptz
+
+  @@map("departments")
+}
+
 model AccountCatalog {
   id            String    @id @default(uuid()) @db.Uuid
   account_code  String    @unique @db.VarChar
@@ -318,4 +358,17 @@ model AccountCatalog {
   @@index([asset_type])
   @@index([status])
   @@map("account_catalog")
+}
+
+model PpmpFile {
+  id           String    @id @default(uuid()) @db.Uuid
+  filename     String    @db.VarChar
+  storage_path String    @db.Text
+  file_size    Int?
+  mime_type    String?   @db.VarChar
+  created_by   String    @db.Uuid
+  created_at   DateTime? @default(now()) @db.Timestamptz
+
+  @@index([created_by])
+  @@map("ppmp_files")
 }

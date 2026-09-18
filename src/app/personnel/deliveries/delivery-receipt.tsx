@@ -55,6 +55,22 @@ export function DeliveryReceipt({
           <span className="text-right">{data.deliveryStatus}</span>
         </div>
         <div className="flex justify-between gap-4">
+          <span className="text-navy-600">Target Arrival</span>
+          <span className="text-right">
+            {data.expectedArrival ? format(data.expectedArrival, "PP") : "—"}
+          </span>
+        </div>
+        <div className="flex justify-between gap-4">
+          <span className="text-navy-600">For</span>
+          <span className="text-right">
+            {data.deliveryKind === "stock"
+              ? "Stocks"
+              : data.deliveryKind === "asset"
+                ? "Assets"
+                : "—"}
+          </span>
+        </div>
+        <div className="flex justify-between gap-4">
           <span className="text-navy-600">Received By</span>
           <span className="text-right">
             {data.recipientName

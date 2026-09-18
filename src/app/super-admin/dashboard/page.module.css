@@ -164,6 +164,61 @@
   font-weight: 700;
 }
 
+.panelHead {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+@media (min-width: 640px) {
+  .panelHead {
+    flex-direction: row;
+    align-items: flex-start;
+    justify-content: space-between;
+  }
+}
+
+/* Footer pinned to the bottom-right so paired cards share
+   the same height with buttons aligned on one line. */
+.panelFooter {
+  margin-top: auto;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  padding-top: 0.75rem;
+}
+
+.inspectLink {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 32px;
+  padding-inline: 0.875rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  border-radius: 4px;
+  border: 1px solid var(--color-navy-700);
+  background-color: var(--color-navy-800);
+  color: #fff;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: background-color 0.15s;
+}
+
+.inspectLink:hover {
+  background-color: var(--color-navy-700);
+}
+
+.emptyState {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 260px;
+  text-align: center;
+  padding: 1rem;
+}
+
 .panelSub {
   font-size: 0.8125rem;
   color: var(--color-navy-500);

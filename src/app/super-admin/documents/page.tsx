@@ -15,22 +15,23 @@ import {
   browseRepairs,
   browseParReports,
   browseIcsReports,
+  browseDelivery,
   browseDeliveryForInspection,
   browseInspectionHistory,
   browseIarRecords,
   browseIssuance,
-  type BrowseDeliveryDocumentRow,
   type BrowseIarReportRow,
   type BrowseIssuanceRow,
 } from "../browse/actions";
 import type { IssuanceDetail } from "@/app/personnel/issuances/actions";
+import type { DeliveryDetails } from "@/app/personnel/deliveries/actions";
 import type {
-  UnifiedInspectionRow,
   DeliveryForInspection,
   InspectionHistoryRecord,
   IarRecordRow,
 } from "@/app/personnel/inspections/actions";
 import { InspectionReceipt } from "@/app/personnel/inspections/components/inspection-receipt";
+import { DeliveryReceipt } from "@/app/personnel/deliveries/[id]/delivery-receipt";
 import { StockReceipt } from "@/app/personnel/inventory/stock-receipt";
 import { AssetReceipt } from "@/app/personnel/assets/asset-receipt";
 import { RepairReceipt } from "@/app/personnel/repairs/repair-receipt";
@@ -39,11 +40,13 @@ import { ParReportSheet } from "@/app/personnel/documents/par-report";
 import { IcsReportSheet } from "@/app/personnel/documents/ics-report";
 import { ReceiptOverlay } from "@/app/personnel/documents/receipt-overlay";
 import receipt from "@/app/personnel/inspections/components/receipt.module.css";
-import type { InventoryRow } from "@/app/personnel/inventory/actions";
-import type { RepairRow } from "@/app/personnel/repairs/actions";
-import type { UnifiedAssetRow } from "@/app/personnel/assets/actions";
 import { TablePager } from "@/components/personnel/TablePager";
+import { ReceiptLoading } from "@/components/personnel/ReceiptLoading";
 import { usePageSize } from "@/hooks/use-page-size";
+import { useCachedAction } from "@/hooks/use-cached-action";
+import { CLIENT_CACHE_KEYS } from "@/lib/client-cache";
+import { useReceipt } from "@/hooks/use-receipt";
+import DocumentsLoading from "./loading";
 import styles from "@/app/personnel/dashboard/page.module.css";
 import air from "@/app/personnel/inspections/air-section.module.css";
 
@@ -82,7 +85,9 @@ function label(value: string | null | undefined) {
 }
 
 function deliveryTone(status: string | null) {
-  return status === "complete" ? "ok" : "warn";
+  if (status === "complete") return "ok";
+  if (status === "awaiting") return "info";
+  return "warn";
 }
 
 function inspectionTone(result: string | null, inspectionStatus: string) {
@@ -139,64 +144,79 @@ function SuperAdminDocumentsContent() {
 
   const [tab, setTab] = useState<Tab>(initialTab);
   const [query, setQuery] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [deliveries, setDeliveries] = useState<BrowseDeliveryDocumentRow[]>([]);
-  const [inspections, setInspections] = useState<UnifiedInspectionRow[]>([]);
-  const [stocks, setStocks] = useState<InventoryRow[]>([]);
-  const [assets, setAssets] = useState<UnifiedAssetRow[]>([]);
-  const [repairs, setRepairs] = useState<RepairRow[]>([]);
-  const [iars, setIars] = useState<BrowseIarReportRow[]>([]);
-  const [pars, setPars] = useState<BrowseIssuanceRow[]>([]);
-  const [icss, setIcss] = useState<BrowseIssuanceRow[]>([]);
-  const [viewedKeys, setViewedKeys] = useState<Set<string>>(new Set());
-  const [selectedInspectionId, setSelectedInspectionId] = useState<string | null>(
-    null
+  // Cached snapshot (all 8 tabs + viewed keys): back-navigation paints
+  // instantly from memory / sessionStorage and only revalidates silently
+  // when stale — same SWR pattern as the personnel documents page.
+  const { data: snapshot, loading } = useCachedAction(
+    CLIENT_CACHE_KEYS.adminDocuments,
+    () =>
+      Promise.all([
+        browseDeliveryDocuments(),
+        browseInspections(),
+        browseInventory(),
+        browseAssets(),
+        browseRepairs(),
+        browseIarReports(),
+        browseParReports(),
+        browseIcsReports(),
+        browseViewedDocKeys(),
+      ]).then(([d, i, s, a, rep, r, p, c, v]) => ({
+        deliveries: d,
+        inspections: i,
+        stocks: s,
+        assets: a,
+        repairs: rep,
+        iars: r,
+        pars: p,
+        icss: c,
+        viewedKeys: v,
+      })),
+    { staleTime: 60_000 }
   );
-  const [inspectionDoc, setInspectionDoc] = useState<{
+  const deliveries = useMemo(() => snapshot?.deliveries ?? [], [snapshot]);
+  const inspections = useMemo(() => snapshot?.inspections ?? [], [snapshot]);
+  const stocks = useMemo(() => snapshot?.stocks ?? [], [snapshot]);
+  const assets = useMemo(() => snapshot?.assets ?? [], [snapshot]);
+  const repairs = useMemo(() => snapshot?.repairs ?? [], [snapshot]);
+  const iars = useMemo(() => snapshot?.iars ?? [], [snapshot]);
+  const pars = useMemo(() => snapshot?.pars ?? [], [snapshot]);
+  const icss = useMemo(() => snapshot?.icss ?? [], [snapshot]);
+  const [viewedKeys, setViewedKeys] = useState<Set<string>>(new Set());
+  // Sync viewed keys from the snapshot after hydration (local marks apply
+  // instantly via markViewed; the server copy wins on refetch).
+  useEffect(() => {
+    if (snapshot) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional post-hydration sync of cached state
+      setViewedKeys(new Set(snapshot.viewedKeys));
+    }
+  }, [snapshot]);
+  const deliveryR = useReceipt<DeliveryDetails>();
+  const inspectionR = useReceipt<{
     delivery: DeliveryForInspection;
     history: InspectionHistoryRecord[];
-  } | null>(null);
-  const [inspectionDocLoading, setInspectionDocLoading] = useState(false);
+  }>();
+  const iarR = useReceipt<{
+    delivery: DeliveryForInspection;
+    records: IarRecordRow[];
+  }>();
+  const parR = useReceipt<IssuanceDetail | null>();
+  const icsR = useReceipt<IssuanceDetail | null>();
+  const {
+    selectedId: selectedDeliveryId,
+    doc: deliveryDoc,
+    docLoading: deliveryDocLoading,
+  } = deliveryR;
+  const {
+    selectedId: selectedInspectionId,
+    doc: inspectionDoc,
+    docLoading: inspectionDocLoading,
+  } = inspectionR;
+  const { selectedId: selectedIarId, doc: iarDoc, docLoading: iarDocLoading } = iarR;
+  const { selectedId: selectedParId, doc: parDoc, docLoading: parDocLoading } = parR;
+  const { selectedId: selectedIcsId, doc: icsDoc, docLoading: icsDocLoading } = icsR;
   const [selectedStockId, setSelectedStockId] = useState<string | null>(null);
   const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null);
   const [selectedRepairId, setSelectedRepairId] = useState<string | null>(null);
-  const [selectedIarId, setSelectedIarId] = useState<string | null>(null);
-  const [iarDoc, setIarDoc] = useState<{
-    delivery: DeliveryForInspection;
-    records: IarRecordRow[];
-  } | null>(null);
-  const [iarDocLoading, setIarDocLoading] = useState(false);
-  const [selectedParId, setSelectedParId] = useState<string | null>(null);
-  const [parDoc, setParDoc] = useState<IssuanceDetail | null>(null);
-  const [parDocLoading, setParDocLoading] = useState(false);
-  const [selectedIcsId, setSelectedIcsId] = useState<string | null>(null);
-  const [icsDoc, setIcsDoc] = useState<IssuanceDetail | null>(null);
-  const [icsDocLoading, setIcsDocLoading] = useState(false);
-
-  useEffect(() => {
-    void Promise.all([
-      browseDeliveryDocuments(),
-      browseInspections(),
-      browseInventory(),
-      browseAssets(),
-      browseRepairs(),
-      browseIarReports(),
-      browseParReports(),
-      browseIcsReports(),
-      browseViewedDocKeys(),
-    ]).then(([d, i, s, a, rep, r, p, c, v]) => {
-      setDeliveries(d);
-      setInspections(i);
-      setStocks(s);
-      setAssets(a);
-      setRepairs(rep);
-      setIars(r);
-      setPars(p);
-      setIcss(c);
-      setViewedKeys(new Set(v));
-      setLoading(false);
-    });
-  }, []);
 
   const docKey = (type: string, id: string) => `${type}:${id}`;
   const isViewed = (type: string, id: string) => viewedKeys.has(docKey(type, id));
@@ -446,57 +466,57 @@ function SuperAdminDocumentsContent() {
   const parPaging = paginate(parRows, parPage, parPageSize);
   const icsPaging = paginate(icsRows, icsPage, icsPageSize);
 
+  function openDeliveryReceipt(deliveryId: string) {
+    markViewed("delivery", deliveryId);
+    // Same cached-receipt pattern as personnel (admin-prefixed keys keep
+    // per-role caches separate): reopening paints instantly, stale
+    // revalidates silently, cold shows the spinner.
+    deliveryR.open(deliveryId, `admin-delivery:${deliveryId}`, () =>
+      browseDelivery(deliveryId).then((detail) => {
+        if (!detail) throw new Error("Delivery not found.");
+        return detail;
+      })
+    );
+  }
+
   function openInspectionHistory(deliveryId: string) {
-    setSelectedInspectionId(deliveryId);
-    setInspectionDoc(null);
-    setInspectionDocLoading(true);
     markViewed("inspection", deliveryId);
-    void Promise.all([
-      browseDeliveryForInspection(deliveryId),
-      browseInspectionHistory(deliveryId),
-    ]).then(([delivery, history]) => {
-      if (delivery) {
-        setInspectionDoc({ delivery, history });
-      } else {
-        setInspectionDoc(null);
-      }
-      setInspectionDocLoading(false);
-    });
+    inspectionR.open(deliveryId, `admin-inspection:${deliveryId}`, () =>
+      Promise.all([
+        browseDeliveryForInspection(deliveryId),
+        browseInspectionHistory(deliveryId),
+      ]).then(([delivery, history]) => {
+        if (!delivery) throw new Error("Delivery not found.");
+        return { delivery, history };
+      })
+    );
   }
 
   function switchTab(t: Tab) {
     setTab(t);
     setQuery("");
     resetDocPages();
-    setSelectedInspectionId(null);
-    setInspectionDoc(null);
+    deliveryR.close();
+    inspectionR.close();
     setSelectedStockId(null);
     setSelectedAssetId(null);
     setSelectedRepairId(null);
-    setSelectedIarId(null);
-    setIarDoc(null);
-    setSelectedParId(null);
-    setParDoc(null);
-    setSelectedIcsId(null);
-    setIcsDoc(null);
+    iarR.close();
+    parR.close();
+    icsR.close();
   }
 
   function openIarReport(row: BrowseIarReportRow) {
-    setSelectedIarId(row.id);
-    setIarDoc(null);
-    setIarDocLoading(true);
     markViewed("iar", row.id);
-    void Promise.all([
-      browseDeliveryForInspection(row.delivery_id),
-      browseIarRecords(row.delivery_id),
-    ]).then(([delivery, records]) => {
-      if (delivery) {
-        setIarDoc({ delivery, records });
-      } else {
-        setIarDoc(null);
-      }
-      setIarDocLoading(false);
-    });
+    iarR.open(row.id, `admin-iar:${row.id}`, () =>
+      Promise.all([
+        browseDeliveryForInspection(row.delivery_id),
+        browseIarRecords(row.delivery_id),
+      ]).then(([delivery, records]) => {
+        if (!delivery) throw new Error("Delivery not found.");
+        return { delivery, records };
+      })
+    );
   }
 
   const selectedIarRecord =
@@ -505,31 +525,23 @@ function SuperAdminDocumentsContent() {
     null;
 
   function openParReport(row: BrowseIssuanceRow) {
-    setSelectedParId(row.id);
-    setParDoc(null);
-    setParDocLoading(true);
     markViewed("par", row.id);
-    void browseIssuance(row.id).then((detail) => {
-      setParDoc(detail);
-      setParDocLoading(false);
-    });
+    parR.open(row.id, `admin-issuance:${row.id}`, () => browseIssuance(row.id));
   }
 
   function openIcsReport(row: BrowseIssuanceRow) {
-    setSelectedIcsId(row.id);
-    setIcsDoc(null);
-    setIcsDocLoading(true);
     markViewed("ics", row.id);
-    void browseIssuance(row.id).then((detail) => {
-      setIcsDoc(detail);
-      setIcsDocLoading(false);
-    });
+    icsR.open(row.id, `admin-issuance:${row.id}`, () => browseIssuance(row.id));
   }
 
   const selectedStock = stocks.find((r) => r.id === selectedStockId) ?? null;
   const selectedAsset = assets.find((a) => a.id === selectedAssetId) ?? null;
   const selectedRepair =
     completedRepairs.find((r) => r.id === selectedRepairId) ?? null;
+
+  if (loading) {
+    return <DocumentsLoading />;
+  }
 
   return (
     <section className={styles.section}>
@@ -577,20 +589,14 @@ function SuperAdminDocumentsContent() {
           />
         </div>
 
-        {loading ? (
-          <div className={styles.emptyState}>
-            <p className={styles.panelSub}>Loading documents…</p>
-          </div>
-        ) : (
-          <>
-            {tab === "delivery" &&
-              (deliveryRows.length === 0 ? (
-                <div className={styles.emptyState}>
-                  <p className={styles.panelSub}>
-                    No delivery receipts match your search.
-                  </p>
-                </div>
-              ) : (
+        {tab === "delivery" &&
+          (deliveryRows.length === 0 ? (
+            <div className={styles.emptyState}>
+              <p className={styles.panelSub}>
+                No delivery receipts match your search.
+              </p>
+            </div>
+          ) : (
                 <div className={styles.tableWrap}>
                   <table className={styles.table}>
                     <thead>
@@ -635,17 +641,15 @@ function SuperAdminDocumentsContent() {
                             </span>
                           </td>
                           <td>
-                            <Link
-                              href={`/super-admin/deliveries/${d.delivery_id}`}
-                              className={styles.inspectLinkSecondary}
-                              onClick={() =>
-                                markViewed("delivery", d.delivery_id)
-                              }
+                            <button
+                              type="button"
+                              className={`${styles.inspectLinkSecondary} cursor-pointer`}
+                              onClick={() => openDeliveryReceipt(d.delivery_id)}
                             >
                               {isViewed("delivery", d.delivery_id)
                                 ? "✓ Viewed"
                                 : "View receipt"}
-                            </Link>
+                            </button>
                           </td>
                         </tr>
                       ))}
@@ -663,6 +667,24 @@ function SuperAdminDocumentsContent() {
                 onPageChange={setDeliveryPage}
               />
             ) : null}
+
+            <ReceiptOverlay
+              open={selectedDeliveryId !== null}
+              title="Delivery receipt"
+              onClose={deliveryR.close}
+            >
+              {deliveryDocLoading ? (
+                <ReceiptLoading label="Loading delivery receipt…" />
+              ) : !deliveryDoc ? (
+                <div className={styles.emptyState}>
+                  <p className={styles.panelSub}>No delivery record found.</p>
+                </div>
+              ) : (
+                <div className={receipt.receiptStack} style={{ maxWidth: "none" }}>
+                  <DeliveryReceipt delivery={deliveryDoc} />
+                </div>
+              )}
+            </ReceiptOverlay>
 
             {tab === "inspection" &&
               (inspectedRows.length === 0 ? (
@@ -739,17 +761,14 @@ function SuperAdminDocumentsContent() {
             <ReceiptOverlay
               open={selectedInspectionId !== null}
               title="Inspection history receipt"
-              onClose={() => {
-                setSelectedInspectionId(null);
-                setInspectionDoc(null);
-              }}
+              onClose={inspectionR.close}
             >
-              {inspectionDocLoading || !inspectionDoc ? (
+              {inspectionDocLoading ? (
+                <ReceiptLoading label="Loading history receipt…" />
+              ) : !inspectionDoc ? (
                 <div className={styles.emptyState}>
                   <p className={styles.panelSub}>
-                    {inspectionDocLoading
-                      ? "Loading history receipt…"
-                      : "No inspection record found for this delivery."}
+                    No inspection record found for this delivery.
                   </p>
                 </div>
               ) : inspectionDoc.history.length === 0 ? (
@@ -1105,17 +1124,14 @@ function SuperAdminDocumentsContent() {
             <ReceiptOverlay
               open={selectedIarId !== null}
               title="Inspection and Acceptance Report"
-              onClose={() => {
-                setSelectedIarId(null);
-                setIarDoc(null);
-              }}
+              onClose={iarR.close}
             >
-              {iarDocLoading || !iarDoc ? (
+              {iarDocLoading ? (
+                <ReceiptLoading label="Loading IAR report…" />
+              ) : !iarDoc ? (
                 <div className={styles.emptyState}>
                   <p className={styles.panelSub}>
-                    {iarDocLoading
-                      ? "Loading IAR report…"
-                      : "This IAR record is no longer available."}
+                    This IAR record is no longer available.
                   </p>
                 </div>
               ) : !selectedIarRecord ? (
@@ -1207,14 +1223,15 @@ function SuperAdminDocumentsContent() {
             <ReceiptOverlay
               open={selectedParId !== null}
               title="Property Acknowledgment Receipt"
-              onClose={() => {
-                setSelectedParId(null);
-                setParDoc(null);
-              }}
+              onClose={parR.close}
             >
-              {parDocLoading || !parDoc ? (
+              {parDocLoading ? (
+                <ReceiptLoading label="Loading PAR report…" />
+              ) : !parDoc ? (
                 <div className={styles.emptyState}>
-                  <p className={styles.panelSub}>Loading PAR report…</p>
+                  <p className={styles.panelSub}>
+                    This record is no longer available.
+                  </p>
                 </div>
               ) : (
                 <div className={receipt.receiptStack} style={{ maxWidth: "none" }}>
@@ -1311,14 +1328,15 @@ function SuperAdminDocumentsContent() {
             <ReceiptOverlay
               open={selectedIcsId !== null}
               title="Inventory Custodian Slip"
-              onClose={() => {
-                setSelectedIcsId(null);
-                setIcsDoc(null);
-              }}
+              onClose={icsR.close}
             >
-              {icsDocLoading || !icsDoc ? (
+              {icsDocLoading ? (
+                <ReceiptLoading label="Loading ICS report…" />
+              ) : !icsDoc ? (
                 <div className={styles.emptyState}>
-                  <p className={styles.panelSub}>Loading ICS report…</p>
+                  <p className={styles.panelSub}>
+                    This record is no longer available.
+                  </p>
                 </div>
               ) : (
                 <div className={receipt.receiptStack} style={{ maxWidth: "none" }}>
@@ -1341,8 +1359,6 @@ function SuperAdminDocumentsContent() {
                 </div>
               )}
             </ReceiptOverlay>
-          </>
-        )}
       </Card>
     </section>
   );

@@ -38,6 +38,29 @@
   margin-bottom: 1rem;
 }
 
+/* Search row — same placement as the personnel filter row: full-width on
+   mobile, right-aligned (max 22rem) on desktop so it sits over the table
+   where record searches live. */
+.searchRow {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+@media (min-width: 640px) {
+  .searchRow {
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-end;
+  }
+
+  .searchRow > * {
+    width: 100%;
+    max-width: 22rem;
+  }
+}
+
 .tableWrap {
   overflow-x: auto;
   border: 1px solid var(--color-navy-200);
@@ -98,4 +121,12 @@
   padding: 1rem;
   font-size: 0.875rem;
   color: var(--color-navy-500);
+}
+
+/* Centered empty state (e.g. clear approval queue). */
+.emptyCenter {
+  padding: 1rem;
+  font-size: 0.875rem;
+  color: var(--color-navy-500);
+  text-align: center;
 }

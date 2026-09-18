@@ -26,6 +26,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/components/ui/toaster";
+import { CLIENT_CACHE_KEYS, bustClientCache } from "@/lib/client-cache";
 import { recordInspection, type InspectionState } from "../../deliveries/actions";
 import type { DeliveryForInspection } from "../actions";
 import { isPassedAllowed, remainingOf, toCumulative } from "@/lib/inspection-rules";
@@ -287,6 +288,14 @@ export function InspectionForm({
         description: `Delivery ${delivery.id.slice(0, 8).toUpperCase()} has been saved.${actionState.stockWarning ? ` ${actionState.stockWarning}` : ""}`,
         variant: "success",
       });
+      // Statuses changed — drop the cached lists + dashboard + stocks so
+      // the next visit refetches instead of serving pre-inspection data.
+      bustClientCache([
+        CLIENT_CACHE_KEYS.inspections,
+        CLIENT_CACHE_KEYS.deliveries,
+        CLIENT_CACHE_KEYS.dashboard,
+        CLIENT_CACHE_KEYS.inventory,
+      ]);
       router.push("/personnel/inspections");
       router.refresh();
     }
@@ -402,12 +411,14 @@ const deliveryRef = delivery.id.slice(0, 8).toUpperCase();
           <div className={styles.successActions}>
             <Button
               variant="outline"
+              className="h-8 rounded-[4px] px-3.5 text-xs font-semibold"
               onClick={() => router.push(`/personnel/inspections/${delivery.id}/receipt`)}
             >
               View Details
             </Button>
             <Button
               variant="outline"
+              className="h-8 rounded-[4px] px-3.5 text-xs font-semibold"
               onClick={() => router.push("/personnel/inspections")}
             >
               Back to inspections
@@ -514,10 +525,18 @@ const deliveryRef = delivery.id.slice(0, 8).toUpperCase();
               <span
                 className={styles.statusBadge}
                 data-tone={
-                  delivery.delivery_status === "complete" ? "ok" : "warn"
+                  delivery.delivery_status === "complete"
+                    ? "ok"
+                    : delivery.delivery_status === "awaiting"
+                      ? "info"
+                      : "warn"
                 }
               >
-                {delivery.delivery_status === "complete" ? "Complete" : "Partial"}
+                {delivery.delivery_status === "complete"
+                  ? "Complete"
+                  : delivery.delivery_status === "awaiting"
+                    ? "Awaiting arrival"
+                    : "Partial"}
               </span>
             </div>
           </div>
@@ -821,11 +840,14 @@ const deliveryRef = delivery.id.slice(0, 8).toUpperCase();
             <Button
               type="button"
               variant="outline"
+              className="h-8 rounded-[4px] px-3.5 text-xs font-semibold"
               onClick={() => router.push("/personnel/inspections")}
             >
               Cancel
             </Button>
             <SubmitButton
+              size="sm"
+              className="h-8 rounded-[4px] px-3.5 text-xs font-semibold"
               disabled={!canSubmit}
               pendingLabel={isEditable ? "Updating…" : "Recording…"}
             >

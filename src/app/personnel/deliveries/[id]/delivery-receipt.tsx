@@ -97,6 +97,15 @@ export function DeliveryReceipt({ delivery }: { delivery: DeliveryDetails }) {
         <dl className={receiptStyles.rows}>
           {[
             ["Date Delivered", fmt(delivery.date_delivered)],
+            ["Target Arrival", fmt(delivery.expected_arrival_date)],
+            [
+              "Type",
+              delivery.delivery_kind === "stock"
+                ? "STOCKS"
+                : delivery.delivery_kind === "asset"
+                  ? "ASSETS"
+                  : "—",
+            ],
             ["Supplier", delivery.supplier ?? "—"],
             ["P.O. Reference", delivery.po_reference ?? "—"],
             [
@@ -105,7 +114,9 @@ export function DeliveryReceipt({ delivery }: { delivery: DeliveryDetails }) {
                 ? "COMPLETE"
                 : delivery.delivery_status === "partial"
                 ? "PARTIAL"
-                : (delivery.delivery_status ?? "—").toUpperCase(),
+                : delivery.delivery_status === "awaiting"
+                  ? "WAITING FOR ARRIVAL"
+                  : (delivery.delivery_status ?? "—").toUpperCase(),
             ],
             ["Received By", recipient],
             ["Logged By", delivery.logged_by_name ?? "—"],

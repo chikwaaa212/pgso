@@ -1,6 +1,6 @@
 'use server'
 
-import { revalidatePath } from 'next/cache'
+import { revalidatePath as nextRevalidatePath } from 'next/cache'
 import ExcelJS from 'exceljs'
 import prisma from '@/lib/prisma'
 import { writeAuditLog } from '@/lib/audit'
@@ -20,6 +20,15 @@ export interface UnitRow {
   created_at: string | null
 }
 
+export interface DepartmentRow {
+  id: string
+  name: string
+  description: string | null
+  status: string
+  usage: number
+  created_at: string | null
+}
+
 export interface CatalogRow {
   id: string
   account_code: string
@@ -30,6 +39,13 @@ export interface CatalogRow {
   status: string
   usage: number
   created_at: string | null
+}
+
+function revalidatePath(path: string) {
+  nextRevalidatePath(path)
+  void import('@/lib/personnel-cache')
+    .then((m) => m.bustPersonnelCache())
+    .catch(() => {})
 }
 
 function revalidate() {
@@ -62,12 +78,38 @@ async function catalogUsage(code: string): Promise<number> {
   }
 }
 
+// Prisma client regenerates on `postinstall` / `prisma generate`. The dev
+// server locks the query-engine DLL, so right after the Department model is
+// added the running client may not have the delegate yet — guard so reads
+// degrade to [] and writes explain the fix instead of crashing.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function departmentsTable(): any | null {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const d = (prisma as any).department ?? null
+  return d
+}
+
+async function departmentUsage(name: string): Promise<number> {
+  try {
+    return await prisma.profile.count({
+      where: { office: { equals: name, mode: 'insensitive' } },
+    })
+  } catch {
+    return 0
+  }
+}
+
 export async function getUnits(): Promise<UnitRow[]> {
   try {
     await requireSuperAdmin()
   } catch {
     return []
   }
+  // Same list caching as the other admin pages (60s) — auth stays
+  // outside the cache so failure fallbacks are never stored. Writes
+  // bust via revalidate() below.
+  const { withScopedCache } = await import('@/lib/personnel-cache')
+  return withScopedCache('super-admin:master-units', 60, async () => {
   try {
     const rows = await prisma.unit.findMany({ orderBy: { name: 'asc' } })
     return await Promise.all(
@@ -84,6 +126,7 @@ export async function getUnits(): Promise<UnitRow[]> {
     console.error('[getUnits]', e)
     return []
   }
+  })
 }
 
 export async function getCatalog(): Promise<CatalogRow[]> {
@@ -92,25 +135,32 @@ export async function getCatalog(): Promise<CatalogRow[]> {
   } catch {
     return []
   }
-  try {
-    const rows = await prisma.accountCatalog.findMany({ orderBy: { account_code: 'asc' } })
-    return await Promise.all(
-      rows.map(async (r) => ({
-        id: r.id,
-        account_code: r.account_code,
-        account_title: r.account_title,
-        account_name: r.account_name,
-        asset_type: r.asset_type,
-        description: r.description,
-        status: r.status,
-        usage: await catalogUsage(r.account_code),
-        created_at: r.created_at?.toISOString() ?? null,
-      }))
-    )
-  } catch (e) {
-    console.error('[getCatalog]', e)
-    return []
-  }
+  const { withScopedCache } = await import('@/lib/personnel-cache')
+  return withScopedCache('super-admin:master-catalog', 60, async () => {
+    try {
+      const rows = await prisma.accountCatalog.findMany({
+        orderBy: { account_code: 'asc' },
+      })
+      const out: CatalogRow[] = []
+      for (const r of rows) {
+        out.push({
+          id: r.id,
+          account_code: r.account_code,
+          account_title: r.account_title,
+          account_name: r.account_name,
+          asset_type: r.asset_type,
+          description: r.description,
+          status: r.status,
+          usage: await catalogUsage(r.account_code),
+          created_at: r.created_at?.toISOString() ?? null,
+        })
+      }
+      return out
+    } catch (e) {
+      console.error('[getCatalog]', e)
+      return []
+    }
+  })
 }
 
 export async function createUnit(
@@ -131,7 +181,9 @@ export async function createUnit(
     const row = await prisma.unit.create({
       data: { name, abbreviation, status: 'active', created_by: actorId },
     })
-    await writeAuditLog({
+    // Fire-and-forget: audit is best-effort — don't hold the dialog spinner
+    // for it on slow networks (each DB hop currently costs seconds).
+    void writeAuditLog({
       userId: actorId,
       action: 'master-data:create_unit',
       module: 'master-data',
@@ -157,11 +209,117 @@ export async function setUnitStatus(
       throw new Error(`"${row.name}" is in use and cannot be deactivated.`)
     }
     await prisma.unit.update({ where: { id }, data: { status } })
-    await writeAuditLog({
+    // Fire-and-forget (see createUnit): audit must not gate the UI.
+    void writeAuditLog({
       userId: actorId,
       action: status === 'active' ? 'master-data:reactivate_unit' : 'master-data:deactivate_unit',
       module: 'master-data',
       details: { purpose: 'Toggle unit', summary: `${status} unit "${row.name}"`, reference_id: id },
+    })
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Update failed.' }
+  }
+  revalidate()
+  return { ok: true }
+}
+
+export async function getDepartments(): Promise<DepartmentRow[]> {
+  try {
+    await requireSuperAdmin()
+  } catch {
+    return []
+  }
+  const { withScopedCache } = await import('@/lib/personnel-cache')
+  return withScopedCache('super-admin:master-departments', 60, async () => {
+    try {
+      const table = departmentsTable()
+      if (!table) return []
+      const rows = await table.findMany({ orderBy: { name: 'asc' } })
+      return await Promise.all(
+        rows.map(
+          async (r: {
+            id: string
+            name: string
+            description: string | null
+            status: string
+            created_at?: Date | null
+          }) => ({
+            id: r.id,
+            name: r.name,
+            description: r.description,
+            status: r.status,
+            usage: await departmentUsage(r.name),
+            created_at: r.created_at?.toISOString() ?? null,
+          })
+        )
+      )
+    } catch (e) {
+      console.error('[getDepartments]', e)
+      return []
+    }
+  })
+}
+
+export async function createDepartment(
+  _prev: { ok: boolean; error?: string },
+  formData: FormData
+): Promise<{ ok: boolean; error?: string }> {
+  let actorId = ''
+  try {
+    ;({ userId: actorId } = await requireSuperAdmin())
+    const table = departmentsTable()
+    if (!table) {
+      throw new Error(
+        'Departments table is not ready yet — restart the dev server (regenerates the Prisma client), then run `npx prisma db push`.'
+      )
+    }
+    const name = ((formData.get('name') as string) ?? '').trim()
+    const description = ((formData.get('description') as string) ?? '').trim() || null
+    if (!name) throw new Error('Department name is required.')
+    if (name.length > 120) throw new Error('Department name must be 120 characters or fewer.')
+    const existing = await table.findFirst({
+      where: { name: { equals: name, mode: 'insensitive' } },
+    })
+    if (existing) throw new Error(`Department "${name}" already exists.`)
+    const row = await table.create({
+      data: { name, description, status: 'active', created_by: actorId },
+    })
+    // Fire-and-forget: audit is best-effort and each DB hop currently costs
+    // seconds on this network — don't hold the dialog spinner for it.
+    void writeAuditLog({
+      userId: actorId,
+      action: 'master-data:create_department',
+      module: 'master-data',
+      details: { purpose: 'Create department', summary: `Added department "${name}"`, reference_id: row.id },
+    })
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Failed to add department.' }
+  }
+  revalidate()
+  return { ok: true }
+}
+
+export async function setDepartmentStatus(
+  id: string,
+  status: 'active' | 'inactive'
+): Promise<{ ok: boolean; error?: string }> {
+  let actorId = ''
+  try {
+    ;({ userId: actorId } = await requireSuperAdmin())
+    const table = departmentsTable()
+    if (!table) throw new Error('Departments table is not ready yet — restart the dev server.')
+    const row = await table.findUnique({ where: { id } })
+    if (!row) throw new Error('Department not found.')
+    if (status === 'inactive' && (await departmentUsage(row.name)) > 0) {
+      throw new Error(`"${row.name}" is assigned to personnel and cannot be deactivated.`)
+    }
+    await table.update({ where: { id }, data: { status } })
+    // Fire-and-forget (see createDepartment): audit must not gate the UI.
+    void writeAuditLog({
+      userId: actorId,
+      action: status === 'active' ? 'master-data:reactivate_department' : 'master-data:deactivate_department',
+      module: 'master-data',
+      details: { purpose: 'Toggle department', summary: `${status} department "${row.name}"`, reference_id: id },
     })
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : 'Update failed.' }
@@ -188,7 +346,8 @@ export async function createCatalogEntry(
     const row = await prisma.accountCatalog.create({
       data: { account_code, account_title, account_name, asset_type, description, status: 'active', created_by: actorId },
     })
-    await writeAuditLog({
+    // Fire-and-forget (see createUnit): audit must not gate the UI.
+    void writeAuditLog({
       userId: actorId,
       action: 'master-data:create_catalog',
       module: 'master-data',
@@ -222,7 +381,8 @@ export async function updateCatalogEntry(
       where: { id },
       data: { account_title, account_name, asset_type, description: (input.description ?? '').trim() || null },
     })
-    await writeAuditLog({
+    // Fire-and-forget (see createUnit): audit must not gate the UI.
+    void writeAuditLog({
       userId: actorId,
       action: 'master-data:update_catalog',
       module: 'master-data',
@@ -248,7 +408,8 @@ export async function setCatalogStatus(
       throw new Error(`Code "${row.account_code}" is in use and cannot be deactivated.`)
     }
     await prisma.accountCatalog.update({ where: { id }, data: { status } })
-    await writeAuditLog({
+    // Fire-and-forget (see createUnit): audit must not gate the UI.
+    void writeAuditLog({
       userId: actorId,
       action: status === 'active' ? 'master-data:reactivate_catalog' : 'master-data:deactivate_catalog',
       module: 'master-data',
@@ -474,19 +635,17 @@ export async function importCatalogFromExcel(
       matched,
     }
 
-  try {
-    await writeAuditLog({
-      userId: actorId,
-      action: 'master-data:import_catalog',
-      module: 'master-data',
-      details: {
-        purpose: 'Bulk import account catalog',
-        summary: `Catalog import: ${created} added · ${skipped} skipped (duplicates)`,
-      },
-    })
-  } catch {
-    // Audit failure must not fail the import.
-  }
+  // Fire-and-forget (see createUnit): audit is best-effort and must neither
+  // fail the import nor hold its response on slow networks.
+  void writeAuditLog({
+    userId: actorId,
+    action: 'master-data:import_catalog',
+    module: 'master-data',
+    details: {
+      purpose: 'Bulk import account catalog',
+      summary: `Catalog import: ${created} added · ${skipped} skipped (duplicates)`,
+    },
+  })
 
   revalidate()
   return { ok: true, success: true, created, skipped, ...capMessages(messages), matched }

@@ -7,6 +7,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { requestTypeLabel } from "@/app/personnel/requests/request-types";
+import {
+  CLIENT_CACHE_KEYS,
+  getClientCache,
+  setClientCache,
+} from "@/lib/client-cache";
 
 type ScanResult =
   | {
@@ -104,11 +109,14 @@ export function QrScanner({
   title,
   subtitle,
   styles,
+  center = false,
 }: {
   crumb: string;
   title: string;
   subtitle: string;
   styles: Record<string, string>;
+  /** Center the header, panels, and buttons (constrained column). */
+  center?: boolean;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -119,6 +127,35 @@ export function QrScanner({
   const [pasted, setPasted] = useState("");
   const [result, setResult] = useState<ScanResult | null>(null);
   const [notice, setNotice] = useState("");
+
+  // Same instant-back-navigation idea as dashboard / deliveries: the last
+  // decoded result is kept in memory + sessionStorage and restored on
+  // mount, so leaving and returning doesn't lose the scanned info.
+  // Runs in an effect so the first render matches the server HTML.
+  useEffect(() => {
+    try {
+      const hit = getClientCache<{ result: ScanResult; notice: string }>(
+        CLIENT_CACHE_KEYS.scan
+      );
+      if (hit) {
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional post-hydration restore of cached scan
+        setResult(hit.data.result);
+        setNotice(hit.data.notice);
+      }
+    } catch {
+      /* cache unavailable — start empty */
+    }
+  }, []);
+
+  useEffect(() => {
+    if (result) {
+      try {
+        setClientCache(CLIENT_CACHE_KEYS.scan, { result, notice });
+      } catch {
+        /* cache unavailable — result still shows */
+      }
+    }
+  }, [result, notice]);
 
   const stopCamera = useCallback(() => {
     cancelAnimationFrame(rafRef.current);
@@ -212,18 +249,34 @@ export function QrScanner({
     img.src = url;
   }
 
+  // Centered pages constrain panels to a readable column and center
+  // the header, titles, and buttons; the default stays left-aligned.
+  const panelClass = center
+    ? `${styles.panel} mx-auto w-full max-w-2xl`
+    : styles.panel;
+  const titleClass = center
+    ? `${styles.panelTitle} text-center`
+    : styles.panelTitle;
+  const subClass = center ? `${styles.panelSub} text-center` : styles.panelSub;
+
   return (
     <section className={styles.section}>
       <p className={styles.crumb}>{crumb}</p>
-      <div>
+      <div className={center ? "text-center" : undefined}>
         <h1 className={styles.title}>{title}</h1>
         <p className={styles.subtitle}>{subtitle}</p>
       </div>
 
-      <Card className={styles.panel}>
-        <h2 className={styles.panelTitle}>Camera</h2>
-        <p className={styles.panelSub}>Point the camera at the QR code.</p>
-        <div className="flex flex-wrap items-center gap-2">
+      <Card className={panelClass}>
+        <h2 className={titleClass}>Camera</h2>
+        <p className={subClass}>Point the camera at the QR code.</p>
+        <div
+          className={
+            center
+              ? "flex flex-wrap items-center justify-center gap-2"
+              : "flex flex-wrap items-center gap-2"
+          }
+        >
           {!scanning ? (
             <Button type="button" onClick={() => void startCamera()}>
               Start camera
@@ -243,15 +296,19 @@ export function QrScanner({
           ref={videoRef}
           playsInline
           muted
-          className="mt-3 w-full max-w-md rounded-md border"
+          className={
+            center
+              ? "mx-auto mt-3 w-full max-w-md rounded-md border"
+              : "mt-3 w-full max-w-md rounded-md border"
+          }
           style={{ display: scanning ? "block" : "none" }}
         />
         <canvas ref={canvasRef} className="hidden" aria-hidden="true" />
       </Card>
 
-      <Card className={styles.panel}>
-        <h2 className={styles.panelTitle}>Upload image</h2>
-        <p className={styles.panelSub}>Decode a saved QR photo or screenshot.</p>
+      <Card className={panelClass}>
+        <h2 className={titleClass}>Upload image</h2>
+        <p className={subClass}>Decode a saved QR photo or screenshot.</p>
         <Input
           type="file"
           accept="image/*"
@@ -264,9 +321,9 @@ export function QrScanner({
         />
       </Card>
 
-      <Card className={styles.panel}>
-        <h2 className={styles.panelTitle}>Paste QR data</h2>
-        <p className={styles.panelSub}>Paste copied QR data to view it.</p>
+      <Card className={panelClass}>
+        <h2 className={titleClass}>Paste QR data</h2>
+        <p className={subClass}>Paste copied QR data to view it.</p>
         <div className="grid gap-2">
           <Label htmlFor="qr-paste" className="sr-only">
             QR data
@@ -279,7 +336,7 @@ export function QrScanner({
             placeholder='e.g. {"v":1,"kind":"PGSO-REQUEST",…}'
             className="border-input placeholder:text-muted-foreground flex w-full rounded-md border bg-transparent px-3 py-2 font-mono text-xs shadow-xs outline-none"
           />
-          <div>
+          <div className={center ? "flex justify-center" : undefined}>
             <Button
               type="button"
               variant="outline"
@@ -295,11 +352,11 @@ export function QrScanner({
         </div>
       </Card>
 
-      {notice ? <p className={styles.panelSub}>{notice}</p> : null}
+      {notice ? <p className={subClass}>{notice}</p> : null}
 
       {result ? (
-        <Card className={styles.panel}>
-          <h2 className={styles.panelTitle}>Scanned info</h2>
+        <Card className={panelClass}>
+          <h2 className={titleClass}>Scanned info</h2>
           {result.kind === "request" ? (
             <div className={styles.tableWrap}>
               <table className={styles.table}>
@@ -341,7 +398,7 @@ export function QrScanner({
               <p className="mt-1 break-all font-mono text-xs text-zinc-600">{result.raw}</p>
             </details>
           ) : (
-            <p className={styles.panelSub}>Not a PGSO request or issue QR — showing raw content.</p>
+            <p className={subClass}>Not a PGSO request or issue QR — showing raw content.</p>
           )}
         </Card>
       ) : null}

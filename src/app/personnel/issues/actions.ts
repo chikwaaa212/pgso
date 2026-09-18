@@ -121,6 +121,8 @@ function qrPayloadFor(args: {
  * Missing table → [].
  */
 export async function getPublicIssues(): Promise<PublicIssueLine[]> {
+  const { withScopedCache } = await import('@/lib/personnel-cache')
+  return withScopedCache('personnel:public-issues', 60, async () => {
   let rows: IssuanceDbRow[] = []
   try {
     // Own-data only for personnel; super_admin sees all.
@@ -328,6 +330,7 @@ export async function getPublicIssues(): Promise<PublicIssueLine[]> {
     }
   }
   return out
+  })
 }
 
 // ─── Completed requests as QR records ────────────────────────────────────────
@@ -342,6 +345,8 @@ export type { RequestRow as CompletedRequestIssue } from '@/app/personnel/reques
 export async function getCompletedRequestIssues(): Promise<
   import('@/app/personnel/requests/actions').RequestRow[]
 > {
+  const { withScopedCache } = await import('@/lib/personnel-cache')
+  return withScopedCache('personnel:completed-request-issues', 60, async () => {
   try {
     const scope = await getPersonnelScope()
     if (scope.isEmpty || !scope.userId) return []
@@ -371,4 +376,23 @@ export async function getCompletedRequestIssues(): Promise<
     console.error('[getCompletedRequestIssues]', e)
     return []
   }
+  })
+}
+
+export interface IssuesSnapshot {
+  rows: PublicIssueLine[]
+  completed: import('@/app/personnel/requests/actions').RequestRow[]
+}
+
+/**
+ * Single round-trip for the issues page (issued lines + completed
+ * requests), cached client-side under CLIENT_CACHE_KEYS.issues like the
+ * dashboard / deliveries / inspections / stocks / assets / documents pages.
+ */
+export async function getIssuesSnapshot(): Promise<IssuesSnapshot> {
+  const [rows, completed] = await Promise.all([
+    getPublicIssues(),
+    getCompletedRequestIssues(),
+  ])
+  return { rows, completed }
 }

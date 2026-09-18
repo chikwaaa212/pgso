@@ -1,16 +1,11 @@
+'use client'
+
 import Link from "next/link";
 import { Card } from "@/components/ui/card";
-import {
-  getMonthlyOverview,
-  getRecentDeliveries,
-} from "../inspections/actions";
-import {
-  getLowStockItems,
-  getOperationsStats,
-  getRecentIssuances,
-  getRecentRepairs,
-  getRecentRequests,
-} from "./actions";
+import { getDashboardSnapshot } from "./actions";
+import { useCachedAction } from "@/hooks/use-cached-action";
+import { CLIENT_CACHE_KEYS } from "@/lib/client-cache";
+import DashboardLoading from "./loading";
 import { OverviewChart } from "./overview-chart";
 import styles from "./page.module.css";
 
@@ -65,8 +60,51 @@ function shortRequestType(t: string): string {
   return REQUEST_TYPE_SHORT[t] ?? t.replace(/_/g, " ");
 }
 
-export default async function PersonnelDashboard() {
-  const [
+export default function PersonnelDashboard() {
+  // Cached snapshot: back-navigation paints instantly from memory /
+  // sessionStorage and only revalidates silently when stale — no skeleton
+  // flash over data the user already saw.
+  const {
+    data: snapshot,
+    loading,
+    error,
+    refresh,
+  } = useCachedAction(
+    CLIENT_CACHE_KEYS.dashboard,
+    getDashboardSnapshot,
+    { staleTime: 60_000 }
+  );
+
+  if (loading) {
+    return <DashboardLoading />;
+  }
+
+  if (!snapshot) {
+    return (
+      <section className={styles.section}>
+        <p className={styles.crumb}>Personnel / Dashboard</p>
+        <div className={styles.headerRow}>
+          <div>
+            <h1 className={styles.title}>Dashboard</h1>
+            <p className={styles.subtitle}>
+              {error || "Could not load the dashboard."}
+            </p>
+          </div>
+          <div className={styles.actions}>
+            <button
+              type="button"
+              className={styles.actionPrimary}
+              onClick={refresh}
+            >
+              Retry
+            </button>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  const {
     stats,
     monthly,
     recentDeliveries,
@@ -74,15 +112,7 @@ export default async function PersonnelDashboard() {
     recentRepairs,
     lowStock,
     recentIssuances,
-  ] = await Promise.all([
-    getOperationsStats(),
-    getMonthlyOverview(),
-    getRecentDeliveries(5),
-    getRecentRequests(5),
-    getRecentRepairs(5),
-    getLowStockItems(5),
-    getRecentIssuances(5),
-  ]);
+  } = snapshot;
 
   const lowTotal = stats.lowStockCount + stats.outOfStockCount;
   const activeRepairs = stats.pendingRepairs + stats.inProgressRepairs;
@@ -90,26 +120,26 @@ export default async function PersonnelDashboard() {
   const statCards = [
     {
       label: "Total Deliveries",
-      value: stats.totalDeliveries.toLocaleString(),
+      value: stats.totalDeliveries.toLocaleString("en-PH"),
       delta: `${stats.pendingInspections} pending inspection`,
       href: "/personnel/deliveries",
     },
     {
       label: "Pending Inspections",
-      value: stats.pendingInspections.toLocaleString(),
+      value: stats.pendingInspections.toLocaleString("en-PH"),
       delta: stats.pendingInspections === 0 ? "All clear" : "Need review",
       href: "/personnel/inspections",
     },
     {
       label: "Pending Requests",
-      value: stats.pendingRequests.toLocaleString(),
+      value: stats.pendingRequests.toLocaleString("en-PH"),
       delta:
         stats.pendingRequests === 0 ? "Queue clear" : "Awaiting decision",
       href: "/personnel/requests",
     },
     {
       label: "Active Repairs",
-      value: activeRepairs.toLocaleString(),
+      value: activeRepairs.toLocaleString("en-PH"),
       delta:
         activeRepairs === 0
           ? "No open tickets"
@@ -118,7 +148,7 @@ export default async function PersonnelDashboard() {
     },
     {
       label: "Low / Out of Stock",
-      value: lowTotal.toLocaleString(),
+      value: lowTotal.toLocaleString("en-PH"),
       delta:
         lowTotal === 0
           ? `${stats.totalStockSkus} SKUs tracked`
@@ -127,19 +157,19 @@ export default async function PersonnelDashboard() {
     },
     {
       label: "Assets Tracked",
-      value: stats.totalAssets.toLocaleString(),
-      delta: `${stats.totalItems.toLocaleString()} items logged`,
+      value: stats.totalAssets.toLocaleString("en-PH"),
+      delta: `${stats.totalItems.toLocaleString("en-PH")} items logged`,
       href: "/personnel/assets",
     },
     {
       label: "PAR / ICS Issued",
-      value: stats.totalIssuances.toLocaleString(),
+      value: stats.totalIssuances.toLocaleString("en-PH"),
       delta: "Accountability docs",
       href: "/personnel/issuances",
     },
     {
       label: "Open Documents",
-      value: stats.totalDocuments.toLocaleString(),
+      value: stats.totalDocuments.toLocaleString("en-PH"),
       delta: stats.totalDocuments === 0 ? "All viewed" : "Unviewed",
       href: "/personnel/documents",
     },
@@ -370,10 +400,10 @@ export default async function PersonnelDashboard() {
               </table>
             </div>
           )}
-          <div>
+          <div className={styles.panelFooter}>
             <Link
               href="/personnel/deliveries"
-              className={styles.inspectLinkSecondary}
+              className={styles.inspectLink}
             >
               View all deliveries
             </Link>
@@ -421,10 +451,10 @@ export default async function PersonnelDashboard() {
               </table>
             </div>
           )}
-          <div>
+          <div className={styles.panelFooter}>
             <Link
               href="/personnel/requests"
-              className={styles.inspectLinkSecondary}
+              className={styles.inspectLink}
             >
               Review requests
             </Link>
@@ -467,10 +497,10 @@ export default async function PersonnelDashboard() {
               </table>
             </div>
           )}
-          <div>
+          <div className={styles.panelFooter}>
             <Link
               href="/personnel/repairs"
-              className={styles.inspectLinkSecondary}
+              className={styles.inspectLink}
             >
               Track repairs
             </Link>
@@ -518,10 +548,10 @@ export default async function PersonnelDashboard() {
               </table>
             </div>
           )}
-          <div>
+          <div className={styles.panelFooter}>
             <Link
               href="/personnel/inventory"
-              className={styles.inspectLinkSecondary}
+              className={styles.inspectLink}
             >
               Manage stocks
             </Link>
@@ -559,10 +589,10 @@ export default async function PersonnelDashboard() {
               </table>
             </div>
           )}
-          <div>
+          <div className={styles.panelFooter}>
             <Link
               href="/personnel/issuances"
-              className={styles.inspectLinkSecondary}
+              className={styles.inspectLink}
             >
               View issuances
             </Link>

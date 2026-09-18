@@ -138,12 +138,16 @@
 }
 
 .historyView {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 32px;
+  padding-inline: 0.875rem;
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 600;
   color: #fff;
   background: #243b66;
-  border-radius: 9999px;
-  padding: 5px 16px;
+  border-radius: 4px;
   text-decoration: none;
   white-space: nowrap;
 }

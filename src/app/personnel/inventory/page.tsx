@@ -1,11 +1,13 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import Link from 'next/link'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
+import { Loader2 } from 'lucide-react'
+import { toast } from 'sonner'
 import {
   Dialog,
   DialogContent,
@@ -22,7 +24,6 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import {
-  deleteInventoryItem,
   getInventoryItems,
   saveInventoryItem,
   syncUnstockedInspections,
@@ -30,6 +31,8 @@ import {
 } from './actions'
 import { TablePager } from '@/components/personnel/TablePager'
 import { usePageSize } from '@/hooks/use-page-size'
+import { useCachedAction } from '@/hooks/use-cached-action'
+import { CLIENT_CACHE_KEYS, bustClientCache } from '@/lib/client-cache'
 import { useMasterData } from '@/hooks/use-master-data'
 import styles from '../dashboard/page.module.css'
 import air from '../inspections/air-section.module.css'
@@ -87,8 +90,19 @@ const EMPTY_DRAFT: Draft = {
 }
 
 export default function PersonnelInventoryPage() {
-  const [rows, setRows] = useState<InventoryRow[]>([])
+  // Cached rows: back-navigation paints instantly from memory /
+  // sessionStorage and only revalidates silently when stale — no skeleton
+  // flash over data the user already saw.
+  const {
+    data: cachedRows,
+    loading,
+    refresh: refreshRows,
+  } = useCachedAction(CLIENT_CACHE_KEYS.inventory, getInventoryItems, {
+    staleTime: 60_000,
+  })
+  const rows = useMemo(() => cachedRows ?? [], [cachedRows])
   const [query, setQuery] = useState('')
+  const [kind, setKind] = useState<'all' | 'stock' | 'asset'>('all')
   const [accountCode, setAccountCode] = useState('all')
   const [level, setLevel] = useState('all')
   const [pageSize, setPageSize] = usePageSize('pgso:page-size:inventory', 10)
@@ -97,18 +111,16 @@ export default function PersonnelInventoryPage() {
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT)
   const [saving, setSaving] = useState(false)
   const [syncing, setSyncing] = useState(false)
-  const [syncMsg, setSyncMsg] = useState('')
   const [error, setError] = useState('')
   // Strict mode: code + unit come from Master Data.
   const master = useMasterData()
 
   const reload = () => {
-    void getInventoryItems().then(setRows)
+    // Own write (save / sync) — force fresh rows now and drop the dashboard
+    // snapshot (low-stock card) so its next visit refetches too.
+    bustClientCache(CLIENT_CACHE_KEYS.dashboard)
+    refreshRows()
   }
-
-  useEffect(() => {
-    reload()
-  }, [])
 
   const accountCodes = useMemo(() => {
     const set = new Set<string>()
@@ -136,6 +148,7 @@ export default function PersonnelInventoryPage() {
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
     return rows.filter((r) => {
+      if (kind !== 'all' && (r.delivery_kind ?? '') !== kind) return false
       if (accountCode !== 'all' && (r.account_code ?? '') !== accountCode)
         return false
       if (level !== 'all') {
@@ -151,7 +164,7 @@ export default function PersonnelInventoryPage() {
       }
       return true
     })
-  }, [rows, query, accountCode, level])
+  }, [rows, query, kind, accountCode, level])
 
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize))
   const safePage = Math.min(Math.max(1, page), pageCount)
@@ -162,20 +175,6 @@ export default function PersonnelInventoryPage() {
 
   function openAdd() {
     setDraft(EMPTY_DRAFT)
-    setError('')
-    setDialogOpen(true)
-  }
-
-  function openEdit(item: InventoryRow) {
-    setDraft({
-      id: item.id,
-      item_name: item.item_name,
-      account_code: item.account_code ?? '',
-      quantity: String(item.quantity),
-      unit: item.unit ?? '',
-      unit_cost: item.unit_cost != null ? String(item.unit_cost) : '',
-      location: item.location ?? '',
-    })
     setError('')
     setDialogOpen(true)
   }
@@ -202,39 +201,37 @@ export default function PersonnelInventoryPage() {
     reload()
   }
 
-  async function onDelete(item: InventoryRow) {
-    if (!window.confirm(`Delete "${item.item_name}" from stocks?`)) return
-    const res = await deleteInventoryItem(item.id)
-    if (!res.success) {
-      window.alert(res.error ?? 'Failed to delete the stock item.')
-      return
-    }
-    reload()
-  }
-
   async function onSync() {
     setSyncing(true)
-    setSyncMsg('')
     const res = await syncUnstockedInspections()
     setSyncing(false)
     if (!res.success) {
-      setSyncMsg(res.error ?? 'Sync failed. Please try again.')
+      toast.error(res.error ?? 'Sync failed. Please try again.', {
+        duration: 2000,
+        closeButton: true,
+      })
       return
     }
-    setSyncMsg(
-      res.stocked === 0 && (res.costsFixed ?? 0) === 0
-        ? 'Everything is already in stocks — nothing to sync.'
-        : [
-            res.stocked
-              ? `Moved ${res.stocked} inspection${res.stocked !== 1 ? 's' : ''} into stocks.`
-              : '',
-            res.costsFixed
-              ? `Restored unit costs on ${res.costsFixed} stock item${res.costsFixed !== 1 ? 's' : ''} from deliveries.`
-              : '',
-          ]
-            .filter(Boolean)
-            .join(' ')
-    )
+    if (res.stocked === 0 && (res.costsFixed ?? 0) === 0) {
+      toast.info('Everything is already in stocks — nothing to sync.', {
+        duration: 2000,
+        closeButton: true,
+      })
+    } else {
+      toast.success(
+        [
+          res.stocked
+            ? `Moved ${res.stocked} inspection${res.stocked !== 1 ? 's' : ''} into stocks.`
+            : '',
+          res.costsFixed
+            ? `Restored unit costs on ${res.costsFixed} stock item${res.costsFixed !== 1 ? 's' : ''} from deliveries.`
+            : '',
+        ]
+          .filter(Boolean)
+          .join(' '),
+        { duration: 2000, closeButton: true }
+      )
+    }
     reload()
   }
 
@@ -254,8 +251,17 @@ export default function PersonnelInventoryPage() {
         <div>
           <h1 className={styles.title}>Stocks</h1>
           <p className={styles.subtitle}>
-            {filtered.length} of {rows.length} stock item
-            {rows.length !== 1 ? 's' : ''} shown
+            {loading ? (
+              <span
+                className="mt-1 block h-4 w-48 animate-pulse rounded bg-navy-100"
+                aria-hidden="true"
+              />
+            ) : (
+              <>
+                {filtered.length} of {rows.length} stock item
+                {rows.length !== 1 ? 's' : ''} shown
+              </>
+            )}
           </p>
         </div>
         <div className={styles.actions}>
@@ -264,40 +270,49 @@ export default function PersonnelInventoryPage() {
             variant="outline"
             onClick={() => void onSync()}
             disabled={syncing}
-            className="gap-2"
+            className="h-8 gap-2 rounded-[4px] px-3.5 text-xs font-semibold"
           >
             {syncing ? 'Syncing…' : 'Sync from inspections'}
           </Button>
-          <Button type="button" onClick={openAdd} className="gap-2">
+          <Button
+            type="button"
+            onClick={openAdd}
+            className="h-8 gap-2 rounded-[4px] px-3.5 text-xs font-semibold"
+          >
             Add stock
           </Button>
         </div>
       </div>
 
-      {syncMsg ? (
-        <p className={air.syncMsg} role="status">
-          {syncMsg}
-        </p>
-      ) : null}
-
       <div className={air.stats}>
-        <div className={air.stat}>
-          <p className={air.statValue}>{stats.skus}</p>
-          <p className={air.statLabel}>Items tracked</p>
-        </div>
-        <div className={air.stat}>
-          <p className={air.statValue}>{stats.units.toLocaleString()}</p>
-          <p className={air.statLabel}>Total units on hand</p>
-        </div>
-        <div className={air.stat}>
-          <p className={air.statValue}>
-            {stats.low + stats.critical}
-          </p>
-          <p className={air.statLabel}>Low / critical items</p>
-        </div>
+        {(
+          [
+            { label: 'Items tracked', value: loading ? null : String(stats.skus) },
+            {
+              label: 'Total units on hand',
+              value: loading ? null : stats.units.toLocaleString(),
+            },
+            {
+              label: 'Low / critical items',
+              value: loading ? null : String(stats.low + stats.critical),
+            },
+          ] as const
+        ).map((s) => (
+          <div key={s.label} className={air.stat}>
+            <p className={air.statValue}>
+              {s.value ?? (
+                <span
+                  className="block h-7 w-12 animate-pulse rounded bg-navy-100"
+                  aria-hidden="true"
+                />
+              )}
+            </p>
+            <p className={air.statLabel}>{s.label}</p>
+          </div>
+        ))}
       </div>
 
-      {stats.out + stats.low + stats.critical > 0 ? (
+      {!loading && stats.out + stats.low + stats.critical > 0 ? (
         <div
           role="alert"
           className="rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900"
@@ -322,7 +337,110 @@ export default function PersonnelInventoryPage() {
       ) : null}
 
       <Card className={styles.panel}>
-        <div className={air.controls}>
+        <div
+          className={styles.filterBtns}
+          role="group"
+          aria-label="Filter by delivery type"
+          style={{ marginBottom: '0.75rem' }}
+        >
+          {(
+            [
+              { value: 'all', label: 'All' },
+              { value: 'stock', label: 'Stocks' },
+              { value: 'asset', label: 'Assets' },
+            ] as const
+          ).map((t) => (
+            <button
+              key={t.value}
+              type="button"
+              className={styles.filterBtn}
+              data-active={kind === t.value}
+              onClick={() => {
+                setKind(t.value)
+                setPage(1)
+              }}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+        {loading ? (
+          <>
+            <div className={air.controls} aria-hidden="true">
+              <div className={`${air.search} h-9 animate-pulse rounded-md bg-navy-100`} />
+              <div className="h-9 w-44 animate-pulse rounded-md bg-navy-100" />
+              <div className="h-9 w-40 animate-pulse rounded-md bg-navy-100" />
+            </div>
+            <div className={styles.tableWrap}>
+              <table className={styles.table}>
+                <thead>
+                  <tr>
+                    <th>Item</th>
+                    <th>Account code</th>
+                    <th>Type</th>
+                    <th>Quantity</th>
+                    <th>Unit</th>
+                    <th>Unit cost</th>
+                    <th>Location</th>
+                    <th>Stock level</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {Array.from({ length: pageSize }).map((_, r) => (
+                    <tr key={r} style={{ opacity: 1 - r * 0.05 }}>
+                      <td>
+                        <div className="h-3.5 w-28 animate-pulse rounded bg-navy-100" />
+                      </td>
+                      <td>
+                        <div className="h-3.5 w-20 animate-pulse rounded bg-navy-100" />
+                      </td>
+                      <td>
+                        <div className="h-[22px] w-14 animate-pulse rounded-full bg-navy-100" />
+                      </td>
+                      <td>
+                        <div className="h-3.5 w-10 animate-pulse rounded bg-navy-100" />
+                      </td>
+                      <td>
+                        <div className="h-3.5 w-10 animate-pulse rounded bg-navy-100" />
+                      </td>
+                      <td>
+                        <div className="h-3.5 w-16 animate-pulse rounded bg-navy-100" />
+                      </td>
+                      <td>
+                        <div className="h-3.5 w-24 animate-pulse rounded bg-navy-100" />
+                      </td>
+                      <td>
+                        <div className="h-[22px] w-20 animate-pulse rounded-full bg-navy-100" />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className={styles.pager} aria-hidden="true">
+              <span className={styles.pagerInfo}>
+                <span className="block h-3 w-36 animate-pulse rounded bg-navy-100" />
+              </span>
+              <div className={styles.pagerControls}>
+                <span className={styles.pageSizeWrap}>
+                  <span>Rows</span>
+                  <span className="h-8 w-[5.5rem] animate-pulse rounded-md bg-navy-100" />
+                </span>
+                <span className={styles.pageBtn} aria-hidden="true">
+                  ‹
+                </span>
+                <span className={styles.pageBtn} data-active="true">
+                  1
+                </span>
+                <span className={styles.pageBtn} aria-hidden="true">
+                  ›
+                </span>
+              </div>
+            </div>
+          </>
+        ) : (
+          <>
+        <div className={air.controls} style={{ justifyContent: 'flex-end', marginLeft: 'auto' }}>
           <Input
             type="search"
             value={query}
@@ -334,7 +452,7 @@ export default function PersonnelInventoryPage() {
             className={air.search}
             aria-label="Search stocks"
           />
-<Select
+          <Select
             value={accountCode}
             onValueChange={(v) => {
               setAccountCode(v)
@@ -384,60 +502,60 @@ export default function PersonnelInventoryPage() {
         ) : (
           <div className={styles.tableWrap}>
             <table className={styles.table}>
-              <thead>
-                <tr>
-                  <th>Item</th>
-                  <th>Account code</th>
-                  <th>Quantity</th>
-                  <th>Unit</th>
-                  <th>Unit cost</th>
-                  <th>Location</th>
-                  <th>Stock level</th>
-                  <th>Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {visible.map((item) => {
-                  const lv = levelOf(item)
-                  return (
-                    <tr key={item.id}>
-                          <td>{item.item_name}</td>
-                          <td>{item.account_code ?? '—'}</td>
-                          <td>{item.quantity}</td>
-                          <td>{item.unit ?? '—'}</td>
-                          <td>
-                            {item.unit_cost != null
-                              ? new Intl.NumberFormat('en-PH', {
-                                  style: 'currency',
-                                  currency: 'PHP',
-                                  minimumFractionDigits: 2,
-                                }).format(item.unit_cost)
-                              : '—'}
-                          </td>
-                          <td>{item.location ?? '—'}</td>
-                      <td>
-                        <span className={styles.status} data-tone={levelTone(lv)}>
-                          {levelLabel(lv)}
-                        </span>
-                      </td>
-                      <td className="text-left">
-                        <button
-                          type="button"
-                          className={`${styles.inspectLink} cursor-pointer`}
-                          onClick={() => openEdit(item)}
-                          aria-label={`Edit ${item.item_name}`}
-                        >
-                          Edit
-                        </button>{' '}
-                        <button
-                          type="button"
-                          className={`${styles.inspectLink} cursor-pointer`}
-                          onClick={() => void onDelete(item)}
-                          aria-label={`Delete ${item.item_name}`}
-                        >
-                          Delete
-                        </button>
-                      </td>
+                <thead>
+                  <tr>
+                    <th>Item</th>
+                    <th>Account code</th>
+                    <th>Type</th>
+                    <th>Quantity</th>
+                    <th>Unit</th>
+                    <th>Unit cost</th>
+                    <th>Location</th>
+                    <th>Stock level</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {visible.map((item) => {
+                    const lv = levelOf(item)
+                    const kindLabel =
+                      item.delivery_kind === 'stock'
+                        ? 'Stocks'
+                        : item.delivery_kind === 'asset'
+                          ? 'Assets'
+                          : '—'
+                    return (
+                      <tr key={item.id}>
+                        <td>{item.item_name}</td>
+                        <td>{item.account_code ?? '—'}</td>
+                        <td>
+                          <span
+                            className={styles.status}
+                            data-tone={
+                              kindLabel === 'Assets'
+                                ? 'warn'
+                                : 'info'
+                            }
+                          >
+                            {kindLabel}
+                          </span>
+                        </td>
+                        <td>{item.quantity}</td>
+                        <td>{item.unit ?? '—'}</td>
+                        <td>
+                          {item.unit_cost != null
+                            ? new Intl.NumberFormat('en-PH', {
+                                style: 'currency',
+                                currency: 'PHP',
+                                minimumFractionDigits: 2,
+                              }).format(item.unit_cost)
+                            : '—'}
+                        </td>
+                        <td>{item.location ?? '—'}</td>
+                        <td>
+                          <span className={styles.status} data-tone={levelTone(lv)}>
+                            {levelLabel(lv)}
+                          </span>
+                        </td>
                     </tr>
                   )
                 })}
@@ -455,6 +573,8 @@ export default function PersonnelInventoryPage() {
             onPageChange={setPage}
           />
         ) : null}
+          </>
+        )}
       </Card>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
@@ -703,6 +823,7 @@ export default function PersonnelInventoryPage() {
               variant="outline"
               onClick={() => setDialogOpen(false)}
               disabled={saving}
+              className="h-8 rounded-[4px] px-3.5 text-xs font-semibold"
             >
               Cancel
             </Button>
@@ -710,10 +831,39 @@ export default function PersonnelInventoryPage() {
               type="button"
               disabled={!canSave || saving}
               onClick={() => void onSave()}
+              className="h-8 rounded-[4px] px-3.5 text-xs font-semibold"
             >
               {saving ? 'Saving…' : draft.id ? 'Save changes' : 'Add stock'}
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Blocking loading overlay while syncing from inspections */}
+      <Dialog open={syncing}>
+        <DialogContent
+          showCloseButton={false}
+          aria-describedby={undefined}
+          onPointerDownOutside={(e) => e.preventDefault()}
+          onEscapeKeyDown={(e) => e.preventDefault()}
+          className="bg-white sm:max-w-xs dark:bg-white"
+        >
+          <DialogHeader>
+            <DialogTitle>Syncing from inspections</DialogTitle>
+            <DialogDescription>
+              Moving inspected items into stocks — please wait.
+            </DialogDescription>
+          </DialogHeader>
+          <div
+            className="flex items-center justify-center gap-3 py-4"
+            role="status"
+            aria-label="Syncing inspections"
+          >
+            <Loader2 className="h-6 w-6 animate-spin text-navy-800" />
+            <span className="text-sm font-semibold text-navy-800">
+              Syncing…
+            </span>
+          </div>
         </DialogContent>
       </Dialog>
     </section>

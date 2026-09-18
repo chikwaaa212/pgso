@@ -137,7 +137,9 @@ export function InspectionReceipt({
                 ? "COMPLETE"
                 : delivery.delivery_status === "partial"
                   ? "PARTIAL"
-                  : (delivery.delivery_status ?? "—").toUpperCase(),
+                  : delivery.delivery_status === "awaiting"
+                    ? "WAITING FOR ARRIVAL"
+                    : (delivery.delivery_status ?? "—").toUpperCase(),
             ],
             ["Received By", recipient],
             [
@@ -204,9 +206,9 @@ export function InspectionReceipt({
                 <th>#</th>
                 <th>Item Description</th>
                 <th>Unit</th>
-                <th className={styles.num}>Qty (PO)</th>
-                <th className={styles.num}>Unit Cost</th>
-                <th className={styles.num}>Qty Recvd</th>
+                <th>Qty (PO)</th>
+                <th>Unit Cost</th>
+                <th>Qty Recvd</th>
                 <th>Status</th>
                 <th>Remarks</th>
               </tr>
@@ -217,12 +219,12 @@ export function InspectionReceipt({
                 const qty = check?.actualQty ?? item.quantity;
                 return (
                   <tr key={item.id}>
-                    <td className={styles.idx}>{i + 1}</td>
+                    <td>{i + 1}</td>
                     <td className={styles.itemName}>{item.item_name}</td>
                     <td>{item.unit ?? "—"}</td>
-                    <td className={styles.num}>{item.quantity}</td>
-                    <td className={styles.num}>{peso(item.unit_cost)}</td>
-                    <td className={styles.num}>{qty}</td>
+                    <td>{item.quantity}</td>
+                    <td>{peso(item.unit_cost)}</td>
+                    <td>{qty}</td>
                     <td>
                       <span
                         className={styles.itemStatus}
@@ -240,7 +242,7 @@ export function InspectionReceipt({
               <tfoot>
                 <tr>
                   <td colSpan={5}>ESTIMATED TOTAL</td>
-                  <td className={styles.num} colSpan={3}>
+                  <td colSpan={3}>
                     {peso(itemTotal)}
                   </td>
                 </tr>

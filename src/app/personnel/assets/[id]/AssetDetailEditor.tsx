@@ -384,7 +384,12 @@ export function AssetDetailEditor({
         <div className={styles.actions}>
           {!isEditing && (
             <Link href={backHref ?? "/personnel/assets"}>
-              <Button type="button" variant="outline" size="sm">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 gap-2 rounded-[4px] px-3.5 text-xs font-semibold"
+              >
                 Back to Assets
               </Button>
             </Link>
@@ -396,6 +401,7 @@ export function AssetDetailEditor({
                 variant="ghost"
                 size="sm"
                 onClick={() => setIsEditing(false)}
+                className="h-8 gap-2 rounded-[4px] px-3.5 text-xs font-semibold"
               >
                 Cancel
               </Button>
@@ -405,6 +411,7 @@ export function AssetDetailEditor({
                 variant="primary"
                 size="sm"
                 onClick={() => setIsEditing(true)}
+                className="h-8 gap-2 rounded-[4px] px-3.5 text-xs font-semibold"
               >
                 Edit
               </Button>
@@ -433,6 +440,7 @@ export function AssetDetailEditor({
                 variant="outline"
                 size="sm"
                 onClick={() => setIsEditing(false)}
+                className="h-8 gap-2 rounded-[4px] px-3.5 text-xs font-semibold"
               >
                 Cancel
               </Button>
@@ -442,6 +450,7 @@ export function AssetDetailEditor({
                 size="sm"
                 disabled={isPending}
                 aria-busy={isPending}
+                className="h-8 gap-2 rounded-[4px] px-3.5 text-xs font-semibold"
               >
                 {isPending ? (
                   <>

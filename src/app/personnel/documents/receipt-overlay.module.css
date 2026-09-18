@@ -1,7 +1,9 @@
-/* Wide + tall receipt viewport with the scrollbar hidden
-   (content still scrolls via wheel / touch / keyboard). */
+/* Wide + tall receipt viewport: vertical scroll works but its scrollbar
+   is hidden (wheel / touch / keyboard), and horizontal scrolling is
+   locked off entirely — inner receipt content must wrap instead. */
 .overlayContent {
   height: 92vh;
+  overflow-x: hidden;
   overscroll-behavior: contain;
   scrollbar-width: none;
   -ms-overflow-style: none;

@@ -55,7 +55,10 @@ export async function GET(request: Request) {
           'Employee'
 
         let profile = await prisma.profile
-          .findUnique({ where: { id: user.id } })
+          .findUnique({
+            where: { id: user.id },
+            select: { id: true, role: true, status: true },
+          })
           .catch(() => null)
 
         // First-time OAuth user → employee self-registration (pending approval).
@@ -63,6 +66,7 @@ export async function GET(request: Request) {
           profile = await prisma.profile
             .create({
               data: { id: user.id, full_name: fullName, role: 'employee', status: 'pending' },
+              select: { id: true, role: true, status: true },
             })
             .catch(() => null)
           if (profile) {

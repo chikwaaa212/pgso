@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useMemo, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
@@ -22,13 +22,23 @@ import { browseRequests, type BrowseRequestRow } from "../browse/actions";
 import { setReplenishmentStatus } from "./actions";
 import { RequestQrButton } from "@/components/personnel/RequestQrButton";
 import { label } from "@/lib/labels";
+import { useCachedAction } from "@/hooks/use-cached-action";
+import { CLIENT_CACHE_KEYS } from "@/lib/client-cache";
+import RequestsLoading from "./loading";
 import styles from "./page.module.css";
 
 type AdminStatus = "approved" | "rejected" | "completed";
 
 export default function SuperAdminRequestsPage() {
-  const [rows, setRows] = useState<BrowseRequestRow[]>([]);
-  const [loading, setLoading] = useState(true);
+  // Same client caching as the personnel requests page: back-navigation
+  // paints instantly from memory / sessionStorage and only revalidates
+  // silently when stale (30s, matching the server list cache).
+  const { data, loading, refresh } = useCachedAction(
+    CLIENT_CACHE_KEYS.adminRequests,
+    browseRequests,
+    { staleTime: 30_000 }
+  );
+  const rows = useMemo(() => data ?? [], [data]);
   const [actingId, setActingId] = useState<string | null>(null);
   const [actionError, setActionError] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -38,21 +48,21 @@ export default function SuperAdminRequestsPage() {
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState("");
 
+  // Decisions bust the server caches — refresh() refetches silently with
+  // rows kept visible (no skeleton flash).
   const reload = () => {
-    setLoading(true);
-    void browseRequests().then((r) => {
-      setRows(r);
-      setLoading(false);
-    });
+    refresh();
   };
 
-  useEffect(() => {
-    reload();
-  }, []);
-
-  const replenishmentCount = rows.filter(
-    (r) => r.request_type === "stock_replenishment" && (r.status ?? "pending") === "pending"
-  ).length;
+  const replenishmentCount = useMemo(
+    () =>
+      rows.filter(
+        (r) =>
+          r.request_type === "stock_replenishment" &&
+          (r.status ?? "pending") === "pending"
+      ).length,
+    [rows]
+  );
 
   function openAction(row: BrowseRequestRow, status: AdminStatus) {
     setActionRow(row);
@@ -89,7 +99,7 @@ export default function SuperAdminRequestsPage() {
     { key: "employee", label: "Requester", value: (r) => r.employee_name, text: (r) => r.employee_name },
     { key: "logged_by", label: "Filed By", value: (r) => r.logged_by ?? "—", text: (r) => r.logged_by ?? "" },
     { key: "type", label: "Type", value: (r) => label(r.request_type), text: (r) => r.request_type },
-    { key: "asset", label: "Item", value: (r) => r.asset_label ?? "—", text: (r) => r.asset_label ?? "" },
+    { key: "asset", label: "Item", value: (r) => r.account_code ?? "—", text: (r) => `${r.account_code ?? ""} ${r.asset_label ?? ""}` },
     {
       key: "detail",
       label: "Detail",
@@ -162,16 +172,18 @@ export default function SuperAdminRequestsPage() {
     },
   ];
 
+  if (loading) {
+    return <RequestsLoading />;
+  }
+
   return (
     <section className={styles.section}>
       <p className={styles.crumb}>Super Admin / Requests</p>
       <div>
         <h1 className={styles.title}>Requests</h1>
         <p className={styles.subtitle}>
-          {loading
-            ? "Loading…"
-            : `${rows.length} ${rows.length === 1 ? "request" : "requests"}`}
-          {replenishmentCount > 0 && !loading
+          {`${rows.length} ${rows.length === 1 ? "request" : "requests"}`}
+          {replenishmentCount > 0
             ? ` · ${replenishmentCount} replenishment pending`
             : ""}
           {" · "}personnel replenishment is actionable; employee requests are read-only

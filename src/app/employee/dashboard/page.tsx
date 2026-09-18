@@ -1,6 +1,7 @@
 import Image from 'next/image'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
+import prisma from '@/lib/prisma'
 import { Card } from '@/components/ui/card'
 import styles from './page.module.css'
 
@@ -8,12 +9,36 @@ export default async function EmployeeDashboard() {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
 
+  let displayName = 'Employee'
+  let contextLine: string | null = null
+  if (user) {
+    try {
+      const profile = await prisma.profile.findUnique({
+        where: { id: user.id },
+        select: {
+          full_name: true,
+          first_name: true,
+          position: true,
+          office: true,
+          department: true,
+        },
+      })
+      const firstName = profile?.first_name?.trim()
+      const fullName = profile?.full_name?.trim()
+      displayName = firstName || fullName || 'Employee'
+      const context = [profile?.position?.trim(), profile?.office?.trim() || profile?.department?.trim()].filter(Boolean)
+      contextLine = context.length > 0 ? context.join(' · ') : null
+    } catch {
+      // Fall back to the generic greeting if the profile can't be read.
+    }
+  }
+
   return (
     <section className={styles.section}>
       <p className={styles.crumb}>Employee / Dashboard</p>
-      <h1 className={styles.title}>Welcome, Employee</h1>
+      <h1 className={styles.title}>Welcome, {displayName}</h1>
       <p className={styles.subtitle}>
-        Signed in as {user?.email}
+        Signed in as {user?.email}{contextLine ? ` · ${contextLine}` : ''}
       </p>
 
       <div className={styles.grid}>

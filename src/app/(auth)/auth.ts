@@ -115,6 +115,7 @@ export async function login(
 
         const profile = await prisma.profile.findUnique({
           where: { id: user.id },
+          select: { role: true, status: true },
         })
 
         if (!profile) {
@@ -198,6 +199,7 @@ export async function signup(_prevState: SignupState, formData: FormData) {
               role: 'employee',
               status: 'pending',
             },
+            select: { id: true },
           })
         } catch {
           await supabase.auth.admin.deleteUser(data.user.id)

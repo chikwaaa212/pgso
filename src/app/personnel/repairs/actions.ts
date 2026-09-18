@@ -1,6 +1,15 @@
 'use server'
 
-import { revalidatePath } from 'next/cache'
+import { revalidatePath as nextRevalidatePath } from 'next/cache'
+
+// Every Next.js revalidation also busts the Upstash personnel cache so
+// Redis never serves stale lists after a write (fire-and-forget).
+function revalidatePath(path: string) {
+  nextRevalidatePath(path)
+  void import('@/lib/personnel-cache')
+    .then((m) => m.bustPersonnelCache())
+    .catch(() => {})
+}
 import { createClient } from '@/lib/supabase/server'
 import prisma from '@/lib/prisma'
 import { writeAuditLog } from '@/lib/audit'
@@ -54,8 +63,16 @@ function assetLabel(a: {
 }
 
 export async function getRepairs(): Promise<RepairRow[]> {
+  const { withScopedCache } = await import('@/lib/personnel-cache')
+  // v2 = strict owner filter (created_by = me). Bumps the cache key so the
+  // pre-fix payload (which included legacy NULL rows for everyone) is
+  // never served after deploy.
+  return withScopedCache('personnel:repairs', 30, async () => {
   try {
-    // Own-data only for personnel (legacy NULL stays visible); super_admin sees all.
+    // Strict own-data for personnel: only tickets this login created
+    // (manual logs) or auto-tickets routed to them as the request
+    // recipient (see setRequestStatus). No legacy-NULL fallback — a NULL
+    // owner must never leak another user's ticket. Super_admin sees all.
     const scope = await getPersonnelScope()
     if (scope.isEmpty || !scope.userId) return []
     interface RepairDbRow {
@@ -86,10 +103,14 @@ export async function getRepairs(): Promise<RepairRow[]> {
                status, cost, technician, created_at,
                created_by::text AS created_by
         FROM repairs
-        WHERE created_by = ${scope.userId}::uuid OR created_by IS NULL
+        WHERE created_by = ${scope.userId}::uuid
         ORDER BY created_at DESC`
     } catch {
-      // Column missing (migration not applied yet) → fall back to all.
+      // Column missing (migration not applied yet) → fail closed for
+      // personnel: returning everything would leak other users' tickets.
+      // Super_admin keeps the unfiltered fallback; personnel gets nothing
+      // rather than the whole table.
+      if (!scope.isSuperAdmin) return []
       const fallback = await prisma.repair.findMany({
         orderBy: { created_at: 'desc' },
       })
@@ -147,6 +168,7 @@ export async function getRepairs(): Promise<RepairRow[]> {
     console.error('[getRepairs]', e)
     return []
   }
+  }, { v: 2 })
 }
 
 export async function getRepair(id: string): Promise<RepairRow | null> {
@@ -163,6 +185,8 @@ export async function getRepairFormOptions(): Promise<{
   assets: RepairAssetOption[]
   employees: RepairEmployeeOption[]
 }> {
+  const { withCache, cacheKey } = await import('@/lib/personnel-cache')
+  return withCache(cacheKey('personnel:repair-form-options'), 60, async () => {
   try {
     const [profiles, assets] = await Promise.all([
       prisma.profile.findMany({
@@ -194,6 +218,7 @@ export async function getRepairFormOptions(): Promise<{
     console.error('[getRepairFormOptions]', e)
     return { assets: [], employees: [] }
   }
+  })
 }
 
 export interface RepairState {
@@ -297,7 +322,13 @@ export async function createRepair(
     // best-effort only
   }
 
+  // Await the Redis bust BEFORE reporting success: otherwise the client's
+  // immediate refetch wins the race, serves pre-write rows, and re-caches
+  // them as fresh (same pattern as requests / deliveries writes).
+  const { bustPersonnelCache } = await import('@/lib/personnel-cache')
+  await bustPersonnelCache()
   revalidatePath('/personnel/repairs')
+  revalidatePath('/personnel/dashboard')
   return { success: true }
 }
 
@@ -342,14 +373,15 @@ export async function updateRepair(
 
   try {
     const scope = await getPersonnelScope()
-    // Own-data only for personnel (legacy NULL editable by all); super_admin bypasses.
+    // Strict own-data for personnel: a ticket with no owner or another
+    // owner's id is invisible AND uneditable. Super_admin bypasses.
     if (!scope.isSuperAdmin) {
       try {
         const owner = await prisma.$queryRaw<Array<{ created_by: string | null }>>`
           SELECT created_by::text AS created_by FROM repairs WHERE id = ${id}::uuid`
         const createdBy = owner[0]?.created_by ?? null
         if (!scope.userId) return { error: 'You must be signed in.' }
-        if (createdBy && createdBy !== scope.userId)
+        if (owner.length === 0 || createdBy !== scope.userId)
           return { error: 'You can only update your own repair tickets.' }
       } catch {
         const existing = await prisma.repair.findUnique({
@@ -357,6 +389,8 @@ export async function updateRepair(
           select: { id: true },
         })
         if (!existing) return { error: 'Repair ticket not found.' }
+        // Column missing → fail closed: cannot prove ownership.
+        if (!scope.isSuperAdmin) return { error: 'You can only update your own repair tickets.' }
       }
     }
 
@@ -397,7 +431,11 @@ export async function updateRepair(
     // best-effort only
   }
 
+  // Await the Redis bust BEFORE reporting success (see createRepair).
+  const { bustPersonnelCache: bustUpdateCache } = await import('@/lib/personnel-cache')
+  await bustUpdateCache()
   revalidatePath('/personnel/repairs')
+  revalidatePath('/personnel/dashboard')
   return { success: true }
 }
 
@@ -410,7 +448,7 @@ export async function setRepairStatus(
     return { error: 'Select a valid status.' }
 
   try {
-    // Own-data only for personnel (legacy NULL editable by all); super_admin bypasses.
+    // Strict own-data for personnel: invisible tickets are also uneditable.
     const scope = await getPersonnelScope()
     if (!scope.isSuperAdmin) {
       if (!scope.userId) return { error: 'You must be signed in.' }
@@ -419,10 +457,11 @@ export async function setRepairStatus(
           SELECT created_by::text AS created_by FROM repairs WHERE id = ${id}::uuid`
         if (owner.length === 0) return { error: 'Repair ticket not found.' }
         const createdBy = owner[0]?.created_by ?? null
-        if (createdBy && createdBy !== scope.userId)
+        if (createdBy !== scope.userId)
           return { error: 'You can only update your own repair tickets.' }
       } catch {
-        /* column missing → fall through to field guards below */
+        // Column missing → fail closed, cannot prove ownership.
+        return { error: 'You can only update your own repair tickets.' }
       }
     }
     // Guard the quick-action buttons so a repair can't be started/completed
@@ -472,6 +511,10 @@ export async function setRepairStatus(
     // best-effort only
   }
 
+  // Await the Redis bust BEFORE reporting success (see createRepair).
+  const { bustPersonnelCache: bustStatusCache } = await import('@/lib/personnel-cache')
+  await bustStatusCache()
   revalidatePath('/personnel/repairs')
+  revalidatePath('/personnel/dashboard')
   return { success: true }
 }

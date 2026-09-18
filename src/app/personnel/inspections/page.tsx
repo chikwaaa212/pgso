@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import Link from 'next/link'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -14,8 +14,11 @@ import {
 import { getInspectionsList, type UnifiedInspectionRow } from './actions'
 import { IarDialog } from '@/components/personnel/IarDialog'
 import { IarAttachButton } from '@/components/personnel/IarAttach'
+import { InspectConfirmButton } from '@/components/personnel/InspectConfirmDialog'
 import { TablePager } from '@/components/personnel/TablePager'
 import { usePageSize } from '@/hooks/use-page-size'
+import { useCachedAction } from '@/hooks/use-cached-action'
+import { CLIENT_CACHE_KEYS, bustClientCache } from '@/lib/client-cache'
 import styles from '../dashboard/page.module.css'
 import air from './air-section.module.css'
 
@@ -72,8 +75,101 @@ const AIR_RESULT_FILTERS = [
   { value: 'pending', label: 'Pending' },
 ] as const
 
+/**
+ * Skeleton for the AIR / IAR tab — same stats, controls, card grid, and
+ * pager positions as the real data so nothing jumps when records arrive.
+ */
+function AirTabSkeleton() {
+  return (
+    <div aria-hidden="true">
+      <div className={air.stats}>
+        {['Total records', 'AIR / IAR issued', 'Awaiting AIR'].map((label) => (
+          <div key={label} className={air.stat}>
+            <p className={air.statValue}>
+              <span className="block h-7 w-12 animate-pulse rounded bg-navy-100" />
+            </p>
+            <p className={air.statLabel}>{label}</p>
+          </div>
+        ))}
+      </div>
+
+      <div className={air.controls}>
+        <div className={`${air.search} h-9 animate-pulse rounded-md bg-navy-100`} />
+        <div className="h-9 w-44 animate-pulse rounded-md bg-navy-100" />
+        <div className="h-9 w-40 animate-pulse rounded-md bg-navy-100" />
+      </div>
+
+      <div className={air.grid}>
+        {Array.from({ length: 6 }).map((_, i) => (
+          <article
+            key={i}
+            className={air.card}
+            style={{ opacity: 1 - i * 0.08 }}
+          >
+            <div className={air.cardTop}>
+              <div className="h-5 w-20 animate-pulse rounded bg-navy-100" />
+              <span className={air.chips}>
+                <span className="h-[22px] w-16 animate-pulse rounded-full bg-navy-100" />
+                <span className="h-[22px] w-14 animate-pulse rounded-full bg-navy-100" />
+              </span>
+            </div>
+            <dl className={air.meta}>
+              {['Supplier', 'PO ref', 'Delivered', 'Inspector', 'Inspected', 'Items'].map(
+                (label) => (
+                  <div key={label}>
+                    <dt>{label}</dt>
+                    <dd>
+                      <span className="mt-1 block h-4 w-3/4 animate-pulse rounded bg-navy-100" />
+                    </dd>
+                  </div>
+                )
+              )}
+              <div className={air.metaFull}>
+                <dt>IAR No.</dt>
+                <dd>
+                  <span className="mt-1 block h-4 w-1/2 animate-pulse rounded bg-navy-200" />
+                </dd>
+              </div>
+            </dl>
+            <div className={air.actions}>
+              <span className={air.primary}>View IAR</span>
+              <span className={air.secondary}>Details</span>
+            </div>
+          </article>
+        ))}
+      </div>
+
+      <div className={styles.pager}>
+        <span className={styles.pagerInfo}>
+          <span className="block h-3 w-36 animate-pulse rounded bg-navy-100" />
+        </span>
+        <div className={styles.pagerControls}>
+          <span className={styles.pageSizeWrap}>
+            <span>Rows</span>
+            <span className="h-8 w-[5.5rem] animate-pulse rounded-md bg-navy-100" />
+          </span>
+          <span className={styles.pageBtn}>‹</span>
+          <span className={styles.pageBtn} data-active="true">
+            1
+          </span>
+          <span className={styles.pageBtn}>›</span>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function PersonnelInspectionsPage() {
-  const [rows, setRows] = useState<UnifiedInspectionRow[]>([])
+  // Cached rows: back-navigation paints instantly from memory /
+  // sessionStorage and only revalidates silently when stale.
+  const {
+    data: cachedRows,
+    loading,
+    refresh: refreshRows,
+  } = useCachedAction(CLIENT_CACHE_KEYS.inspections, getInspectionsList, {
+    staleTime: 30_000,
+  })
+  const rows = useMemo(() => cachedRows ?? [], [cachedRows])
   const [tab, setTab] = useState<'inspections' | 'air'>('inspections')
   const [filter, setFilter] = useState('all')
   const [query, setQuery] = useState('')
@@ -87,13 +183,17 @@ export default function PersonnelInspectionsPage() {
   const [airPageSize, setAirPageSize] = usePageSize('pgso:page-size:air', 10)
   const [airPage, setAirPage] = useState(1)
 
-  const reload = useCallback(() => {
-    void getInspectionsList().then(setRows)
-  }, [])
-
-  useEffect(() => {
-    void reload()
-  }, [reload])
+  const reload = () => {
+    // Own write (IAR attach etc.) — force fresh rows now and drop the
+    // sibling snapshots (deliveries / dashboard / stocks) so their next
+    // visit refetches instead of serving the pre-write payload.
+    bustClientCache([
+      CLIENT_CACHE_KEYS.deliveries,
+      CLIENT_CACHE_KEYS.dashboard,
+      CLIENT_CACHE_KEYS.inventory,
+    ])
+    refreshRows()
+  }
 
   const filtered = useMemo(() => {
     if (filter === 'all') return rows
@@ -154,11 +254,18 @@ export default function PersonnelInspectionsPage() {
         <div>
           <h1 className={styles.title}>Inspections</h1>
           <p className={styles.subtitle}>
-            {tab === 'inspections'
-              ? rows.length === 0
+            {loading ? (
+              <span
+                className="mt-1 block h-4 w-48 animate-pulse rounded bg-navy-100"
+                aria-hidden="true"
+              />
+            ) : tab === 'inspections' ? (
+              rows.length === 0
                 ? 'No inspections found.'
                 : `${filtered.length} of ${rows.length} inspection${rows.length !== 1 ? 's' : ''} listed`
-              : `${airRows.length} of ${rows.length} record${rows.length !== 1 ? 's' : ''} shown`}
+            ) : (
+              `${airRows.length} of ${rows.length} record${rows.length !== 1 ? 's' : ''} shown`
+            )}
           </p>
         </div>
         <div className={styles.actions}>
@@ -224,7 +331,58 @@ export default function PersonnelInspectionsPage() {
             </div>
           </div>
 
-          {filtered.length === 0 ? (
+          {loading ? (
+            <div className={styles.tableWrap} aria-hidden="true">
+              <table className={styles.table}>
+                <thead>
+                  <tr>
+                    <th>Delivery ref</th>
+                    <th>Supplier</th>
+                    <th>PO ref</th>
+                    <th>Date delivered</th>
+                    <th>Inspector</th>
+                    <th>Date inspected</th>
+                    <th>Result</th>
+                    <th>History</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {Array.from({ length: inspPageSize }).map((_, r) => (
+                    <tr key={r} style={{ opacity: 1 - r * 0.05 }}>
+                      <td>
+                        <div className="h-3.5 w-16 animate-pulse rounded bg-navy-100" />
+                      </td>
+                      <td>
+                        <div className="h-3.5 w-24 animate-pulse rounded bg-navy-100" />
+                      </td>
+                      <td>
+                        <div className="h-3.5 w-20 animate-pulse rounded bg-navy-100" />
+                      </td>
+                      <td>
+                        <div className="h-3.5 w-20 animate-pulse rounded bg-navy-100" />
+                      </td>
+                      <td>
+                        <div className="h-3.5 w-24 animate-pulse rounded bg-navy-100" />
+                      </td>
+                      <td>
+                        <div className="h-3.5 w-20 animate-pulse rounded bg-navy-100" />
+                      </td>
+                      <td>
+                        <div className="h-[22px] w-16 animate-pulse rounded-full bg-navy-100" />
+                      </td>
+                      <td>
+                        <div className="h-3.5 w-20 animate-pulse rounded bg-navy-100" />
+                      </td>
+                      <td>
+                        <span className={styles.inspectLink}>Inspect</span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : filtered.length === 0 ? (
             <div className={styles.emptyState}>
               <p className={styles.panelSub}>
                 No inspections match the selected filter.
@@ -310,12 +468,13 @@ export default function PersonnelInspectionsPage() {
                             </>
                           ) : null}
                           {isPending ? (
-                            <Link
-                              href={`/personnel/inspections/${d.delivery_id}`}
-                              className={styles.inspectLink}
-                            >
-                              Inspect
-                            </Link>
+                            <InspectConfirmButton
+                              deliveryId={d.delivery_id}
+                              deliveryRef={d.delivery_ref}
+                              supplier={d.supplier}
+                              poReference={d.po_reference}
+                              triggerClassName={styles.inspectLink}
+                            />
                           ) : null}
                         </td>
                       </tr>
@@ -325,7 +484,28 @@ export default function PersonnelInspectionsPage() {
               </table>
             </div>
           )}
-          {filtered.length > 0 ? (
+          {loading ? (
+            <div className={styles.pager} aria-hidden="true">
+              <span className={styles.pagerInfo}>
+                <span className="block h-3 w-36 animate-pulse rounded bg-navy-100" />
+              </span>
+              <div className={styles.pagerControls}>
+                <span className={styles.pageSizeWrap}>
+                  <span>Rows</span>
+                  <span className="h-8 w-[5.5rem] animate-pulse rounded-md bg-navy-100" />
+                </span>
+                <span className={styles.pageBtn} aria-hidden="true">
+                  ‹
+                </span>
+                <span className={styles.pageBtn} data-active="true">
+                  1
+                </span>
+                <span className={styles.pageBtn} aria-hidden="true">
+                  ›
+                </span>
+              </div>
+            </div>
+          ) : filtered.length > 0 ? (
             <TablePager
               id="inspections"
               total={filtered.length}
@@ -336,6 +516,8 @@ export default function PersonnelInspectionsPage() {
             />
           ) : null}
         </Card>
+      ) : loading ? (
+        <AirTabSkeleton />
       ) : (
         <div>
           <div className={air.stats}>

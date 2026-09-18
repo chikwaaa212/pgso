@@ -6,6 +6,7 @@ import "@/lib/gsap-register";
 import { Header } from "@/components/layout/header";
 import { Footer } from "@/components/layout/footer";
 import { ToastProvider } from "@/components/ui/toaster";
+import { Toaster } from "@/components/ui/sonner";
 import styles from "./LayoutClient.module.css";
 
 const LANDING_PATHS = ["/"];
@@ -46,6 +47,7 @@ export function LayoutClient({ children }: { children: React.ReactNode }) {
         <main className={styles.main}>{children}</main>
         {isReceiptPath(pathname) ? null : <Footer />}
       </div>
+      <Toaster position="top-right" duration={2000} closeButton />
     </ToastProvider>
   );
 }

@@ -22,6 +22,17 @@ export interface Profile {
   full_name: string | null;
   role: UserRole;
   status: UserStatus;
+  position?: string | null;
+  office?: string | null;
+  prefix?: string | null;
+  first_name?: string | null;
+  middle_name?: string | null;
+  last_name?: string | null;
+  suffix?: string | null;
+  employee_no?: string | null;
+  department?: string | null;
+  profile_completed?: boolean;
+  profile_completed_at?: string | null;
   created_at: string | null;
 }
 

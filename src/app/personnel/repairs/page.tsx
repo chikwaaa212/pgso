@@ -1,7 +1,14 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import Link from "next/link";
+import {
+  Check,
+  Loader2,
+  Pencil,
+  Play,
+  Receipt,
+  RotateCcw,
+} from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -23,9 +30,18 @@ import {
 } from "@/components/ui/select";
 import { DatePicker } from "@/components/ui/date-picker";
 import { TablePager } from "@/components/personnel/TablePager";
+import { ReceiptLoading } from "@/components/personnel/ReceiptLoading";
 import { usePageSize } from "@/hooks/use-page-size";
+import { useCachedAction } from "@/hooks/use-cached-action";
+import { useReceipt } from "@/hooks/use-receipt";
+import { CLIENT_CACHE_KEYS, bustClientCache } from "@/lib/client-cache";
+import RepairsLoading from "./loading";
+import { RepairReceipt } from "./repair-receipt";
+import { ReceiptOverlay } from "../documents/receipt-overlay";
+import receiptStyles from "../inspections/components/receipt.module.css";
 import {
   createRepair,
+  getRepair,
   getRepairFormOptions,
   getRepairs,
   setRepairStatus,
@@ -36,6 +52,7 @@ import {
 } from "./actions";
 import styles from "../dashboard/page.module.css";
 import air from "../inspections/air-section.module.css";
+import rep from "./page.module.css";
 
 function tone(status: string | null) {
   if (status === "completed") return "ok";
@@ -97,8 +114,17 @@ const STATUS_TABS = [
 ] as const;
 
 export default function PersonnelRepairsPage() {
-  const [rows, setRows] = useState<RepairRow[]>([]);
-  const [loading, setLoading] = useState(true);
+  // Cached list: back-navigation paints instantly from memory /
+  // sessionStorage and only revalidates silently when stale — same SWR
+  // pattern as dashboard / deliveries / requests.
+  const {
+    data: rowsData,
+    loading,
+    refresh: refreshRows,
+  } = useCachedAction(CLIENT_CACHE_KEYS.repairs, getRepairs, {
+    staleTime: 30_000,
+  });
+  const rows = useMemo(() => rowsData ?? [], [rowsData]);
   const [query, setQuery] = useState("");
   const [statusTab, setStatusTab] =
     useState<(typeof STATUS_TABS)[number]["value"]>("all");
@@ -120,8 +146,7 @@ export default function PersonnelRepairsPage() {
   const [formError, setFormError] = useState("");
 
   const [editOpen, setEditOpen] = useState(false);
-  const [editing, setEditing] = useState<RepairRow | null>(null);
-  const [editDate, setEditDate] = useState("");
+  const [editing, setEditing] = useState<RepairRow | null>(null);  const [editDate, setEditDate] = useState("");
   const [editDescription, setEditDescription] = useState("");
   const [editTechnician, setEditTechnician] = useState("");
   const [editCost, setEditCost] = useState("");
@@ -129,20 +154,33 @@ export default function PersonnelRepairsPage() {
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError] = useState("");
 
+  // Receipt viewer — modal-only (no dedicated page). First open fetches
+  // with a spinner; repeats paint instantly from memory/sessionStorage
+  // (fresh <5min skips the network, stale revalidates silently).
+  const receipt = useReceipt<RepairRow | null>();
   const reload = () => {
-    setLoading(true);
-    void getRepairs().then((data) => {
-      setRows(data);
-      setLoading(false);
-    });
+    // Own write (log / start / complete / reopen / edit) — force fresh
+    // rows now and drop sibling snapshots (dashboard counts, deliveries,
+    // inspections, stocks, assets, documents, issues, requests, issuances,
+    // logs) so their next visit refetches instead of serving the pre-write
+    // payload. Old rows stay visible while the refetch runs (no flash).
+    bustClientCache([
+      CLIENT_CACHE_KEYS.dashboard,
+      CLIENT_CACHE_KEYS.deliveries,
+      CLIENT_CACHE_KEYS.inspections,
+      CLIENT_CACHE_KEYS.inventory,
+      CLIENT_CACHE_KEYS.assets,
+      CLIENT_CACHE_KEYS.documents,
+      CLIENT_CACHE_KEYS.issues,
+      CLIENT_CACHE_KEYS.requests,
+      CLIENT_CACHE_KEYS.issuances,
+      CLIENT_CACHE_KEYS.logs,
+      // Cached receipt overlays — a status/edit write must not leave a
+      // stale receipt painting instantly on next open.
+      "pgso:client:receipt",
+    ]);
+    refreshRows();
   };
-
-  useEffect(() => {
-    void getRepairs().then((data) => {
-      setRows(data);
-      setLoading(false);
-    });
-  }, []);
 
   useEffect(() => {
     if ((dialogOpen || editOpen) && employees.length === 0) {
@@ -196,6 +234,10 @@ export default function PersonnelRepairsPage() {
     }
     return { total: rows.length, pending, inProgress, completed };
   }, [rows]);
+
+  if (loading) {
+    return <RepairsLoading />;
+  }
 
   async function onProgress(id: string, status: string) {
     setActingId(id);
@@ -328,7 +370,7 @@ export default function PersonnelRepairsPage() {
           <h1 className={styles.title}>Repairs</h1>
           <p className={styles.subtitle}>
             {filtered.length} of {rows.length}{" "}
-            {rows.length === 1 ? "ticket" : "tickets"} shown · your tickets only
+            {rows.length === 1 ? "ticket" : "tickets"} shown · only requests sent to you
             {stats.pending > 0 ? ` · ${stats.pending} pending` : ""}
           </p>
         </div>
@@ -339,7 +381,7 @@ export default function PersonnelRepairsPage() {
               resetForm();
               setDialogOpen(true);
             }}
-            className="gap-2"
+            className="h-8 gap-2 rounded-[4px] px-3.5 text-xs font-semibold"
           >
             New repair
           </Button>
@@ -404,11 +446,40 @@ export default function PersonnelRepairsPage() {
           />
         </div>
 
-        {loading ? (
-          <div className={styles.emptyState}>
-            <p className={styles.panelSub}>Loading repairs…</p>
-          </div>
-        ) : filtered.length === 0 ? (
+        <div className={rep.legend} aria-label="Row actions legend">
+          <span className={rep.legendItem}>
+            <span className={rep.legendIcon} aria-hidden="true">
+              <Play size={14} />
+            </span>
+            Start repair
+          </span>
+          <span className={rep.legendItem}>
+            <span className={rep.legendIcon} aria-hidden="true">
+              <Check size={14} />
+            </span>
+            Complete repair
+          </span>
+          <span className={rep.legendItem}>
+            <span className={rep.legendIcon} aria-hidden="true">
+              <RotateCcw size={14} />
+            </span>
+            Reopen repair
+          </span>
+          <span className={rep.legendItem}>
+            <span className={rep.legendIcon} aria-hidden="true">
+              <Pencil size={14} />
+            </span>
+            Edit ticket
+          </span>
+          <span className={rep.legendItem}>
+            <span className={rep.legendIcon} aria-hidden="true">
+              <Receipt size={14} />
+            </span>
+            View receipt
+          </span>
+        </div>
+
+        {filtered.length === 0 ? (
           <div className={styles.emptyState}>
             <p className={styles.panelSub}>
               {rows.length === 0
@@ -456,12 +527,19 @@ export default function PersonnelRepairsPage() {
                       <td>{fmt(r.created_at)}</td>
                       <td>
                         {status === "completed" ? (
-                          <Link
-                            href={`/personnel/repairs/${r.id}`}
-                            className={styles.inspectLinkSecondary}
+                          <button
+                            type="button"
+                            className={rep.iconBtn}
+                            title="View receipt"
+                            aria-label={`View receipt for repair ${r.id.slice(0, 8).toUpperCase()}`}
+                            onClick={() =>
+                              receipt.open(r.id, `repair:${r.id}`, () =>
+                                getRepair(r.id)
+                              )
+                            }
                           >
-                            View receipt
-                          </Link>
+                            <Receipt size={16} />
+                          </button>
                         ) : (
                           <span className={styles.pagerInfo}>—</span>
                         )}
@@ -472,39 +550,71 @@ export default function PersonnelRepairsPage() {
                             <button
                               type="button"
                               disabled={busy}
-                              className={`${styles.inspectLink} cursor-pointer disabled:opacity-50`}
+                              className={rep.iconBtn}
+                              title="Start repair"
+                              aria-label={`Start repair ${r.id.slice(0, 8).toUpperCase()}`}
                               onClick={() => openStart(r)}
                             >
-                              {busy ? "…" : "Start"}
+                              {busy ? (
+                                <Loader2
+                                  size={16}
+                                  className="animate-spin"
+                                  aria-hidden="true"
+                                />
+                              ) : (
+                                <Play size={16} />
+                              )}
                             </button>
                           ) : status === "in_progress" ? (
                             <button
                               type="button"
                               disabled={busy}
-                              className={`${styles.inspectLink} cursor-pointer disabled:opacity-50`}
+                              className={rep.iconBtn}
+                              title="Complete repair"
+                              aria-label={`Complete repair ${r.id.slice(0, 8).toUpperCase()}`}
                               onClick={() => openComplete(r)}
                             >
-                              {busy ? "…" : "Complete"}
+                              {busy ? (
+                                <Loader2
+                                  size={16}
+                                  className="animate-spin"
+                                  aria-hidden="true"
+                                />
+                              ) : (
+                                <Check size={16} />
+                              )}
                             </button>
                           ) : (
                             <button
                               type="button"
                               disabled={busy}
-                              className={`${styles.inspectLinkSecondary} cursor-pointer disabled:opacity-50`}
+                              className={rep.iconBtn}
+                              title="Reopen repair"
+                              aria-label={`Reopen repair ${r.id.slice(0, 8).toUpperCase()}`}
                               onClick={() =>
                                 void onProgress(r.id, "in_progress")
                               }
                             >
-                              {busy ? "…" : "Reopen"}
+                              {busy ? (
+                                <Loader2
+                                  size={16}
+                                  className="animate-spin"
+                                  aria-hidden="true"
+                                />
+                              ) : (
+                                <RotateCcw size={16} />
+                              )}
                             </button>
                           )}
                           <button
                             type="button"
                             disabled={busy}
-                            className={`${styles.inspectLinkSecondary} cursor-pointer disabled:opacity-50`}
+                            className={rep.iconBtn}
+                            title="Edit ticket"
+                            aria-label={`Edit repair ${r.id.slice(0, 8).toUpperCase()}`}
                             onClick={() => openEdit(r)}
                           >
-                            Edit
+                            <Pencil size={16} />
                           </button>
                         </div>
                       </td>
@@ -537,8 +647,8 @@ export default function PersonnelRepairsPage() {
             </DialogDescription>
           </DialogHeader>
 
-          <div className="grid gap-4 py-1 sm:grid-cols-2">
-            <div className="grid gap-1.5 sm:col-span-2">
+          <div className={rep.formGrid}>
+            <div className={`${rep.field} ${rep.span2}`}>
               <Label htmlFor="rep-asset">
                 Asset <span className="text-red-600">*</span>
               </Label>
@@ -560,7 +670,7 @@ export default function PersonnelRepairsPage() {
             </div>
 
             {pickedAsset ? (
-              <div className="grid gap-3 rounded-md border bg-zinc-50 px-3 py-2.5 text-sm sm:col-span-2 sm:grid-cols-2">
+              <div className={`${rep.span2} grid gap-3 rounded-md border bg-zinc-50 px-3 py-2.5 text-sm sm:grid-cols-2`}>
                 <div>
                   <p className="text-xs font-medium text-zinc-500">
                     Account code
@@ -584,7 +694,7 @@ export default function PersonnelRepairsPage() {
               </div>
             ) : null}
 
-            <div className="grid gap-1.5">
+            <div className={rep.field}>
               <Label htmlFor="rep-employee">
                 Reported by <span className="text-red-600">*</span>
               </Label>
@@ -602,7 +712,7 @@ export default function PersonnelRepairsPage() {
               </Select>
             </div>
 
-            <div className="grid gap-1.5">
+            <div className={rep.field}>
               <Label htmlFor="rep-date">
                 Repair date <span className="text-red-600">*</span>
               </Label>
@@ -611,10 +721,11 @@ export default function PersonnelRepairsPage() {
                 value={parseISODate(repairDate)}
                 onChange={(date) => setRepairDate(formatISODate(date))}
                 placeholder="Pick a repair date"
+                className="h-9 px-3 text-sm"
               />
             </div>
 
-            <div className="grid gap-1.5 sm:col-span-2">
+            <div className={`${rep.field} ${rep.span2}`}>
               <Label htmlFor="rep-desc">
                 Issue <span className="text-red-600">*</span>
               </Label>
@@ -628,7 +739,7 @@ export default function PersonnelRepairsPage() {
               />
             </div>
 
-            <div className="grid gap-1.5">
+            <div className={rep.field}>
               <Label htmlFor="rep-tech">Technician</Label>
               <Input
                 id="rep-tech"
@@ -639,7 +750,7 @@ export default function PersonnelRepairsPage() {
               />
             </div>
 
-            <div className="grid gap-1.5">
+            <div className={rep.field}>
               <Label htmlFor="rep-cost">Cost (₱)</Label>
               <Input
                 id="rep-cost"
@@ -668,6 +779,7 @@ export default function PersonnelRepairsPage() {
               variant="outline"
               onClick={() => setDialogOpen(false)}
               disabled={saving}
+              className="h-8 rounded-[4px] px-3.5 text-xs font-semibold"
             >
               Cancel
             </Button>
@@ -675,6 +787,7 @@ export default function PersonnelRepairsPage() {
               type="button"
               disabled={!canSubmit || saving}
               onClick={() => void onSubmit()}
+              className="h-8 gap-2 rounded-[4px] px-3.5 text-xs font-semibold"
             >
               {saving ? "Saving…" : "Log repair"}
             </Button>
@@ -706,8 +819,8 @@ export default function PersonnelRepairsPage() {
             </DialogDescription>
           </DialogHeader>
 
-          <div className="grid gap-4 py-1 sm:grid-cols-2">
-            <div className="grid gap-1.5">
+          <div className={rep.formGrid}>
+            <div className={rep.field}>
               <Label htmlFor="rep-edit-status">Progress</Label>
               <Select value={editStatus} onValueChange={setEditStatus}>
                 <SelectTrigger id="rep-edit-status">
@@ -721,7 +834,7 @@ export default function PersonnelRepairsPage() {
               </Select>
             </div>
 
-            <div className="grid gap-1.5">
+            <div className={rep.field}>
               <Label htmlFor="rep-edit-date">
                 Repair date <span className="text-red-600">*</span>
               </Label>
@@ -730,10 +843,11 @@ export default function PersonnelRepairsPage() {
                 value={parseISODate(editDate)}
                 onChange={(date) => setEditDate(formatISODate(date))}
                 placeholder="Pick a repair date"
+                className="h-9 px-3 text-sm"
               />
             </div>
 
-            <div className="grid gap-1.5 sm:col-span-2">
+            <div className={`${rep.field} ${rep.span2}`}>
               <Label htmlFor="rep-edit-desc">
                 Issue <span className="text-red-600">*</span>
               </Label>
@@ -746,7 +860,7 @@ export default function PersonnelRepairsPage() {
               />
             </div>
 
-            <div className="grid gap-1.5">
+            <div className={rep.field}>
               <Label htmlFor="rep-edit-tech">
                 Technician{" "}
                 {editStatus === "in_progress" ||
@@ -773,7 +887,7 @@ export default function PersonnelRepairsPage() {
               ) : null}
             </div>
 
-            <div className="grid gap-1.5">
+            <div className={rep.field}>
               <Label htmlFor="rep-edit-cost">
                 Cost (₱){" "}
                 {editStatus === "completed" ? (
@@ -820,6 +934,7 @@ export default function PersonnelRepairsPage() {
               variant="outline"
               onClick={() => setEditOpen(false)}
               disabled={editSaving}
+              className="h-8 rounded-[4px] px-3.5 text-xs font-semibold"
             >
               Cancel
             </Button>
@@ -827,6 +942,7 @@ export default function PersonnelRepairsPage() {
               type="button"
               disabled={!canEditSave || editSaving}
               onClick={() => void onEditSave()}
+              className="h-8 gap-2 rounded-[4px] px-3.5 text-xs font-semibold"
             >
               {editSaving
                 ? "Saving…"
@@ -841,6 +957,40 @@ export default function PersonnelRepairsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <ReceiptOverlay
+        open={receipt.selectedId !== null}
+        title="Repair receipt"
+        onClose={receipt.close}
+      >
+        {receipt.docLoading ||
+        (receipt.selectedId !== null && !receipt.doc) ? (
+          <ReceiptLoading label="Loading receipt…" />
+        ) : receipt.doc ? (
+          <div
+            className={receiptStyles.receiptStack}
+            style={{ maxWidth: "none" }}
+          >
+            <RepairReceipt repair={receipt.doc} />
+            <p className={styles.panelSub} style={{ textAlign: "center" }}>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => window.print()}
+                className="h-8 rounded-[4px] px-3.5 text-xs font-semibold"
+              >
+                Print / Save PDF
+              </Button>
+            </p>
+          </div>
+        ) : (
+          <div className={styles.emptyState}>
+            <p className={styles.panelSub}>
+              This record is no longer available.
+            </p>
+          </div>
+        )}
+      </ReceiptOverlay>
     </section>
   );
 }

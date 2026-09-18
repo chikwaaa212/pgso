@@ -65,7 +65,7 @@ export function BrowseTable<T>({
 
   return (
     <div>
-      <div style={{ marginBottom: "0.75rem", maxWidth: "22rem" }}>
+      <div className={styles.searchRow}>
         <Input
           type="search"
           aria-label="Search records"

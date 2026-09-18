@@ -7,12 +7,14 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SubmitButton } from "@/components/ui/submit-button";
 import { useToast } from "@/components/ui/toaster";
+import { CLIENT_CACHE_KEYS, bustClientCache } from "@/lib/client-cache";
 import { cn } from "@/lib/utils";
 import { logDelivery, getDeliveryFormOptions, type DeliveryFormOptions } from "./actions";
 import { useMasterData } from "@/hooks/use-master-data";
 import type { SignupState } from "@/types";
 
 interface Step1Data {
+  deliveryKind: string;
   assetType: string;
   accountCode: string;
   accountTitle: string;
@@ -20,6 +22,7 @@ interface Step1Data {
 
 interface Step2Data {
   dateSupplied: Date | undefined;
+  expectedArrival: Date | undefined;
   supplierName: string;
   poReference: string;
   deliveryStatus: string;
@@ -89,12 +92,14 @@ function StepperNav({ currentStep }: { currentStep: number }) {
 export function useLogDeliveryDraft() {
   const [step, setStep] = useState(1);
   const [step1, setStep1] = useState<Step1Data>({
+    deliveryKind: "",
     assetType: "",
     accountCode: "",
     accountTitle: "",
   });
   const [step2, setStep2] = useState<Step2Data>({
     dateSupplied: undefined,
+    expectedArrival: undefined,
     supplierName: "",
     poReference: "",
     deliveryStatus: "Complete",
@@ -106,9 +111,10 @@ export function useLogDeliveryDraft() {
   const [step3, setStep3] = useState<Step3Data>({ items: [] });
 
   const reset = () => {
-    setStep1({ assetType: "", accountCode: "", accountTitle: "" });
+    setStep1({ deliveryKind: "", assetType: "", accountCode: "", accountTitle: "" });
     setStep2({
       dateSupplied: undefined,
+      expectedArrival: undefined,
       supplierName: "",
       poReference: "",
       deliveryStatus: "Complete",
@@ -180,13 +186,14 @@ export function LogDeliveryMockForm({
   const handleAccountCodeChange = (value: string) => {
     const hit = lookupCode(value);
     if (hit) {
-      setStep1({
+      setStep1((prev) => ({
+        ...prev,
         accountCode: value,
         assetType: hit.assetType,
         accountTitle: hit.accountTitle,
-      });
+      }));
     } else {
-      setStep1({ assetType: "", accountCode: value, accountTitle: "" });
+      setStep1((prev) => ({ ...prev, assetType: "", accountCode: value, accountTitle: "" }));
     }
   };
 
@@ -257,6 +264,13 @@ export function LogDeliveryMockForm({
     ) {
       lastSavedId.current = actionState.deliveryId;
       setIdempotencyKey(crypto.randomUUID());
+      // New delivery — drop the cached lists + dashboard snapshot so the
+      // next visit (or the page behind this modal) refetches fresh data.
+      bustClientCache([
+        CLIENT_CACHE_KEYS.deliveries,
+        CLIENT_CACHE_KEYS.inspections,
+        CLIENT_CACHE_KEYS.dashboard,
+      ]);
       toast({
         title: "Delivery saved",
         description: "The delivery entry has been saved to the database.",
@@ -275,9 +289,15 @@ export function LogDeliveryMockForm({
   }, [actionState, toast, onClose]);
 
   const isStep1Valid =
-    !!step1.assetType && !!step1.accountCode && !!step1.accountTitle;
+    (step1.deliveryKind === "stock" || step1.deliveryKind === "asset") &&
+    !!step1.assetType &&
+    !!step1.accountCode &&
+    !!step1.accountTitle;
+  const isAwaitingArrival = step2.deliveryStatus === "Awaiting";
   const isStep2Valid =
-    !!step2.dateSupplied && !!step2.supplierName && !!step2.poReference;
+    !!step2.supplierName &&
+    !!step2.poReference &&
+    (isAwaitingArrival ? !!step2.expectedArrival : !!step2.dateSupplied);
   const isRecipientValid = !!recipient.recipientRole;
   const isStep3Valid = step3.items.length > 0;
 
@@ -303,6 +323,28 @@ export function LogDeliveryMockForm({
 
     return (
       <div className="flex flex-col gap-3">
+        <div>
+          <Label htmlFor="delivery-kind" className="mb-1 block text-sm font-medium">
+            Stocks or Assets <span className="font-normal text-navy-500">(start here)</span>
+          </Label>
+          <Select
+            value={step1.deliveryKind}
+            onValueChange={(v) => handleStep1Change("deliveryKind", v)}
+          >
+            <SelectTrigger id="delivery-kind" className="w-full" autoFocus>
+              <SelectValue placeholder="Is this delivery for stocks or assets?" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="stock">Stocks — consumables, tracked in inventory</SelectItem>
+              <SelectItem value="asset">Assets — equipment, tracked in the registry</SelectItem>
+            </SelectContent>
+          </Select>
+          {step1.deliveryKind === "" && (
+            <p className="mt-1 text-xs text-navy-500">
+              Pick one — stocks go to inventory, assets go to the registry after inspection.
+            </p>
+          )}
+        </div>
         <div>
           <Label htmlFor="account-code" className="mb-1 block text-sm font-medium">
             Account Code <span className="font-normal text-navy-500">(start here)</span>
@@ -456,14 +498,55 @@ export function LogDeliveryMockForm({
   const renderStep2 = () => (
     <div className="flex flex-col gap-3">
       <div>
+        <Label htmlFor="delivery-status" className="mb-1 block text-sm font-medium">
+          Status
+        </Label>
+        <Select
+          value={step2.deliveryStatus}
+          onValueChange={(v) => handleStep2Change("deliveryStatus", v)}
+        >
+          <SelectTrigger id="delivery-status" className="w-full">
+            <SelectValue placeholder="Select status" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="Complete">Complete</SelectItem>
+            <SelectItem value="Partial">Partial</SelectItem>
+            <SelectItem value="Awaiting">Waiting for arrival</SelectItem>
+          </SelectContent>
+        </Select>
+        {isAwaitingArrival && (
+          <p className="mt-1 text-xs text-navy-500">
+            Goods haven&apos;t arrived — set the target arrival date below and
+            leave Date Received empty.
+          </p>
+        )}
+      </div>
+      <div>
         <Label htmlFor="date-supplied" className="mb-1 block text-sm font-medium">
-          Date Received
+          Date Received{" "}
+          {isAwaitingArrival && (
+            <span className="font-normal text-navy-500">(optional — not yet arrived)</span>
+          )}
         </Label>
         <DatePicker
           id="date-supplied"
           value={step2.dateSupplied}
           onChange={(d) => handleStep2Change("dateSupplied", d)}
           placeholder="Pick a date"
+        />
+      </div>
+      <div>
+        <Label htmlFor="expected-arrival" className="mb-1 block text-sm font-medium">
+          Target Date of Arrival{" "}
+          {isAwaitingArrival ? null : (
+            <span className="font-normal text-navy-500">(optional)</span>
+          )}
+        </Label>
+        <DatePicker
+          id="expected-arrival"
+          value={step2.expectedArrival}
+          onChange={(d) => handleStep2Change("expectedArrival", d)}
+          placeholder="Pick a target date"
         />
       </div>
       <div>
@@ -489,23 +572,6 @@ export function LogDeliveryMockForm({
           onChange={(e) => handleStep2Change("poReference", e.target.value)}
           placeholder="e.g. PO-2026-081"
         />
-      </div>
-      <div>
-        <Label htmlFor="delivery-status" className="mb-1 block text-sm font-medium">
-          Status
-        </Label>
-        <Select
-          value={step2.deliveryStatus}
-          onValueChange={(v) => handleStep2Change("deliveryStatus", v)}
-        >
-          <SelectTrigger id="delivery-status" className="w-full">
-            <SelectValue placeholder="Select status" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="Complete">Complete</SelectItem>
-            <SelectItem value="Partial">Partial</SelectItem>
-          </SelectContent>
-        </Select>
       </div>
     </div>
   );
@@ -645,10 +711,10 @@ export function LogDeliveryMockForm({
         type="button"
         onClick={addItem}
         className={cn(
-          "inline-flex items-center justify-center rounded-full font-medium",
+          "inline-flex items-center justify-center rounded-[4px] font-semibold",
           "focus-visible:outline-2 focus-visible:outline-offset-2",
           "disabled:pointer-events-none disabled:opacity-50",
-          "h-10 px-4 text-sm",
+          "h-8 px-3.5 text-xs",
           "border border-navy-200 bg-transparent text-navy-700 hover:bg-navy-100"
         )}
       >
@@ -669,10 +735,16 @@ export function LogDeliveryMockForm({
       <input type="hidden" name="assetType" value={step1.assetType} />
       <input type="hidden" name="accountCode" value={step1.accountCode} />
       <input type="hidden" name="accountTitle" value={step1.accountTitle} />
+      <input type="hidden" name="deliveryKind" value={step1.deliveryKind} />
       <input
         type="hidden"
         name="dateSupplied"
         value={step2.dateSupplied ? step2.dateSupplied.toISOString() : ""}
+      />
+      <input
+        type="hidden"
+        name="expectedArrival"
+        value={step2.expectedArrival ? step2.expectedArrival.toISOString() : ""}
       />
       <input type="hidden" name="supplierName" value={step2.supplierName} />
       <input type="hidden" name="poReference" value={step2.poReference} />
@@ -696,10 +768,10 @@ export function LogDeliveryMockForm({
           onClick={handleBack}
           disabled={step === 1}
           className={cn(
-            "inline-flex items-center justify-center rounded-full font-medium",
+            "inline-flex items-center justify-center rounded-[4px] font-semibold",
             "focus-visible:outline-2 focus-visible:outline-offset-2",
             "disabled:pointer-events-none disabled:opacity-50",
-            "h-10 px-4 text-sm",
+            "h-8 px-3.5 text-xs",
             "border border-navy-200 bg-transparent text-navy-700 hover:bg-navy-100"
           )}
         >
@@ -710,10 +782,10 @@ export function LogDeliveryMockForm({
             type="button"
             onClick={resetForm}
             className={cn(
-              "inline-flex items-center justify-center rounded-full font-medium",
+              "inline-flex items-center justify-center rounded-[4px] font-semibold",
               "focus-visible:outline-2 focus-visible:outline-offset-2",
               "disabled:pointer-events-none disabled:opacity-50",
-              "h-10 px-4 text-sm",
+              "h-8 px-3.5 text-xs",
               "border border-navy-200 bg-transparent text-navy-700 hover:bg-navy-100"
             )}
           >
@@ -725,16 +797,22 @@ export function LogDeliveryMockForm({
                 type="button"
                 onClick={() => onShowPreview(true)}
                 className={cn(
-                  "inline-flex items-center justify-center rounded-full font-medium",
+                  "inline-flex items-center justify-center rounded-[4px] font-semibold",
                   "focus-visible:outline-2 focus-visible:outline-offset-2",
                   "disabled:pointer-events-none disabled:opacity-50",
-                  "h-10 px-4 text-sm",
+                  "h-8 px-3.5 text-xs",
                   "border border-navy-200 bg-transparent text-navy-700 hover:bg-navy-100"
                 )}
               >
                 Preview Entry
               </button>
-              <SubmitButton variant="primary" disabled={!isStep3Valid} pendingLabel="Saving…">
+              <SubmitButton
+                variant="primary"
+                size="sm"
+                className="h-8 rounded-[4px] px-3.5 text-xs font-semibold"
+                disabled={!isStep3Valid}
+                pendingLabel="Saving…"
+              >
                 Save delivery
               </SubmitButton>
             </>
@@ -744,10 +822,10 @@ export function LogDeliveryMockForm({
               onClick={handleNext}
               disabled={!canGoNext}
               className={cn(
-                "inline-flex items-center justify-center rounded-full font-medium",
+                "inline-flex items-center justify-center rounded-[4px] font-semibold",
                 "focus-visible:outline-2 focus-visible:outline-offset-2",
                 "disabled:pointer-events-none disabled:opacity-50",
-                "h-10 px-4 text-sm",
+                "h-8 px-3.5 text-xs",
                 "bg-navy-900 text-white hover:bg-navy-800"
               )}
             >

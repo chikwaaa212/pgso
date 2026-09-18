@@ -19,9 +19,11 @@ interface DatePickerProps {
   onChange?: (date: Date | undefined) => void
   placeholder?: string
   hasError?: boolean
+  /** Merged into the trigger button (e.g. "h-9 px-3 text-sm" to match h-9 inputs). */
+  className?: string
 }
 
-export function DatePicker({ id, value, onChange, placeholder, hasError }: DatePickerProps) {
+export function DatePicker({ id, value, onChange, placeholder, hasError, className }: DatePickerProps) {
   const [open, setOpen] = React.useState(false)
 
   return (
@@ -33,7 +35,8 @@ export function DatePicker({ id, value, onChange, placeholder, hasError }: DateP
           className={cn(
             "w-full justify-between rounded-md font-normal",
             !value && "text-muted-foreground",
-            hasError && "border-red-500"
+            hasError && "border-red-500",
+            className
           )}
         >
           {value ? format(value, "PPP") : (placeholder ?? "Pick a date")}

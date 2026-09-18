@@ -1,5 +1,6 @@
 import 'server-only'
 
+import { cache } from 'react'
 import { createClient } from '@/lib/supabase/server'
 
 /**
@@ -9,7 +10,8 @@ import { createClient } from '@/lib/supabase/server'
  * - deliveries      → `received_by = me`
  * - inspections     → delivery `received_by = me` OR `inspector_id = me`
  * - issuances       → `created_by = me`
- * - repairs         → `created_by = me` (legacy NULL rows stay visible)
+ * - repairs         → `created_by = me` (strict; auto-tickets are owned
+ *   by the request recipient, legacy NULL rows are hidden from personnel)
  * - documents/IAR   → derived from the delivery/inspection/issuance above
  * - dashboard counts → same scoped counts
  *
@@ -19,7 +21,7 @@ import { createClient } from '@/lib/supabase/server'
  */
 
 /** Current signed-in user id, or null when signed out. Never throws. */
-export async function getCurrentUserId(): Promise<string | null> {
+export const getCurrentUserId = cache(async (): Promise<string | null> => {
   try {
     const supabase = await createClient()
     const {
@@ -29,7 +31,7 @@ export async function getCurrentUserId(): Promise<string | null> {
   } catch {
     return null
   }
-}
+})
 
 /** Current user id or throws — use at the top of scoped personnel actions. */
 export async function requireCurrentUserId(): Promise<string> {
@@ -56,7 +58,7 @@ export interface PersonnelScope {
  * - personnel   → filter to own rows
  * - signed out  → `isEmpty: true` → callers return []
  */
-export async function getPersonnelScope(): Promise<PersonnelScope> {
+export const getPersonnelScope = cache(async (): Promise<PersonnelScope> => {
   const userId = await getCurrentUserId()
   if (!userId) return { userId: null, isSuperAdmin: false, isEmpty: true }
   try {
@@ -72,4 +74,4 @@ export async function getPersonnelScope(): Promise<PersonnelScope> {
     /* fall through to personnel scope */
   }
   return { userId, isSuperAdmin: false, isEmpty: false }
-}
+})

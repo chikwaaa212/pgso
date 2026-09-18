@@ -11,9 +11,10 @@ import {
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { usePageSize } from "@/hooks/use-page-size";
+import { InspectConfirmButton } from "@/components/personnel/InspectConfirmDialog";
 import styles from "../dashboard/page.module.css";
 
-const statusFilters = ["All", "Complete", "Partial"] as const;
+const statusFilters = ["All", "Complete", "Partial", "Awaiting arrival"] as const;
 const pageSizes = [10, 20, 50, 100];
 
 export interface DeliveryRow {
@@ -22,7 +23,9 @@ export interface DeliveryRow {
   supplier: string;
   po: string;
   date: string;
-  status: "Complete" | "Partial";
+  arrival: string;
+  kind: string;
+  status: "Complete" | "Partial" | "Awaiting arrival";
   itemCount: number;
   inspectionStatus: "pending" | "passed" | "failed" | "partial";
   inspectionRef: string;
@@ -123,7 +126,7 @@ export function DeliveryTable({ rows: allRows }: { rows: DeliveryRow[] }) {
         </div>
       ) : (
         <>
-          <div className={`${styles.tableWrap} ${styles.tableFixed}`}>
+          <div className={styles.tableWrap}>
             <table className={styles.table}>
               <thead>
                 <tr>
@@ -131,6 +134,8 @@ export function DeliveryTable({ rows: allRows }: { rows: DeliveryRow[] }) {
                   <th>Supplier</th>
                   <th>PO ref</th>
                   <th>Date</th>
+                  <th>Target arrival</th>
+                  <th>Type</th>
                   <th>Items</th>
                   <th>Delivery</th>
                   <th>Inspection</th>
@@ -144,12 +149,21 @@ export function DeliveryTable({ rows: allRows }: { rows: DeliveryRow[] }) {
                     <td>{d.supplier}</td>
                     <td>{d.po}</td>
                     <td>{d.date}</td>
+                    <td>{d.arrival}</td>
+                    <td>
+                      <span
+                        className={styles.status}
+                        data-tone={d.kind === "Assets" ? "warn" : d.kind === "Stocks" ? "info" : "info"}
+                      >
+                        {d.kind}
+                      </span>
+                    </td>
                     <td>{d.itemCount}</td>
                     <td>
                       <span
                         className={styles.status}
                         data-tone={
-                          d.status === "Complete" ? "ok" : "warn"
+                          d.status === "Complete" ? "ok" : d.status === "Awaiting arrival" ? "info" : "warn"
                         }
                       >
                         {d.status}
@@ -173,13 +187,13 @@ export function DeliveryTable({ rows: allRows }: { rows: DeliveryRow[] }) {
                           View Details
                         </Link>
                         {d.inspectionStatus === "pending" ? (
-                          <Link
-                            href={`/personnel/inspections/${d.deliveryId}`}
-                            className={styles.inspectLink}
-                            aria-label={`Inspect delivery ${d.id}`}
-                          >
-                            Inspect
-                          </Link>
+                          <InspectConfirmButton
+                            deliveryId={d.deliveryId}
+                            deliveryRef={d.id}
+                            supplier={d.supplier}
+                            poReference={d.po}
+                            triggerClassName={styles.inspectLink}
+                          />
                         ) : (
                           <span
                             className={cn(

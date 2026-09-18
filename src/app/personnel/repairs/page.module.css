@@ -1,0 +1,104 @@
+/* Compact icon actions in the Receipt / Action columns
+   (receipt / start / complete / reopen / edit). Same pattern as assets. */
+.iconBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 0.375rem;
+  border: 1px solid var(--color-navy-200);
+  background-color: #fff;
+  color: var(--color-navy-700);
+  cursor: pointer;
+  transition: color 0.15s, background-color 0.15s, border-color 0.15s;
+  text-decoration: none;
+}
+
+.iconBtn:hover:not(:disabled) {
+  color: var(--color-navy-900);
+  background-color: var(--color-navy-100);
+  border-color: var(--color-navy-300);
+}
+
+.iconBtn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.iconBtn:focus-visible {
+  outline: 2px solid var(--color-navy-900);
+  outline-offset: 2px;
+}
+
+/* Legend explaining the row-action icons — plain text row, right-aligned. */
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem 1rem;
+  align-items: center;
+  justify-content: flex-end;
+  margin-left: auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.legendItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: 0.75rem;
+  color: var(--color-navy-600);
+}
+
+.legendIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 0.375rem;
+  border: 1px solid var(--color-navy-200);
+  background-color: #fff;
+  color: var(--color-navy-700);
+}
+
+/* ─── Modal form alignment ─────────────────────────────────────────── */
+/* Two-column grid that top-aligns cells: a helper note under one field
+   (e.g. technician / cost hints) never drags its neighbour down, and
+   every label + control pair starts on the same horizontal line. */
+.formGrid {
+  display: grid;
+  gap: 1rem;
+  padding-block: 0.25rem;
+  align-items: start;
+}
+
+@media (min-width: 640px) {
+  .formGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* One label + control stack. Labels share a single-line height so
+   controls in the same grid row line up horizontally. */
+.field {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  gap: 0.375rem;
+  min-width: 0;
+}
+
+/* Full-width cell (asset picker, info box, issue textarea). */
+.span2 {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+
+@media (max-width: 639px) {
+  .span2 {
+    grid-column: auto;
+  }
+}

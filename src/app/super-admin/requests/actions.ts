@@ -74,6 +74,11 @@ export async function setReplenishmentStatus(
       },
     })
 
+    // Decisions change queue counts everywhere — bust the server caches
+    // so personnel + admin lists and badges pick it up immediately.
+    const { bustPersonnelCache } = await import('@/lib/personnel-cache')
+    await bustPersonnelCache()
+
     revalidatePath('/super-admin/requests')
     revalidatePath('/personnel/requests')
     return { success: true }

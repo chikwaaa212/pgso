@@ -1,11 +1,19 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
-import { Search } from "lucide-react";
+import { useMemo, useState } from "react";
+import { Eye, QrCode, Search, Send } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   Select,
   SelectContent,
@@ -13,12 +21,21 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { getAllUnifiedAssets, getCategories, type UnifiedAssetRow } from "./actions";
+import { getAssetsSnapshot, type UnifiedAssetRow } from "./actions";
+import {
+  AddColumnDialog,
+  CustomHeaderCells,
+  CustomRowCells,
+  customSearchText,
+  useCustomFields,
+} from "./custom-columns";
 import { AddAssetDialog, ImportAssetsDialog } from "./asset-dialogs";
 import { IssuanceEvaluateDialog } from "@/components/personnel/IssuanceDialog";
 import { usePageSize } from "@/hooks/use-page-size";
+import { useCachedAction } from "@/hooks/use-cached-action";
+import { CLIENT_CACHE_KEYS, bustClientCache } from "@/lib/client-cache";
+import AssetsLoading from "./loading";
 import styles from "../dashboard/page.module.css";
-import airStyles from "../inspections/air-section.module.css";
 import assetStyles from "./page.module.css";
 
 function tone(status: string | null) {
@@ -61,6 +78,12 @@ const STATUS_FILTERS = [
   { value: "retired", label: "Retired" },
 ] as const;
 
+const SOURCE_FILTERS = [
+  { value: "all", label: "All" },
+  { value: "asset", label: "Asset" },
+  { value: "stock", label: "Stock" },
+] as const;
+
 const PAGE_SIZES = [10, 20, 50, 100];
 
 const norm = (v: string | null | undefined) => (v ?? "").trim().toLowerCase();
@@ -85,11 +108,24 @@ function pageWindow(current: number, total: number) {
 }
 
 export default function PersonnelAssetsPage() {
-  const [rows, setRows] = useState<UnifiedAssetRow[]>([]);
-  const [categories, setCategories] = useState<string[]>([]);
-  const [loading, setLoading] = useState(true);
+  // Cached snapshot (rows + categories): back-navigation paints instantly
+  // from memory / sessionStorage and only revalidates silently when stale —
+  // same SWR pattern as dashboard / deliveries / inspections / stocks.
+  const {
+    data: snapshot,
+    loading,
+    refresh: refreshSnapshot,
+  } = useCachedAction(CLIENT_CACHE_KEYS.assets, getAssetsSnapshot, {
+    staleTime: 60_000,
+  });
+  const rows = useMemo(() => snapshot?.rows ?? [], [snapshot]);
+  const categories = useMemo(() => snapshot?.categories ?? [], [snapshot]);
+  // User-defined columns (shared definitions table, stored in the DB).
+  const { fields: customFields, refreshFields: refreshCustomFields } =
+    useCustomFields();
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [sourceFilter, setSourceFilter] = useState("all");
   const [conditionFilter, setConditionFilter] = useState("all");
   const [unitFilter, setUnitFilter] = useState("all");
   const [assetTypeFilter, setAssetTypeFilter] = useState("all");
@@ -101,22 +137,20 @@ export default function PersonnelAssetsPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [issuanceOpen, setIssuanceOpen] = useState(false);
   const [presetAssetId, setPresetAssetId] = useState<string | null>(null);
-
-  useEffect(() => {
-    void Promise.all([getAllUnifiedAssets(), getCategories()]).then(([data, cats]) => {
-      setRows(data);
-      setCategories(cats);
-      setLoading(false);
-    });
-  }, []);
+  const [qrRow, setQrRow] = useState<UnifiedAssetRow | null>(null);
 
   const reload = () => {
-    setLoading(true);
-    void Promise.all([getAllUnifiedAssets(), getCategories()]).then(([data, cats]) => {
-      setRows(data);
-      setCategories(cats);
-      setLoading(false);
-    });
+    // Own write (add / import / issue / edit) — force fresh rows now and drop
+    // the dashboard snapshot (asset + issuance stats) plus the issuances list
+    // and activity logs (direct issues create both) so their next visit
+    // refetches instead of serving the pre-write payload. Old data stays
+    // visible while the refetch runs (no skeleton flash).
+    bustClientCache([
+      CLIENT_CACHE_KEYS.dashboard,
+      CLIENT_CACHE_KEYS.issuances,
+      CLIENT_CACHE_KEYS.logs,
+    ]);
+    refreshSnapshot();
   };
 
   const resetPage = () => {
@@ -131,6 +165,7 @@ export default function PersonnelAssetsPage() {
   const hasActiveFilters =
     query.trim() !== "" ||
     statusFilter !== "all" ||
+    sourceFilter !== "all" ||
     conditionFilter !== "all" ||
     unitFilter !== "all" ||
     assetTypeFilter !== "all";
@@ -167,6 +202,7 @@ export default function PersonnelAssetsPage() {
           a.account_number,
           a.obr_number,
           a.dv_number,
+          customSearchText(a),
         ]
           .filter(Boolean)
           .join(" ")
@@ -174,12 +210,13 @@ export default function PersonnelAssetsPage() {
         if (!hay.includes(q)) return false;
       }
       if (statusFilter !== "all" && norm(a.status) !== statusFilter) return false;
+      if (sourceFilter !== "all" && a.source !== sourceFilter) return false;
       if (conditionFilter !== "all" && norm(a.condition) !== conditionFilter) return false;
       if (unitFilter !== "all" && norm(a.unit) !== unitFilter) return false;
       if (assetTypeFilter !== "all" && norm(a.category) !== assetTypeFilter) return false;
       return true;
     });
-  }, [rows, query, statusFilter, conditionFilter, unitFilter, assetTypeFilter]);
+  }, [rows, query, statusFilter, conditionFilter, unitFilter, assetTypeFilter, sourceFilter]);
 
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
   const safePage = Math.min(page, pageCount);
@@ -193,6 +230,10 @@ export default function PersonnelAssetsPage() {
     (selectedRow.status ?? "available").trim().toLowerCase() === "available" &&
     !(typeof selectedRow.quantity === "number" && selectedRow.quantity <= 0) &&
     selectedRow.assigned_to == null;
+
+  if (loading) {
+    return <AssetsLoading />;
+  }
 
   return (
     <section className={styles.section}>
@@ -218,16 +259,31 @@ export default function PersonnelAssetsPage() {
               setPresetAssetId(selectedId);
               setIssuanceOpen(true);
             }}
+            className="h-8 gap-2 rounded-[4px] px-3.5 text-xs font-semibold"
           >
             Issue / Assign
           </Button>
-          <AddAssetDialog categories={categories} onSuccess={reload} />
-          <ImportAssetsDialog onSuccess={reload} />
+          <AddAssetDialog
+            categories={categories}
+            onSuccess={reload}
+            triggerClassName="h-8 gap-2 rounded-[4px] px-3.5 text-xs font-semibold"
+          />
+          <ImportAssetsDialog
+            onSuccess={reload}
+            triggerClassName="h-8 gap-2 rounded-[4px] px-3.5 text-xs font-semibold"
+          />
+          <AddColumnDialog
+            onSuccess={() => {
+              refreshCustomFields();
+              reload();
+            }}
+            triggerClassName="h-8 gap-2 rounded-[4px] px-3.5 text-xs font-semibold"
+          />
         </div>
       </div>
 
       <Card className={styles.panel}>
-        <div className={airStyles.controls}>
+        <div className={assetStyles.controlsRight}>
           <div className={assetStyles.topRow}>
             <div className={assetStyles.searchWrap}>
               <Search className={assetStyles.searchIcon} size={16} />
@@ -242,6 +298,29 @@ export default function PersonnelAssetsPage() {
                 className={assetStyles.search}
                 aria-label="Search assets"
               />
+            </div>
+            <div className={assetStyles.filterGroup}>
+              <label className={assetStyles.filterLabel} htmlFor="assets-filter-source">
+                Type
+              </label>
+              <Select
+                value={sourceFilter}
+                onValueChange={(v) => {
+                  setSourceFilter(v);
+                  resetPage();
+                }}
+              >
+                <SelectTrigger id="assets-filter-source" size="sm" className={assetStyles.filterSelect}>
+                  <SelectValue placeholder="All" />
+                </SelectTrigger>
+                <SelectContent>
+                  {SOURCE_FILTERS.map((f) => (
+                    <SelectItem key={f.value} value={f.value}>
+                      {f.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div className={assetStyles.filterGroup}>
               <label className={assetStyles.filterLabel} htmlFor="assets-filter-status">
@@ -347,6 +426,7 @@ export default function PersonnelAssetsPage() {
                   onClick={() => {
                     setQuery("");
                     setStatusFilter("all");
+                    setSourceFilter("all");
                     setConditionFilter("all");
                     setUnitFilter("all");
                     setAssetTypeFilter("all");
@@ -359,11 +439,28 @@ export default function PersonnelAssetsPage() {
           </div>
         </div>
 
-        {loading ? (
-          <div className={styles.emptyState}>
-            <p className={styles.panelSub}>Loading assets…</p>
-          </div>
-        ) : filtered.length === 0 ? (
+        <div className={assetStyles.legend} aria-label="Row actions legend">
+          <span className={assetStyles.legendItem}>
+            <span className={assetStyles.legendIcon} aria-hidden="true">
+              <Eye size={14} />
+            </span>
+            View details
+          </span>
+          <span className={assetStyles.legendItem}>
+            <span className={assetStyles.legendIcon} aria-hidden="true">
+              <Send size={14} />
+            </span>
+            Issue asset
+          </span>
+          <span className={assetStyles.legendItem}>
+            <span className={assetStyles.legendIcon} aria-hidden="true">
+              <QrCode size={14} />
+            </span>
+            Show QR code
+          </span>
+        </div>
+
+        {filtered.length === 0 ? (
           <div className={styles.emptyState}>
             <p className={styles.panelSub}>
               {rows.length === 0
@@ -412,6 +509,7 @@ export default function PersonnelAssetsPage() {
                     <th className={assetStyles.colBase}>DV Number</th>
                     <th className={assetStyles.colBase}>Date Received</th>
                     <th className={assetStyles.colBase}>Created</th>
+                    <CustomHeaderCells fields={customFields} />
                   </tr>
                 </thead>
                 <tbody>
@@ -438,7 +536,11 @@ export default function PersonnelAssetsPage() {
                       <tr
                         key={a.id}
                         className={
-                          isSelected ? assetStyles.selectedRow : assetStyles.selectableRow
+                          isSelected
+                            ? assetStyles.selectedRow
+                            : alreadyAssigned
+                              ? assetStyles.issuedRow
+                              : assetStyles.selectableRow
                         }
                         data-selected={isSelected ? "true" : undefined}
                         aria-selected={isSelected}
@@ -460,28 +562,40 @@ export default function PersonnelAssetsPage() {
                           onClick={(e) => e.stopPropagation()}
                         >
                           <span className="inline-flex items-center gap-1.5">
-                            <Link href={`/personnel/assets/${a.id}`}>
-                              <Button type="button" variant="outline" size="sm">
-                                See Details
-                              </Button>
+                            <Link
+                              href={`/personnel/assets/${a.id}`}
+                              className={assetStyles.iconBtn}
+                              title="See details"
+                              aria-label={`See details of ${a.article ?? a.account_code ?? "asset"}`}
+                            >
+                              <Eye size={16} />
                             </Link>
-                            <Button
+                            <button
                               type="button"
-                              variant="outline"
-                              size="sm"
+                              className={assetStyles.iconBtn}
                               disabled={!assignable}
                               title={
                                 issueBlockReason
                                   ? `Cannot issue — ${issueBlockReason.toLowerCase()}`
                                   : "Issue this asset"
                               }
+                              aria-label="Issue this asset"
                               onClick={() => {
                                 setPresetAssetId(a.id);
                                 setIssuanceOpen(true);
                               }}
                             >
-                              Issue
-                            </Button>
+                              <Send size={16} />
+                            </button>
+                            <button
+                              type="button"
+                              className={assetStyles.iconBtn}
+                              title="Show QR code"
+                              aria-label={`Show QR code of ${a.article ?? a.account_code ?? "asset"}`}
+                              onClick={() => setQrRow(a)}
+                            >
+                              <QrCode size={16} />
+                            </button>
                           </span>
                         </td>
                         <td className={assetStyles.colBase}>
@@ -544,6 +658,7 @@ export default function PersonnelAssetsPage() {
                         <td className={assetStyles.colBase}>{a.dv_number ?? "—"}</td>
                         <td className={assetStyles.colBase}>{fmtDate(a.date_received)}</td>
                         <td className={assetStyles.colBase}>{fmtDate(a.created_at)}</td>
+                        <CustomRowCells row={a} fields={customFields} onSaved={reload} />
                       </tr>
                     );
                   })}
@@ -619,6 +734,49 @@ export default function PersonnelAssetsPage() {
           </>
         )}
       </Card>
+
+      <Dialog
+        open={qrRow !== null}
+        onOpenChange={(v) => {
+          if (!v) setQrRow(null);
+        }}
+      >
+        <DialogContent className="bg-white sm:max-w-xs dark:bg-white">
+          <DialogHeader>
+            <DialogTitle>QR code</DialogTitle>
+            <DialogDescription>
+              {qrRow
+                ? `${qrRow.source === "stock" ? "Stock" : "Asset"} — ${qrRow.article ?? qrRow.account_code ?? "—"}`
+                : "—"}
+            </DialogDescription>
+          </DialogHeader>
+          <div className={assetStyles.qrOverlayBody}>
+            {qrRow?.qr_data_url ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={qrRow.qr_data_url}
+                alt={`QR code for ${qrRow.qr_code ?? qrRow.account_code ?? "asset"}`}
+                className={assetStyles.qrOverlayImg}
+              />
+            ) : (
+              <span className={assetStyles.qrPlaceholder}>No QR code</span>
+            )}
+            <p className={assetStyles.qrValue}>
+              {qrRow?.qr_code ?? qrRow?.account_code ?? "—"}
+            </p>
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setQrRow(null)}
+              className="h-8 rounded-[4px] px-3.5 text-xs font-semibold"
+            >
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {issuanceOpen ? (
         <IssuanceEvaluateDialog

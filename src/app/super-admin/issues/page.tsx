@@ -1,11 +1,15 @@
+"use client";
+
+import { useMemo } from "react";
 import { Card } from "@/components/ui/card";
 import { browseCompletedRequests, browseIssues } from "../browse/actions";
 import { IssuesTable } from "@/app/personnel/issues/issues-table";
 import { RequestQrButton } from "@/components/personnel/RequestQrButton";
 import { requestTypeLabel } from "@/app/personnel/requests/request-types";
+import { useCachedAction } from "@/hooks/use-cached-action";
+import { CLIENT_CACHE_KEYS } from "@/lib/client-cache";
+import IssuesLoading from "./loading";
 import styles from "./page.module.css";
-
-export const dynamic = "force-dynamic";
 
 function fmtDate(value: string | null) {
   if (!value) return "—";
@@ -19,11 +23,24 @@ function fmtDate(value: string | null) {
   });
 }
 
-export default async function SuperAdminIssuesPage() {
-  const [rows, completed] = await Promise.all([
-    browseIssues(),
-    browseCompletedRequests(),
-  ]);
+export default function SuperAdminIssuesPage() {
+  // Same client caching as the personnel issues page: back-navigation
+  // paints instantly from memory / sessionStorage and only revalidates
+  // silently when stale (60s, matching the server snapshot cache).
+  const { data: snapshot, loading } = useCachedAction(
+    CLIENT_CACHE_KEYS.adminIssues,
+    () =>
+      Promise.all([browseIssues(), browseCompletedRequests()]).then(
+        ([rows, completed]) => ({ rows, completed })
+      ),
+    { staleTime: 60_000 }
+  );
+  const rows = useMemo(() => snapshot?.rows ?? [], [snapshot]);
+  const completed = useMemo(() => snapshot?.completed ?? [], [snapshot]);
+
+  if (loading) {
+    return <IssuesLoading />;
+  }
 
   return (
     <section className={styles.section}>

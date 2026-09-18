@@ -17,6 +17,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { DatePicker } from "@/components/ui/date-picker";
 import { saveAir } from "@/app/personnel/inspections/actions";
+import { CLIENT_CACHE_KEYS, bustClientCache } from "@/lib/client-cache";
 
 function Field({
   label,
@@ -109,6 +110,14 @@ export function IarDialog({
       const href = res.recordId
         ? `/personnel/inspections/${deliveryId}/iar?record=${res.recordId}`
         : `/personnel/inspections/${deliveryId}/iar`;
+      // AIR changed — drop the cached lists + dashboard + stocks so the
+      // next visit refetches instead of serving the pre-AIR payload.
+      bustClientCache([
+        CLIENT_CACHE_KEYS.inspections,
+        CLIENT_CACHE_KEYS.dashboard,
+        CLIENT_CACHE_KEYS.inventory,
+        CLIENT_CACHE_KEYS.iar,
+      ]);
       if (res.stockWarning) {
         // AIR is saved — stay and show the warning with a way through.
         setWarning(res.stockWarning);
@@ -123,7 +132,11 @@ export function IarDialog({
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button type="button" variant="outline" className="gap-2">
+        <Button
+          type="button"
+          variant="outline"
+          className="h-8 gap-2 rounded-[4px] px-3.5 text-xs font-semibold"
+        >
           Generate IAR
         </Button>
       </DialogTrigger>

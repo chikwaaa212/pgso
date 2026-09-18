@@ -3,6 +3,7 @@
 import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { useToast } from "@/components/ui/toaster";
+import { CLIENT_CACHE_KEYS, bustClientCache } from "@/lib/client-cache";
 import {
   Select,
   SelectContent,
@@ -33,6 +34,7 @@ const labelStyle: React.CSSProperties = {
 export function NewRequestForm({
   assets,
   personnel,
+  onFiled,
 }: {
   assets: {
     id: string;
@@ -43,6 +45,8 @@ export function NewRequestForm({
     heldByMe?: boolean;
   }[];
   personnel: { id: string; label: string }[];
+  /** Silent revalidation of the cached snapshot after a successful filing. */
+  onFiled?: () => void;
 }) {
   const [type, setType] = useState<string>("new_assignment");
   const [assetId, setAssetId] = useState<string>("");
@@ -55,10 +59,13 @@ export function NewRequestForm({
 
   const needsAsset = type === "transfer" || type === "repair";
   const isTransfer = type === "transfer";
-  // Transfers move custody: only items currently assigned to this employee
-  // (in their hand) can be picked — never other people's items or PGSO stock.
+  const isRepair = type === "repair";
+  // Transfer and repair both act on items already in the requester's hand:
+  // only assets currently assigned to this employee can be picked — never
+  // other people's items or unassigned PGSO stock.
   const heldAssets = assets.filter((a) => a.kind === "asset" && a.heldByMe);
-  const itemOptions = isTransfer ? heldAssets : assets;
+  const heldOnly = isTransfer || isRepair;
+  const itemOptions = heldOnly ? heldAssets : assets;
   // Every delivered item is an asset; "stock" is just its quantity on hand —
   // transfer / assignment / repair can all pick either kind.
   const selected = assets.find((a) => a.id === assetId) ?? null;
@@ -79,12 +86,18 @@ export function NewRequestForm({
           setError(
             isTransfer
               ? "Select one of your assigned items to transfer."
-              : "Select an item for this request type."
+              : isRepair
+                ? "Select one of your assigned items to repair."
+                : "Select an item for this request type."
           );
           return;
         }
-        if (isTransfer && !heldAssets.some((a) => a.id === assetId)) {
-          setError("You can only transfer items currently assigned to you.");
+        if (heldOnly && !heldAssets.some((a) => a.id === assetId)) {
+          setError(
+            isTransfer
+              ? "You can only transfer items currently assigned to you."
+              : "You can only request repair for items currently assigned to you."
+          );
           return;
         }
         const fd = new FormData(e.currentTarget);
@@ -112,10 +125,15 @@ export function NewRequestForm({
           });
           if (res.success) {
             toast({ title: "Request filed", description: "PGSO personnel will review it.", variant: "success" });
+            // Own write — drop this page's snapshot (history table) and the
+            // My Assets snapshot (its requests table shows this filing) so
+            // both revalidate silently instead of serving pre-write payloads.
+            bustClientCache([CLIENT_CACHE_KEYS.employeeRequests, CLIENT_CACHE_KEYS.employeeAssets]);
             formRef.current?.reset();
             setType("new_assignment");
             setAssetId("");
             setRecipientId("");
+            onFiled?.();
             router.refresh();
           } else {
             setError(res.error ?? "Failed to submit the request.");
@@ -156,7 +174,7 @@ export function NewRequestForm({
           </Select>
         </span>
         <span style={labelStyle}>
-          {isTransfer
+          {heldOnly
             ? "Your item (assigned to you) *"
             : needsAsset
               ? "Item (asset / stock) *"
@@ -165,7 +183,7 @@ export function NewRequestForm({
             <SelectTrigger style={{ ...inputStyle, display: "flex" }} aria-label="Item">
               <SelectValue
                 placeholder={
-                  isTransfer
+                  heldOnly
                     ? heldAssets.length > 0
                       ? "Select one of your items…"
                       : "No items assigned to you"
@@ -180,17 +198,19 @@ export function NewRequestForm({
                 <SelectItem
                   key={a.id}
                   value={a.id}
-                  disabled={isTransfer ? false : !!a.disabledReason}
+                  disabled={heldOnly ? false : !!a.disabledReason}
                 >
                   {a.label}
-                  {!isTransfer && a.disabledReason ? ` — ${a.disabledReason}` : ""}
+                  {!heldOnly && a.disabledReason ? ` — ${a.disabledReason}` : ""}
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
-          {isTransfer && (
+          {heldOnly && (
             <span style={{ fontWeight: 400, fontSize: "0.6875rem", color: "var(--color-navy-500)" }}>
-              Only assets currently in your hand can be transferred.
+              {isTransfer
+                ? "Only assets currently in your hand can be transferred."
+                : "Only assets currently in your hand can be reported for repair."}
             </span>
           )}
         </span>

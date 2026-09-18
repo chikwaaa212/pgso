@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { Loader2 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -23,7 +24,7 @@ import {
 import {
   createRequest,
   getRequestFormOptions,
-  getRequests,
+  getRequestsSnapshot,
   setRequestStatus,
   type AssetOption,
   type EmployeeOption,
@@ -38,6 +39,9 @@ import {
 import { formatPeso } from "@/lib/issuance-rules";
 import { TablePager } from "@/components/personnel/TablePager";
 import { usePageSize } from "@/hooks/use-page-size";
+import { useCachedAction } from "@/hooks/use-cached-action";
+import { CLIENT_CACHE_KEYS, bustClientCache } from "@/lib/client-cache";
+import RequestsLoading from "./loading";
 import styles from "../dashboard/page.module.css";
 import air from "../inspections/air-section.module.css";
 
@@ -88,9 +92,27 @@ function blankLine(key: number): ReqLine {
 }
 
 export default function PersonnelRequestsPage() {
-  const [rows, setRows] = useState<RequestRow[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [query, setQuery] = useState("");
+  // Cached queue (own requests): back-navigation paints instantly from
+  // memory / sessionStorage and only revalidates silently when stale —
+  // same SWR pattern as dashboard / deliveries / inspections / stocks /
+  // assets / documents / issues.
+  const {
+    data: snapshot,
+    loading,
+    refresh: refreshRows,
+  } = useCachedAction(CLIENT_CACHE_KEYS.requests, getRequestsSnapshot, {
+    staleTime: 30_000,
+  });
+  const baseRows = useMemo(() => snapshot?.rows ?? [], [snapshot]);
+  // Local optimistic copy — takes over display while an approve / reject /
+  // complete write confirms in the background. Cleared whenever fresh
+  // server rows arrive so server truth always wins.
+  const [rowsState, setRowsState] = useState<RequestRow[] | null>(null);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fresh server rows replace optimistic rows
+    setRowsState(null);
+  }, [snapshot]);
+  const rows = rowsState ?? baseRows;  const [query, setQuery] = useState("");
   const [statusTab, setStatusTab] =
     useState<(typeof STATUS_TABS)[number]["value"]>("all");
   const [typeFilter, setTypeFilter] = useState("all");
@@ -132,19 +154,24 @@ export default function PersonnelRequestsPage() {
   const [formError, setFormError] = useState("");
 
   const reload = () => {
-    setLoading(true);
-    void getRequests({ forRecipient: true }).then((data) => {
-      setRows(data);
-      setLoading(false);
-    });
+    // Own write (file / approve / reject / complete / issue) — force fresh
+    // rows now and drop sibling snapshots (dashboard counts, stocks, assets,
+    // inspections, documents, issues, issuances, logs) so their next visit refetches instead
+    // of serving the pre-write payload. Old rows stay visible while the
+    // refetch runs (no skeleton flash).
+    bustClientCache([
+      CLIENT_CACHE_KEYS.dashboard,
+      CLIENT_CACHE_KEYS.deliveries,
+      CLIENT_CACHE_KEYS.inspections,
+      CLIENT_CACHE_KEYS.inventory,
+      CLIENT_CACHE_KEYS.assets,
+      CLIENT_CACHE_KEYS.documents,
+      CLIENT_CACHE_KEYS.issues,
+      CLIENT_CACHE_KEYS.issuances,
+      CLIENT_CACHE_KEYS.logs,
+    ]);
+    refreshRows();
   };
-
-  useEffect(() => {
-    void getRequests({ forRecipient: true }).then((data) => {
-      setRows(data);
-      setLoading(false);
-    });
-  }, []);
 
   useEffect(() => {
     if (dialogOpen && employees.length === 0) {
@@ -190,6 +217,10 @@ export default function PersonnelRequestsPage() {
     (r) => (r.status ?? "pending") === "pending"
   ).length;
 
+  if (loading) {
+    return <RequestsLoading />;
+  }
+
   function openAction(row: RequestRow, status: RequestStatus) {
     setActionRow(row);
     setActionStatus(status);
@@ -205,17 +236,34 @@ export default function PersonnelRequestsPage() {
       setActionFormError("Enter remarks for this action.");
       return;
     }
+    const target = actionRow;
+    const status = actionStatus;
+    const note = actionNote;
+    const prevRows = rows;
+    const nowIso = new Date().toISOString();
+    // Stay open with a spinner until the database confirms: the modal only
+    // closes on success. The row paints optimistically behind the dialog;
+    // failures roll it back and surface the error inside the modal.
     setActionSaving(true);
     setActionFormError("");
-    setActingId(actionRow.id);
-    const res = await setRequestStatus(
-      actionRow.id,
-      actionStatus,
-      actionNote
+    setActingId(target.id);
+    setRowsState((cur) =>
+      (cur ?? baseRows).map((r) =>
+        r.id === target.id
+          ? {
+              ...r,
+              status,
+              date_resolved:
+                status === "completed" ? nowIso : r.date_resolved,
+            }
+          : r
+      )
     );
-    setActingId(null);
+    const res = await setRequestStatus(target.id, status, note);
     setActionSaving(false);
+    setActingId(null);
     if (!res.success) {
+      setRowsState(prevRows);
       setActionFormError(res.error ?? "Failed to update the request.");
       return;
     }
@@ -369,7 +417,7 @@ export default function PersonnelRequestsPage() {
               resetForm();
               setDialogOpen(true);
             }}
-            className="gap-2"
+            className="h-8 gap-2 rounded-[4px] px-3.5 text-xs font-semibold"
           >
             New request
           </Button>
@@ -433,11 +481,7 @@ export default function PersonnelRequestsPage() {
           </Select>
         </div>
 
-        {loading ? (
-          <div className={styles.emptyState}>
-            <p className={styles.panelSub}>Loading requests…</p>
-          </div>
-        ) : filtered.length === 0 ? (
+        {filtered.length === 0 ? (
           <div className={styles.emptyState}>
             <p className={styles.panelSub}>
               {rows.length === 0
@@ -827,7 +871,12 @@ export default function PersonnelRequestsPage() {
                   );
                 })}
                 <div>
-                  <Button type="button" variant="outline" onClick={addLine}>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={addLine}
+                    className="h-8 rounded-[4px] px-3.5 text-xs font-semibold"
+                  >
                     Add another item
                   </Button>
                 </div>
@@ -1006,6 +1055,7 @@ export default function PersonnelRequestsPage() {
               variant="outline"
               onClick={() => setDialogOpen(false)}
               disabled={saving}
+              className="h-8 rounded-[4px] px-3.5 text-xs font-semibold"
             >
               Cancel
             </Button>
@@ -1013,6 +1063,7 @@ export default function PersonnelRequestsPage() {
               type="button"
               disabled={!canSubmit || saving}
               onClick={() => void onSubmit()}
+              className="h-8 rounded-[4px] px-3.5 text-xs font-semibold"
             >
               {saving ? "Submitting…" : "Submit request"}
             </Button>
@@ -1032,10 +1083,40 @@ export default function PersonnelRequestsPage() {
             </DialogTitle>
             <DialogDescription>
               {actionRow
-                ? `${requestTypeLabel(actionRow.request_type)} — ${actionRow.employee_name}. Remarks are required and will be recorded on the request.`
+                ? `${requestTypeLabel(actionRow.request_type)} — ${actionRow.employee_name}. Review the details below, then add remarks to record your decision.`
                 : "Remarks are required and will be recorded on the request."}
             </DialogDescription>
           </DialogHeader>
+
+          {actionRow ? (
+            <dl className="grid gap-x-4 gap-y-2 rounded-md border border-navy-200 bg-navy-50/50 px-3 py-2.5 text-sm sm:grid-cols-2">
+              {(
+                [
+                  ["Employee", actionRow.employee_name],
+                  ["Type", requestTypeLabel(actionRow.request_type)],
+                  ["Asset", actionRow.asset_label ?? "—"],
+                  ...(actionRow.recipient_name
+                    ? [["Transfer to", actionRow.recipient_name] as const]
+                    : []),
+                  ["Requested", fmt(actionRow.date_requested)],
+                  ["Status", actionRow.status ?? "pending"],
+                ] as const
+              ).map(([term, value]) => (
+                <div key={term} className="grid gap-0.5">
+                  <dt className="text-xs font-medium text-zinc-500">{term}</dt>
+                  <dd className="font-medium">{value}</dd>
+                </div>
+              ))}
+              <div className="grid gap-0.5 sm:col-span-2">
+                <dt className="text-xs font-medium text-zinc-500">
+                  Details
+                </dt>
+                <dd className="whitespace-pre-wrap font-medium">
+                  {actionRow.description || "—"}
+                </dd>
+              </div>
+            </dl>
+          ) : null}
 
           <div className="grid gap-1.5 py-1">
             <Label htmlFor="req-action-note">
@@ -1072,6 +1153,7 @@ export default function PersonnelRequestsPage() {
               variant="outline"
               onClick={() => setActionOpen(false)}
               disabled={actionSaving}
+              className="h-8 rounded-[4px] px-3.5 text-xs font-semibold"
             >
               Cancel
             </Button>
@@ -1079,14 +1161,20 @@ export default function PersonnelRequestsPage() {
               type="button"
               disabled={actionNote.trim() === "" || actionSaving}
               onClick={() => void onActionConfirm()}
+              className="h-8 gap-2 rounded-[4px] px-3.5 text-xs font-semibold"
             >
-              {actionSaving
-                ? "Saving…"
-                : actionStatus === "approved"
-                  ? "Approve"
-                  : actionStatus === "rejected"
-                    ? "Reject"
-                    : "Complete"}
+              {actionSaving ? (
+                <>
+                  <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                  Saving…
+                </>
+              ) : actionStatus === "approved" ? (
+                "Approve"
+              ) : actionStatus === "rejected" ? (
+                "Reject"
+              ) : (
+                "Complete"
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -23,52 +23,20 @@ function asText(value: unknown): string | null {
   return null
 }
 
-export async function getLogModules(): Promise<string[]> {
+export async function getAllLogs(): Promise<SystemLogRow[]> {
   try {
     await requireSuperAdmin()
   } catch {
     return []
   }
+  // Same list caching as personnel logs (30s) — the page filters
+  // client-side, so one cached fetch serves every search + module.
+  const { withScopedCache } = await import('@/lib/personnel-cache')
+  return withScopedCache('super-admin:logs-list', 30, async () => {
   try {
     const rows = await prisma.auditLog.findMany({
-      distinct: ['module'],
-      select: { module: true },
-    })
-    return rows.map((r) => r.module).sort((a, b) => a.localeCompare(b))
-  } catch (e) {
-    console.error('[getLogModules]', e)
-    return []
-  }
-}
-
-export async function getAllLogs(filters: {
-  module?: string
-  q?: string
-  limit?: number
-}): Promise<SystemLogRow[]> {
-  try {
-    await requireSuperAdmin()
-  } catch {
-    return []
-  }
-  const mod = (filters.module ?? '').trim()
-  const q = (filters.q ?? '').trim()
-  const limit = Math.min(Math.max(filters.limit ?? 200, 1), 500)
-  try {
-    const rows = await prisma.auditLog.findMany({
-      where: {
-        ...(mod && mod !== 'all' ? { module: mod } : {}),
-        ...(q
-          ? {
-              OR: [
-                { action: { contains: q, mode: 'insensitive' } },
-                { module: { contains: q, mode: 'insensitive' } },
-              ],
-            }
-          : {}),
-      },
       orderBy: { created_at: 'desc' },
-      take: limit,
+      take: 500,
       select: { id: true, user_id: true, action: true, module: true, details: true, created_at: true },
     })
     const ids = [...new Set(rows.map((r) => r.user_id))]
@@ -93,4 +61,5 @@ export async function getAllLogs(filters: {
     console.error('[getAllLogs]', e)
     return []
   }
+  })
 }

@@ -1,12 +1,28 @@
+'use client';
+
 import { Card } from "@/components/ui/card";
 import { getMyLogs } from "./actions";
+import { useCachedAction } from "@/hooks/use-cached-action";
+import { CLIENT_CACHE_KEYS } from "@/lib/client-cache";
 import { LogsTable } from "./logs-table";
+import LogsLoading from "./loading";
 import styles from "../dashboard/page.module.css";
 
-export const dynamic = "force-dynamic";
+export default function PersonnelLogsPage() {
+  // Cached trail: back-navigation paints instantly from memory /
+  // sessionStorage and only revalidates silently when stale — same
+  // SWR pattern as dashboard / deliveries / requests.
+  const { data: rows, loading } = useCachedAction(
+    CLIENT_CACHE_KEYS.logs,
+    getMyLogs,
+    { staleTime: 30_000 }
+  );
 
-export default async function PersonnelLogsPage() {
-  const rows = await getMyLogs();
+  if (loading) {
+    return <LogsLoading />;
+  }
+
+  const list = rows ?? [];
 
   return (
     <section className={styles.section}>
@@ -15,7 +31,7 @@ export default async function PersonnelLogsPage() {
         <div>
           <h1 className={styles.title}>My Activity Logs</h1>
           <p className={styles.subtitle}>
-            {rows.length} {rows.length === 1 ? "entry" : "entries"} created
+            {list.length} {list.length === 1 ? "entry" : "entries"} created
             under your account — newest first.
           </p>
         </div>
@@ -29,7 +45,7 @@ export default async function PersonnelLogsPage() {
             timestamp.
           </p>
         </div>
-        <LogsTable rows={rows} />
+        <LogsTable rows={list} />
       </Card>
     </section>
   );

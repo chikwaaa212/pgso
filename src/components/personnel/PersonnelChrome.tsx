@@ -1,11 +1,12 @@
 "use client";
 
 import { usePathname } from "next/navigation";
-import { PersonnelSidebar } from "./PersonnelSidebar";
+import { PersonnelNavbar } from "./PersonnelNavbar";
 import layoutStyles from "../../app/personnel/layout.module.css";
 
 export function PersonnelChrome({
   children,
+  navbar,
   pendingInspections = 0,
   pendingRequests = 0,
   pendingRepairs = 0,
@@ -14,6 +15,8 @@ export function PersonnelChrome({
   userDetail,
 }: {
   children: React.ReactNode;
+  /** Streamed navbar slot — when provided it renders immediately via Suspense. */
+  navbar?: React.ReactNode;
   pendingInspections?: number;
   pendingRequests?: number;
   pendingRepairs?: number;
@@ -32,14 +35,16 @@ export function PersonnelChrome({
 
   return (
     <div className={layoutStyles.shell}>
-      <PersonnelSidebar
-        pendingInspections={pendingInspections}
-        pendingRequests={pendingRequests}
-        pendingRepairs={pendingRepairs}
-        totalDocuments={totalDocuments}
-        userName={userName}
-        userDetail={userDetail}
-      />
+      {navbar ?? (
+        <PersonnelNavbar
+          pendingInspections={pendingInspections}
+          pendingRequests={pendingRequests}
+          pendingRepairs={pendingRepairs}
+          totalDocuments={totalDocuments}
+          userName={userName}
+          userDetail={userDetail}
+        />
+      )}
       <div className={layoutStyles.main}>{children}</div>
     </div>
   );

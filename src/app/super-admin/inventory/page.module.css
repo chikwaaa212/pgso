@@ -99,3 +99,115 @@
   font-size: 0.875rem;
   color: var(--color-navy-500);
 }
+
+/* Floating stock-alert toast — fixed top-center over the page (above the
+   sticky navbar) so it never pushes content or shifts the skeleton. */
+.toast {
+  position: fixed;
+  top: 1rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 60;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  width: max-content;
+  max-width: calc(100% - 2rem);
+  border: 1px solid #fcd34d;
+  border-radius: 0.75rem;
+  background-color: #fffbeb;
+  color: #78350f;
+  box-shadow: 0 12px 32px rgba(27, 42, 74, 0.18);
+  padding: 0.75rem 0.875rem;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  animation: toast-in 0.25s ease;
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -0.5rem);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+.toastBody {
+  min-width: 0;
+}
+
+.toastBody p {
+  margin: 0;
+}
+
+.toastBody p + p {
+  margin-top: 0.25rem;
+}
+
+.toastTitle {
+  font-weight: 700;
+}
+
+.toastClose {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 1.75rem;
+  height: 1.75rem;
+  color: #92400e;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 0.5rem;
+  cursor: pointer;
+}
+
+.toastClose:hover {
+  background-color: #fef3c7;
+  border-color: #fcd34d;
+}
+
+/* Per-row recommendation trigger — small tone-tinted pill so the advice
+   level reads at a glance; click floats the full recommendation toast. */
+.recBtn {
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 0.25rem 0.625rem;
+  border-radius: 9999px;
+  border: 1px solid var(--color-navy-200);
+  background-color: var(--color-navy-50, #f8fafc);
+  color: var(--color-navy-700);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.recBtn:hover {
+  background-color: var(--color-navy-100);
+}
+
+.recBtn[data-tone="ok"] {
+  background-color: #dcfce7;
+  border-color: #bbf7d0;
+  color: #166534;
+}
+
+.recBtn[data-tone="warn"] {
+  background-color: #fef3c7;
+  border-color: #fde68a;
+  color: #92400e;
+}
+
+.recBtn[data-tone="bad"] {
+  background-color: #fee2e2;
+  border-color: #fecaca;
+  color: #991b1b;
+}
+
+.recBtn[data-tone="info"] {
+  background-color: #dbeafe;
+  border-color: #bfdbfe;
+  color: #1e40af;
+}

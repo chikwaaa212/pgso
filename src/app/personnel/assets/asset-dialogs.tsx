@@ -28,6 +28,7 @@ import {
   type ImportAssetsState,
 } from "./actions";
 import { useMasterData } from "@/hooks/use-master-data";
+import { DatePicker } from "@/components/ui/date-picker";
 import { cn } from "@/lib/utils";
 
 const CONDITION_OPTIONS = ["serviceable", "unserviceable"];
@@ -65,8 +66,39 @@ function Field({
   );
 }
 
-function OptionSelect({
+/** Local YYYY-MM-DD (no UTC shift — toISOString would move the day back). */
+function toLocalISODate(d: Date): string {
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${m}-${day}`;
+}
+
+/**
+ * Shadcn calendar picker bridged into the uncontrolled dialog form —
+ * the picked date is submitted through a hidden input.
+ */
+function FormDatePicker({
   name,
+  value,
+  onChange,
+}: {
+  name: string;
+  value: Date | undefined;
+  onChange: (date: Date | undefined) => void;
+}) {
+  return (
+    <>
+      <DatePicker value={value} onChange={onChange} placeholder="Pick a date" />
+      <input
+        type="hidden"
+        name={name}
+        value={value ? toLocalISODate(value) : ""}
+      />
+    </>
+  );
+}
+
+function OptionSelect({  name,
   placeholder,
   options,
   defaultValue,
@@ -99,9 +131,12 @@ function OptionSelect({
 export function AddAssetDialog({
   categories,
   onSuccess,
+  triggerClassName,
 }: {
   categories: string[];
   onSuccess?: () => void;
+  /** Extra classes for the trigger so header actions match Stocks/Dashboard sizing. */
+  triggerClassName?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [pending, startTransition] = useTransition();
@@ -112,6 +147,8 @@ export function AddAssetDialog({
   const master = useMasterData();
   const [code, setCode] = useState<string | undefined>(undefined);
   const [unit, setUnit] = useState<string | undefined>(undefined);
+  const [dateAcquired, setDateAcquired] = useState<Date | undefined>(undefined);
+  const [dateReceived, setDateReceived] = useState<Date | undefined>(undefined);
   const selected = master.catalog.find((c) => c.account_code === code);
   const catalogMode = master.loaded && master.catalog.length > 0;
 
@@ -120,6 +157,8 @@ export function AddAssetDialog({
     if (!v) {
       setCode(undefined);
       setUnit(undefined);
+      setDateAcquired(undefined);
+      setDateReceived(undefined);
       setError("");
     }
   }
@@ -137,6 +176,8 @@ export function AddAssetDialog({
         formRef.current?.reset();
         setCode(undefined);
         setUnit(undefined);
+        setDateAcquired(undefined);
+        setDateReceived(undefined);
         setOpen(false);
         onSuccess?.();
       } else {
@@ -147,11 +188,15 @@ export function AddAssetDialog({
 
   return (
     <>
-      <Button type="button" onClick={() => setOpen(true)}>
+      <Button
+        type="button"
+        onClick={() => setOpen(true)}
+        className={triggerClassName}
+      >
         Add asset
       </Button>
       <Dialog open={open} onOpenChange={handleOpenChange}>
-        <DialogContent className="max-h-[90vh] overflow-y-auto bg-white sm:max-w-3xl dark:bg-white">
+        <DialogContent className="pgso-no-scrollbar max-h-[90vh] overflow-y-auto bg-white sm:max-w-3xl dark:bg-white">
           <DialogHeader>
             <DialogTitle>Add asset</DialogTitle>
             <DialogDescription>
@@ -260,7 +305,11 @@ export function AddAssetDialog({
                 </Field>
               </div>
               <Field label="DATE ACQUIRED">
-                <Input name="date_acquired" type="date" className={inputCls} />
+                <FormDatePicker
+                  name="date_acquired"
+                  value={dateAcquired}
+                  onChange={setDateAcquired}
+                />
               </Field>
               <Field label="LOCATION">
                 <Input name="location" placeholder="e.g. PGSO" className={inputCls} />
@@ -305,7 +354,11 @@ export function AddAssetDialog({
                 <Input name="remarks" className={inputCls} />
               </Field>
               <Field label="DATE RECEIVED AT INVENTORY">
-                <Input name="date_received" type="date" className={inputCls} />
+                <FormDatePicker
+                  name="date_received"
+                  value={dateReceived}
+                  onChange={setDateReceived}
+                />
               </Field>
               <Field label="DV TRACKING NUMBER">
                 <Input name="dv_tracking_number" className={inputCls} />
@@ -334,10 +387,20 @@ export function AddAssetDialog({
             ) : null}
 
             <DialogFooter className="mt-4">
-              <Button type="button" variant="outline" onClick={() => setOpen(false)} disabled={pending}>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setOpen(false)}
+                disabled={pending}
+                className="h-8 rounded-[4px] px-3.5 text-xs font-semibold"
+              >
                 Cancel
               </Button>
-              <Button type="submit" disabled={pending}>
+              <Button
+                type="submit"
+                disabled={pending}
+                className="h-8 rounded-[4px] px-3.5 text-xs font-semibold"
+              >
                 {pending ? (
                   <>
                     <Loader2 className="mr-1 size-4 animate-spin" />
@@ -355,7 +418,14 @@ export function AddAssetDialog({
   );
 }
 
-export function ImportAssetsDialog({ onSuccess }: { onSuccess?: () => void }) {
+export function ImportAssetsDialog({
+  onSuccess,
+  triggerClassName,
+}: {
+  onSuccess?: () => void;
+  /** Extra classes for the trigger so header actions match Stocks/Dashboard sizing. */
+  triggerClassName?: string;
+}) {
   const [open, setOpen] = useState(false);
   const [pending, startTransition] = useTransition();
   const [result, setResult] = useState<ImportAssetsState | null>(null);
@@ -381,7 +451,12 @@ export function ImportAssetsDialog({ onSuccess }: { onSuccess?: () => void }) {
 
   return (
     <>
-      <Button type="button" variant="outline" onClick={() => setOpen(true)}>
+      <Button
+        type="button"
+        variant="outline"
+        onClick={() => setOpen(true)}
+        className={triggerClassName}
+      >
         Import Excel
       </Button>
       <Dialog
@@ -466,10 +541,20 @@ export function ImportAssetsDialog({ onSuccess }: { onSuccess?: () => void }) {
             ) : null}
 
             <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setOpen(false)} disabled={pending}>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setOpen(false)}
+                disabled={pending}
+                className="h-8 rounded-[4px] px-3.5 text-xs font-semibold"
+              >
                 {result?.success ? "Close" : "Cancel"}
               </Button>
-              <Button type="submit" disabled={pending}>
+              <Button
+                type="submit"
+                disabled={pending}
+                className="h-8 rounded-[4px] px-3.5 text-xs font-semibold"
+              >
                 {pending ? (
                   <>
                     <Loader2 className="mr-1 size-4 animate-spin" />

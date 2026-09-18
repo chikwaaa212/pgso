@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 export const PAGE_SIZE_OPTIONS = [10, 20, 50, 100] as const;
 
@@ -25,9 +25,23 @@ export function usePageSize(
   storageKey: string,
   defaultSize: number = PAGE_SIZE_OPTIONS[0]
 ): readonly [number, (size: number) => void] {
-  const [pageSize, setPageSizeState] = useState<number>(() =>
-    readStoredPageSize(storageKey, defaultSize)
-  );
+  // Initialize with the default so the first client render matches the
+  // server HTML. The stored preference is applied in an effect after
+  // hydration — reading localStorage in the initializer made the client's
+  // first render differ from the server whenever the user had picked a
+  // non-default size (extra <tr> rows → hydration mismatch).
+  const [pageSize, setPageSizeState] = useState<number>(defaultSize);
+
+  useEffect(() => {
+    const stored = readStoredPageSize(storageKey, defaultSize);
+    // Only update when the stored preference differs from the default:
+    // avoids a redundant re-render on mount in the common case, and the
+    // sync runs once after hydration so server/client HTML always match.
+    if (stored !== defaultSize) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional post-hydration sync of client-only persisted state
+      setPageSizeState(stored);
+    }
+  }, [storageKey, defaultSize]);
 
   const setPageSize = (size: number) => {
     setPageSizeState(size);

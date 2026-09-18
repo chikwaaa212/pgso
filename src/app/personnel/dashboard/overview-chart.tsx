@@ -1,5 +1,6 @@
-"use client";
+  "use client";
 
+import Link from "next/link";
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
 import { Card } from "@/components/ui/card";
 import {
@@ -60,6 +61,14 @@ export function OverviewChart({ data }: { data: MonthlyPoint[] }) {
           <p className={styles.panelSub}>No data yet for the last 6 months.</p>
         </div>
       )}
+      <div className={styles.panelFooter}>
+        <Link href="/personnel/deliveries" className={styles.inspectLink}>
+          View deliveries
+        </Link>
+        <Link href="/personnel/inspections" className={styles.inspectLink}>
+          View inspections
+        </Link>
+      </div>
     </Card>
   );
 }

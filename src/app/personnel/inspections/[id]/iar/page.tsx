@@ -1,13 +1,15 @@
-import type { Metadata } from "next";
-import { getDeliveryForInspection, getIarRecords } from "../../actions";
+'use client';
+
+import { Suspense } from "react";
+import { notFound, useParams, useSearchParams } from "next/navigation";
+import { getIarSnapshot } from "../../actions";
+import { useCachedAction } from "@/hooks/use-cached-action";
+import { CLIENT_CACHE_KEYS } from "@/lib/client-cache";
 import { ReceiptActions } from "../../components/receipt-actions";
 import receipt from "../../components/receipt.module.css";
 import iar from "./iar.module.css";
 import { IarRemoveButton } from "@/components/personnel/IarAttach";
-
-export const metadata: Metadata = {
-  title: "Inspection & Acceptance Report",
-};
+import IarReportLoading from "./loading";
 
 function fmt(iso: string | null | undefined) {
   if (!iso) return "";
@@ -50,34 +52,44 @@ function Box({ checked }: { checked: boolean }) {
   );
 }
 
-export default async function IarReportPage({
-  params,
-  searchParams,
-}: {
-  params: Promise<{ id: string }>;
-  searchParams: Promise<{
-    entity?: string;
-    department?: string;
-    rcCode?: string;
-    fundCluster?: string;
-    iarNo?: string;
-    iarDate?: string;
-    invoiceNo?: string;
-    invoiceDate?: string;
-    record?: string;
-  }>;
-}) {
-  const { id } = await params;
-  const sp = await searchParams;
-  const delivery = await getDeliveryForInspection(id);
-  const inspection = delivery.inspection_data;
-  const deliveryRef = delivery.id.slice(0, 8).toUpperCase();
+export default function IarReportPage() {
+  return (
+    <Suspense fallback={<IarReportLoading />}>
+      <IarReportContent />
+    </Suspense>
+  );
+}
+
+function IarReportContent() {
+  const { id } = useParams<{ id: string }>();
+  const searchParams = useSearchParams();
+
+  // Cached snapshot: back-navigation paints instantly from memory /
+  // sessionStorage and only revalidates silently when stale — same
+  // SWR pattern as dashboard / deliveries / inspections.
+  const { data: snapshot, loading } = useCachedAction(
+    `${CLIENT_CACHE_KEYS.iar}:${id}`,
+    () => getIarSnapshot(id),
+    { staleTime: 30_000 }
+  );
+
+  if (loading) {
+    return <IarReportLoading />;
+  }
+
+  const delivery = snapshot?.delivery ?? null;
+  if (!delivery) notFound();
+
+  const records = snapshot?.records ?? [];
+  const recordParam = searchParams.get("record");
 
   // Every generate / attach is a timestamped record; ?record= views one.
-  const records = await getIarRecords(id);
-  const selected = sp.record
-    ? (records.find((r) => r.id === sp.record) ?? records[0] ?? null)
+  const selected = recordParam
+    ? (records.find((r) => r.id === recordParam) ?? records[0] ?? null)
     : (records[0] ?? null);
+
+  const inspection = delivery.inspection_data;
+  const deliveryRef = delivery.id.slice(0, 8).toUpperCase();
 
   let scanUrl = "";
   let header = {
@@ -115,14 +127,15 @@ export default async function IarReportPage({
     // Legacy AIRs saved before the history feature (or dialog params).
     const savedIar = (inspection?.iar_data ?? {}) as Record<string, string>;
     header = {
-      entity: val(savedIar.entity ?? sp.entity),
-      department: val(savedIar.department ?? sp.department),
-      rcCode: val(savedIar.rcCode ?? sp.rcCode),
-      fundCluster: val(savedIar.fundCluster ?? sp.fundCluster),
-      iarNo: val(inspection?.iar_no ?? sp.iarNo),
-      iarDate: inspection?.iar_date ?? sp.iarDate ?? "",
-      invoiceNo: val(inspection?.iar_invoice_no ?? sp.invoiceNo),
-      invoiceDate: inspection?.iar_invoice_date ?? sp.invoiceDate ?? "",
+      entity: val(savedIar.entity ?? searchParams.get("entity")),
+      department: val(savedIar.department ?? searchParams.get("department")),
+      rcCode: val(savedIar.rcCode ?? searchParams.get("rcCode")),
+      fundCluster: val(savedIar.fundCluster ?? searchParams.get("fundCluster")),
+      iarNo: val(inspection?.iar_no ?? searchParams.get("iarNo")),
+      iarDate: inspection?.iar_date ?? searchParams.get("iarDate") ?? "",
+      invoiceNo: val(inspection?.iar_invoice_no ?? searchParams.get("invoiceNo")),
+      invoiceDate:
+        inspection?.iar_invoice_date ?? searchParams.get("invoiceDate") ?? "",
     };
     scanUrl = inspection?.iar_image_url ?? "";
   }

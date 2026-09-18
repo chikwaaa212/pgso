@@ -3,8 +3,12 @@
 import { useActionState, useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { useToast } from "@/components/ui/toaster";
+import { Button } from "@/components/ui/button";
 import { SubmitButton } from "@/components/ui/submit-button";
 import {
+  CLIENT_CACHE_KEYS,
+  bustClientCache,
+} from "@/lib/client-cache";import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -14,18 +18,21 @@ import {
 } from "@/components/ui/dialog";
 import {
   createCatalogEntry,
+  createDepartment,
   createUnit,
   importCatalogFromExcel,
   setCatalogStatus,
+  setDepartmentStatus,
   setUnitStatus,
   updateCatalogEntry,
 } from "./actions";
 
 const inputStyle: React.CSSProperties = {
   width: "100%",
+  height: "32px",
   borderRadius: "0.375rem",
   border: "1px solid var(--color-navy-300)",
-  padding: "0.5rem 0.75rem",
+  padding: "0.375rem 0.75rem",
   fontSize: "0.875rem",
 };
 
@@ -36,27 +43,63 @@ const rowStyle: React.CSSProperties = {
   alignItems: "end",
 };
 
-export function AddUnitForm() {
+export function AddUnitForm({ triggerClassName }: { triggerClassName?: string }) {
+  const [open, setOpen] = useState(false);
   const [state, formAction] = useActionState(createUnit, { ok: false });
+  const formRef = useRef<HTMLFormElement>(null);
+  const { toast } = useToast();
+  // Close + refresh the list on success (same pattern as the toggles).
+  useEffect(() => {
+    if (state?.ok) {
+      bustClientCache(CLIENT_CACHE_KEYS.adminMasterData);
+      toast({ title: "Unit added", variant: "success" });
+      formRef.current?.reset();
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional one-shot close after successful submit
+      setOpen(false);
+    }
+  }, [state, toast]);
   return (
-    <form action={formAction} style={{ display: "flex", flexDirection: "column", gap: "0.75rem", marginBottom: "1rem" }}>
-      <div style={rowStyle}>
-        <label style={{ fontSize: "0.75rem", fontWeight: 600 }}>
-          Unit name *
-          <input name="name" required placeholder="e.g. piece" style={inputStyle} />
-        </label>
-        <label style={{ fontSize: "0.75rem", fontWeight: 600 }}>
-          Abbreviation
-          <input name="abbreviation" placeholder="e.g. pc" style={inputStyle} />
-        </label>
-        <div>
-          <SubmitButton variant="primary" pendingLabel="Adding…">
-            Add unit
-          </SubmitButton>
-        </div>
-      </div>
-      {state?.error && <p style={{ fontSize: "0.8125rem", color: "#b91c1c" }}>{state.error}</p>}
-    </form>
+    <>
+      <Button
+        type="button"
+        onClick={() => setOpen(true)}
+        className={triggerClassName ?? "h-8 gap-2 rounded-[4px] px-3.5 text-xs font-semibold"}
+      >
+        Add unit
+      </Button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="bg-white sm:max-w-md dark:bg-white">
+          <DialogHeader>
+            <DialogTitle>Add unit</DialogTitle>
+            <DialogDescription>
+              Lowercase canonical names (e.g. piece, set, box). Abbreviations
+              optional.
+            </DialogDescription>
+          </DialogHeader>
+          <form ref={formRef} action={formAction} style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+            <div style={rowStyle}>
+              <label style={{ fontSize: "0.75rem", fontWeight: 600 }}>
+                Unit name *
+                <input name="name" required placeholder="e.g. piece" style={inputStyle} />
+              </label>
+              <label style={{ fontSize: "0.75rem", fontWeight: 600 }}>
+                Abbreviation
+                <input name="abbreviation" placeholder="e.g. pc" style={inputStyle} />
+              </label>
+            </div>
+            {state?.error && <p style={{ fontSize: "0.8125rem", color: "#b91c1c" }}>{state.error}</p>}
+            <DialogFooter>
+              <button type="button" onClick={() => setOpen(false)} style={smallBtn(true)}>
+                Cancel
+              </button>
+              <SubmitButton variant="primary" pendingLabel="Adding…" className="h-8 gap-2 rounded-[4px] px-3.5 text-xs font-semibold">
+                Add unit
+              </SubmitButton>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 
@@ -74,6 +117,7 @@ export function UnitToggle({ id, name, isActive }: { id: string; name: string; i
           const r = await setUnitStatus(id, isActive ? "inactive" : "active");
           if (r.ok) {
             toast({ title: isActive ? "Deactivated" : "Reactivated", variant: "success" });
+            bustClientCache(CLIENT_CACHE_KEYS.adminMasterData);
             router.refresh();
           } else {
             toast({ title: "Failed", description: r.error ?? "Try again.", variant: "error" });
@@ -87,40 +131,74 @@ export function UnitToggle({ id, name, isActive }: { id: string; name: string; i
   );
 }
 
-export function AddCatalogForm() {
+export function AddCatalogForm({ triggerClassName }: { triggerClassName?: string }) {
+  const [open, setOpen] = useState(false);
   const [state, formAction] = useActionState(createCatalogEntry, { ok: false });
+  const formRef = useRef<HTMLFormElement>(null);
+  const { toast } = useToast();
+  useEffect(() => {
+    if (state?.ok) {
+      bustClientCache(CLIENT_CACHE_KEYS.adminMasterData);
+      toast({ title: "Catalog entry added", variant: "success" });
+      formRef.current?.reset();
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional one-shot close after successful submit
+      setOpen(false);
+    }
+  }, [state, toast]);
   return (
-    <form action={formAction} style={{ display: "flex", flexDirection: "column", gap: "0.75rem", marginBottom: "1rem" }}>
-      <div style={rowStyle}>
-        <label style={{ fontSize: "0.75rem", fontWeight: 600 }}>
-          Account code *
-          <input name="account_code" required placeholder="e.g. 1-07-05-010" style={inputStyle} />
-        </label>
-        <label style={{ fontSize: "0.75rem", fontWeight: 600 }}>
-          Asset type *
-          <input name="asset_type" required placeholder="e.g. Machinery and Equipment" style={inputStyle} />
-        </label>
-        <label style={{ fontSize: "0.75rem", fontWeight: 600 }}>
-          Account title *
-          <input name="account_title" required placeholder="e.g. MACHINERIES" style={inputStyle} />
-        </label>
-        <label style={{ fontSize: "0.75rem", fontWeight: 600 }}>
-          Account name
-          <input name="account_name" placeholder="e.g. MACHINERY" style={inputStyle} />
-        </label>
-        <label style={{ fontSize: "0.75rem", fontWeight: 600 }}>
-          Description
-          <input name="description" placeholder="Optional note" style={inputStyle} />
-        </label>
-      </div>
-      <div>
-        <SubmitButton variant="primary" pendingLabel="Adding…">
-          Add catalog entry
-        </SubmitButton>
-      </div>
-      {state?.error && <p style={{ fontSize: "0.8125rem", color: "#b91c1c" }}>{state.error}</p>}
-      {state?.ok && <p style={{ fontSize: "0.8125rem", color: "#166534" }}>Entry added.</p>}
-    </form>
+    <>
+      <Button
+        type="button"
+        onClick={() => setOpen(true)}
+        className={triggerClassName ?? "h-8 gap-2 rounded-[4px] px-3.5 text-xs font-semibold"}
+      >
+        Add catalog entry
+      </Button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="bg-white sm:max-w-lg dark:bg-white">
+          <DialogHeader>
+            <DialogTitle>Add catalog entry</DialogTitle>
+            <DialogDescription>
+              One record links code + title + name + asset type. Selecting a
+              code auto-fills title and type in personnel forms.
+            </DialogDescription>
+          </DialogHeader>
+          <form ref={formRef} action={formAction} style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+            <div style={rowStyle}>
+              <label style={{ fontSize: "0.75rem", fontWeight: 600 }}>
+                Account code *
+                <input name="account_code" required placeholder="e.g. 1-07-05-010" style={inputStyle} />
+              </label>
+              <label style={{ fontSize: "0.75rem", fontWeight: 600 }}>
+                Asset type *
+                <input name="asset_type" required placeholder="e.g. Machinery and Equipment" style={inputStyle} />
+              </label>
+              <label style={{ fontSize: "0.75rem", fontWeight: 600 }}>
+                Account title *
+                <input name="account_title" required placeholder="e.g. MACHINERIES" style={inputStyle} />
+              </label>
+              <label style={{ fontSize: "0.75rem", fontWeight: 600 }}>
+                Account name
+                <input name="account_name" placeholder="e.g. MACHINERY" style={inputStyle} />
+              </label>
+              <label style={{ fontSize: "0.75rem", fontWeight: 600 }}>
+                Description
+                <input name="description" placeholder="Optional note" style={inputStyle} />
+              </label>
+            </div>
+            {state?.error && <p style={{ fontSize: "0.8125rem", color: "#b91c1c" }}>{state.error}</p>}
+            <DialogFooter>
+              <button type="button" onClick={() => setOpen(false)} style={smallBtn(true)}>
+                Cancel
+              </button>
+              <SubmitButton variant="primary" pendingLabel="Adding…" className="h-8 gap-2 rounded-[4px] px-3.5 text-xs font-semibold">
+                Add catalog entry
+              </SubmitButton>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 
@@ -138,6 +216,7 @@ export function CatalogToggle({ id, code, isActive }: { id: string; code: string
           const r = await setCatalogStatus(id, isActive ? "inactive" : "active");
           if (r.ok) {
             toast({ title: isActive ? "Deactivated" : "Reactivated", variant: "success" });
+            bustClientCache(CLIENT_CACHE_KEYS.adminMasterData);
             router.refresh();
           } else {
             toast({ title: "Failed", description: r.error ?? "Try again.", variant: "error" });
@@ -239,6 +318,7 @@ export function CatalogEdit({
                   if (r.ok) {
                     toast({ title: "Saved", variant: "success" });
                     setOpen(false);
+                    bustClientCache(CLIENT_CACHE_KEYS.adminMasterData);
                     router.refresh();
                   } else {
                     toast({ title: "Save failed", description: r.error ?? "Try again.", variant: "error" });
@@ -280,6 +360,7 @@ export function ImportCatalogDialog() {
         description: `${result.created ?? 0} added · ${result.skipped ?? 0} skipped`,
         variant: "success",
       });
+      bustClientCache(CLIENT_CACHE_KEYS.adminMasterData);
       router.refresh();
     }
   }, [result, router, toast]);
@@ -432,6 +513,92 @@ export function ImportCatalogDialog() {
         </DialogContent>
       </Dialog>
     </>
+  );
+}
+
+export function AddDepartmentForm({ triggerClassName }: { triggerClassName?: string }) {
+  const [open, setOpen] = useState(false);
+  const [state, formAction] = useActionState(createDepartment, { ok: false });
+  const formRef = useRef<HTMLFormElement>(null);
+  const { toast } = useToast();
+  // Close + refresh the list on success (same pattern as units).
+  useEffect(() => {
+    if (state?.ok) {
+      bustClientCache(CLIENT_CACHE_KEYS.adminMasterData);
+      toast({ title: "Department added", variant: "success" });
+      formRef.current?.reset();
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional one-shot close after successful submit
+      setOpen(false);
+    }
+  }, [state, toast]);
+  return (
+    <>
+      <Button
+        type="button"
+        onClick={() => setOpen(true)}
+        className={triggerClassName ?? "h-8 gap-2 rounded-[4px] px-3.5 text-xs font-semibold"}
+      >
+        Add department
+      </Button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="bg-white sm:max-w-md dark:bg-white">
+          <DialogHeader>
+            <DialogTitle>Add department</DialogTitle>
+            <DialogDescription>
+              Departments are saved to the database. Personnel pick their
+              assigned department from the account menu.
+            </DialogDescription>
+          </DialogHeader>
+          <form ref={formRef} action={formAction} style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+            <label style={{ fontSize: "0.75rem", fontWeight: 600 }}>
+              Department name *
+              <input name="name" required maxLength={120} placeholder="e.g. General Services" style={{ ...inputStyle, marginTop: "0.25rem" }} />
+            </label>
+            <label style={{ fontSize: "0.75rem", fontWeight: 600 }}>
+              Description
+              <input name="description" placeholder="Optional note" style={{ ...inputStyle, marginTop: "0.25rem" }} />
+            </label>
+            {state?.error && <p style={{ fontSize: "0.8125rem", color: "#b91c1c" }}>{state.error}</p>}
+            <DialogFooter>
+              <button type="button" onClick={() => setOpen(false)} style={smallBtn(true)}>
+                Cancel
+              </button>
+              <SubmitButton variant="primary" pendingLabel="Adding…" className="h-8 gap-2 rounded-[4px] px-3.5 text-xs font-semibold">
+                Add department
+              </SubmitButton>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+export function DepartmentToggle({ id, name, isActive }: { id: string; name: string; isActive: boolean }) {
+  const [pending, start] = useTransition();
+  const router = useRouter();
+  const { toast } = useToast();
+  return (
+    <button
+      type="button"
+      disabled={pending}
+      onClick={() => {
+        if (isActive && !confirm(`Deactivate department "${name}"? Blocked while personnel are assigned to it.`)) return;
+        start(async () => {
+          const r = await setDepartmentStatus(id, isActive ? "inactive" : "active");
+          if (r.ok) {
+            toast({ title: isActive ? "Deactivated" : "Reactivated", variant: "success" });
+            bustClientCache(CLIENT_CACHE_KEYS.adminMasterData);
+            router.refresh();
+          } else {
+            toast({ title: "Failed", description: r.error ?? "Try again.", variant: "error" });
+          }
+        });
+      }}
+      style={smallBtn(isActive)}
+    >
+      {isActive ? "Deactivate" : "Reactivate"}
+    </button>
   );
 }
 

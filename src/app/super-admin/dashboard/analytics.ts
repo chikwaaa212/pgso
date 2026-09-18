@@ -80,6 +80,12 @@ export async function getAnalytics(): Promise<Analytics | null> {
     return null
   }
 
+  // Same caching as the personnel dashboard aggregates (60s scoped —
+  // per-user key so entries can't leak across accounts). Auth stays
+  // outside the cache so failure fallbacks are never stored.
+  const { withScopedCache } = await import('@/lib/personnel-cache')
+  return withScopedCache('super-admin:analytics', 60, async () => {
+
   const now = new Date()
   const monthStarts: Date[] = []
   for (let i = 5; i >= 0; i--) {
@@ -273,4 +279,5 @@ export async function getAnalytics(): Promise<Analytics | null> {
     console.error('[getAnalytics]', e)
     return null
   }
+  })
 }

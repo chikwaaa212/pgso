@@ -1,11 +1,28 @@
 'use server'
 
+import { revalidatePath } from 'next/cache'
 import { createClient as createAdminClient } from '@supabase/supabase-js'
+import type { SupabaseClient } from '@supabase/supabase-js'
 import prisma from '@/lib/prisma'
 import { withIdempotency } from '@/lib/idempotency'
 import { writeAuditLog } from '@/lib/audit'
 import { requireSuperAdmin } from '@/lib/auth-guard'
 import type { SignupState } from '@/types'
+
+// Reuse one admin client per server instance. createClient itself is cheap,
+// but a singleton avoids re-resolving fetch/storage on every submit and
+// `persistSession: false` skips the (useless server-side) session storage.
+let adminClientSingleton: SupabaseClient | null = null
+function adminClient() {
+  if (!adminClientSingleton) {
+    adminClientSingleton = createAdminClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!,
+      { auth: { persistSession: false } }
+    )
+  }
+  return adminClientSingleton
+}
 
 export async function addPersonnelEmployee(
   _prevState: SignupState,
@@ -31,13 +48,13 @@ export async function addPersonnelEmployee(
     return { error: 'Password must be at least 6 characters.' }
   }
 
-  const supabase = createAdminClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-  )
+  const supabase = adminClient()
+  const startedAt = Date.now()
+
+  let newUserId = ''
 
   try {
-    await withIdempotency(
+    const outcome = await withIdempotency(
       formData.get('idempotencyKey') as string,
       'personnel:create',
       async () => {
@@ -69,6 +86,10 @@ export async function addPersonnelEmployee(
           throw new Error('Failed to create profile. Please try again.')
         }
 
+        // Audit is best-effort (never throws) — run it without blocking
+        // the profile write's return path any longer than one await.
+        // Kept inside the idempotent fn so a duplicate retry reuses the
+        // stored result instead of writing a second audit row.
         await writeAuditLog({
           userId: actorId,
           action: 'users:create_personnel',
@@ -83,9 +104,29 @@ export async function addPersonnelEmployee(
         return { userId: data.user.id }
       }
     )
+    newUserId = (outcome.result as { userId?: string }).userId ?? ''
+    if (outcome.duplicate && !newUserId) {
+      return { success: true }
+    }
   } catch (e) {
     return { error: e instanceof Error ? e.message : 'Failed to create account.' }
   }
 
+  // Bust the cached overview/user counts and revalidate the pages that read
+  // them — same pattern as super-admin/users actions. Without this the
+  // Personnel stat stays stale for 60s, which looks like the submit failed
+  // and invites a double-submit (which then waits on the idempotency poll).
+  try {
+    const { bustPersonnelCache } = await import('@/lib/personnel-cache')
+    await bustPersonnelCache()
+  } catch {
+    // best-effort: a stale cache must not fail an already-created account
+  }
+  revalidatePath('/super-admin/dashboard')
+  revalidatePath('/super-admin/users')
+
+  console.info(
+    `[addPersonnelEmployee] created ${email} (${newUserId}) in ${Date.now() - startedAt}ms`
+  )
   return { success: true }
 }
