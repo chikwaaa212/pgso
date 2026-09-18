@@ -469,7 +469,7 @@ export async function getMyIssuanceDetail(id: string): Promise<IssuanceDetail | 
       total_amount: num(r.total_amount),
       item_label: itemLabel,
       issuance_data: (r.issuance_data as Record<string, string> | null) ?? null,
-      image_url: r.image_url,
+      image_url: r.image_url ?? null,
       created_at: isoFull(r.created_at),
       created_by: r.created_by ?? null,
       asset_snapshot: asset
