@@ -32,6 +32,35 @@ function isConflict(error: unknown) {
   );
 }
 
+// Database-unreachable errors (stale/wrong DATABASE_URL, paused project,
+// network outage) surface as P1001/P1002/... or as
+// "Error querying the database: FATAL: (ENOTFOUND) tenant/user ... not found".
+// Never leak those internals to the UI (they can expose host/project details)
+// — show a generic retry message instead.
+function isConnectionError(error: unknown) {
+  if (typeof error !== "object" || error === null) return false;
+  const code = (error as { code?: unknown }).code;
+  if (
+    typeof code === "string" &&
+    ["P1001", "P1002", "P1008", "P1013", "P1017"].includes(code)
+  ) {
+    return true;
+  }
+  const message = String((error as { message?: unknown }).message ?? "");
+  return /error querying the database|can.?t reach database|connection.*timed out|fatal|enotfound|tenant or user not found|tenant\/user/i.test(
+    message
+  );
+}
+
+function toPublicError(error: unknown) {
+  if (isConnectionError(error)) {
+    return new Error(
+      "Database temporarily unavailable. Please try again in a moment."
+    );
+  }
+  return error;
+}
+
 /**
  * Execute `fn` at most once per idempotency `key`.
  *
@@ -45,6 +74,18 @@ function isConflict(error: unknown) {
  * The result must be a JSON-serializable object.
  */
 export async function withIdempotency<T extends Record<string, unknown>>(
+  key: string | null | undefined,
+  operation: string,
+  fn: () => Promise<T>
+): Promise<IdempotentOutcome<T>> {
+  try {
+    return await withIdempotencyInner(key, operation, fn);
+  } catch (error) {
+    throw toPublicError(error);
+  }
+}
+
+async function withIdempotencyInner<T extends Record<string, unknown>>(
   key: string | null | undefined,
   operation: string,
   fn: () => Promise<T>
