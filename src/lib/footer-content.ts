@@ -231,7 +231,7 @@ export const FOOTER_INFO: Record<string, FooterInfoContent> = {
     steps: [
       {
         title: "1. Auth & roles",
-        text: "/login and /signup handle email + Google sign-in. Accounts need admin approval before access. Middleware routes you to /employee, /personnel, or /super-admin.",
+        text: "/login and /signup handle email (password + OTP) + Google sign-in. Self-registered Employee / Personnel accounts are active immediately after verification. Middleware routes you to /employee, /personnel, or /super-admin.",
       },
       {
         title: "2. Core resources",
@@ -268,7 +268,7 @@ export const FOOTER_INFO: Record<string, FooterInfoContent> = {
     steps: [
       {
         title: "1. Check access first",
-        text: "Can't sign in? If you see 'pending approval' or 'inactive', contact your admin — new signups require approval before login works.",
+        text: "Can't sign in? If you see 'inactive', contact your admin. New signups verify by Email OTP or Google and are active immediately — check your verification code / spam folder first.",
       },
       {
         title: "2. Reproduce with steps",
@@ -389,7 +389,7 @@ export const FOOTER_INFO: Record<string, FooterInfoContent> = {
       },
       {
         title: "4. How to start",
-        text: "Sign up, wait for admin approval, then sign in. You'll land on your role's dashboard with only the actions you're allowed to do.",
+        text: "Sign up with Google or Email + OTP, verify, then sign in. You'll land on your role's dashboard with only the actions you're allowed to do.",
       },
       {
         title: "5. Why teams stay",
@@ -461,7 +461,7 @@ export const FOOTER_INFO: Record<string, FooterInfoContent> = {
       },
       {
         title: "4. How it's protected",
-        text: "Encrypted in transit and at rest, approval-gated accounts, session controls, and regular reviews of users and master data. Report suspected misuse via Issues immediately.",
+        text: "Encrypted in transit and at rest, verified self-registered accounts, session controls, and regular reviews of users and master data. Report suspected misuse via Issues immediately.",
       },
       {
         title: "5. Retention & rights",
@@ -484,8 +484,8 @@ export const FOOTER_INFO: Record<string, FooterInfoContent> = {
     iconName: "ScrollText",
     steps: [
       {
-        title: "1. Accounts & approval",
-        text: "You must provide accurate identity info. Access requires admin approval and may be suspended for misuse, sharing credentials, or inactivity.",
+        title: "1. Accounts & verification",
+        text: "You must provide accurate identity info. Access requires email (OTP) or Google verification and may be suspended for misuse, sharing credentials, or inactivity.",
       },
       {
         title: "2. Acceptable use",

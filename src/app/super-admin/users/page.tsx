@@ -94,20 +94,22 @@ export default function SuperAdminUsersPage() {
       <div>
         <h1 className={styles.title}>Users</h1>
         <p className={styles.subtitle}>
-          {counts.pending} awaiting approval · {counts.personnel} personnel ·{" "}
-          {counts.employees} employees. Admin creates personnel only — employees
-          self-register and wait for approval.
+          {counts.pending} legacy pending · {counts.personnel} personnel ·{" "}
+          {counts.employees} employees. Employee + Personnel accounts are
+          self-registered (Google or Email + OTP) and active immediately — no
+          approval needed.
         </p>
       </div>
 
       <Card className={styles.panel}>
-        <h2 className={styles.panelTitle}>Pending employee approvals</h2>
+        <h2 className={styles.panelTitle}>Legacy pending accounts</h2>
         <p className={styles.panelSub}>
-          Approve to let them sign in, reject to block. Rejected accounts become
-          inactive and are signed out.
+          New self-registrations are active immediately. This queue only lists
+          accounts created before self-service — approve to activate, reject to
+          block. Rejected accounts become inactive and are signed out.
         </p>
         {pending.length === 0 ? (
-          <p className={styles.emptyCenter}>No pending approvals — queue is clear.</p>
+          <p className={styles.emptyCenter}>No legacy pending accounts — queue is clear.</p>
         ) : (
         <div className={`${styles.tableWrap} pgso-no-scrollbar`}>
           <table className={styles.table}>

@@ -76,7 +76,13 @@ export async function requireEmployee(): Promise<EmployeeSession> {
     select: { full_name: true, role: true, status: true },
   })
 
-  if (!profile || profile.role !== 'employee' || profile.status !== 'active') {
+  // Self-registration is auto-active: legacy `pending` profiles are accepted
+  // alongside `active`. Only `inactive` is blocked.
+  if (
+    !profile ||
+    profile.role !== 'employee' ||
+    (profile.status !== 'active' && profile.status !== 'pending')
+  ) {
     throw new Error('Forbidden: Employee only.')
   }
 

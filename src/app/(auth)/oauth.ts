@@ -5,3 +5,12 @@
  */
 export const OAUTH_PROVIDER = 'google' as const
 export const OAUTH_LABEL = 'Google' as const
+
+/** Cookie stashing the signup role across the Google OAuth round-trip. */
+export const SIGNUP_ROLE_COOKIE = 'pgso_signup_role'
+
+export type SelfRegisterRole = 'employee' | 'pgso_personnel'
+
+export function parseSignupRole(value: unknown): SelfRegisterRole {
+  return value === 'pgso_personnel' ? 'pgso_personnel' : 'employee'
+}

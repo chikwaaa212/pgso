@@ -119,8 +119,9 @@ export default async function SuperAdminDashboard() {
         <div className={styles.addSection}>
           <h2 className={styles.addTitle}>Add Personnel Employee</h2>
           <p className={styles.addSubtitle}>
-            Create login credentials for a PGSO personnel member. Employee accounts
-            are self-registered — approve them under{' '}
+            Create login credentials for a PGSO personnel member directly. Employee
+            + Personnel accounts can also self-register (Google or Email + OTP) and
+            are active immediately — manage them under{' '}
             <Link href="/super-admin/users" style={{ textDecoration: 'underline' }}>
               Users
             </Link>

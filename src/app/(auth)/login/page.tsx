@@ -13,9 +13,10 @@ import { Card } from '@/components/ui/card'
 import styles from './page.module.css'
 
 const NOTICES: Record<string, string> = {
-  pending: 'Your account is awaiting admin approval. You can sign in after approval.',
   inactive: 'Your account is inactive. Contact your administrator.',
   'oauth-error': 'Google sign-in failed. Try again or sign in with email.',
+  verified: 'Email verified — sign in to continue.',
+  'check-email': 'Account created — verify the code we emailed you, then sign in.',
 }
 
 function LoginNotice() {
@@ -135,6 +136,18 @@ export default function LoginPage() {
           {state?.error && (
             <p className={styles.error} role="alert">
               {state.error}
+            </p>
+          )}
+
+          {state?.needsVerification && state?.email && (
+            <p className={styles.notice} role="status">
+              <Link
+                href={`/signup?step=code&email=${encodeURIComponent(state.email)}`}
+                className={styles.link}
+              >
+                Enter your verification code
+              </Link>{' '}
+              to finish verifying {state.email}, then sign in.
             </p>
           )}
 

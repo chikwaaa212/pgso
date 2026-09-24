@@ -33,11 +33,20 @@ interface ItemInput {
   unitCost?: string | number
 }
 
+function makeProvisionalCode(kind: string): string {
+  const prefix = kind === 'asset' ? 'AST' : 'STK'
+  const date = new Date().toISOString().slice(0, 10).replace(/-/g, '')
+  const rand = Math.random().toString(36).slice(2, 6).toUpperCase().padEnd(4, '0')
+  return `${prefix}-${date}-${rand}`
+}
+
 export async function logDelivery(
   _prevState: SignupState,
   formData: FormData
 ): Promise<SignupState> {
-  const accountCode = (formData.get('accountCode') as string)?.trim()
+  const accountCodeRaw = (formData.get('accountCode') as string)?.trim()
+  const assetTypeRaw = (formData.get('assetType') as string)?.trim()
+  const accountTitleRaw = (formData.get('accountTitle') as string)?.trim()
   const deliveryKind = (formData.get('deliveryKind') as string)?.trim()?.toLowerCase()
   const dateSupplied = formData.get('dateSupplied') as string
   const expectedArrival = formData.get('expectedArrival') as string
@@ -49,22 +58,47 @@ export async function logDelivery(
   const recipientRole = (formData.get('recipientRole') as string)?.trim()
   const recipientName = (formData.get('recipientName') as string)?.trim()
 
-  if (!accountCode) {
-    return { error: 'Account code is required — pick one from Master Data.' }
-  }
-
   if (!deliveryKinds.includes(deliveryKind as (typeof deliveryKinds)[number])) {
     return { error: 'Choose whether this delivery is for Stocks or Assets.' }
   }
 
-  // Strict mode: the catalog is authoritative. Unknown/inactive codes are
-  // rejected; type + title always come from the catalog entry.
-  const catalogEntry = await findCatalogEntry(accountCode)
-  if (!catalogEntry) {
-    return { error: `Unknown account code "${accountCode}" — ask your Super Admin to add it to Master Data.` }
+  // Custom mode: every delivery is a NEW asset/stock, so personnel type (or
+  // auto-generate) the account code + asset type + account title freely.
+  // The catalog is suggestions-only — unknown codes are accepted and saved
+  // as-is instead of being rejected.
+  let accountCode = accountCodeRaw || ''
+  // Empty code + explicit auto-generate request → provisional unique code.
+  // The form's Generate button normally fills this client-side; this is the
+  // server-side fallback so an empty code never blocks a new asset/stock.
+  if (!accountCode && (formData.get('autoGenerateCode') as string) === '1') {
+    accountCode = makeProvisionalCode(deliveryKind)
   }
-  const assetType = catalogEntry.type
-  const accountTitle = catalogEntry.title
+  if (!accountCode) {
+    return { error: 'Account code is required — type a new code or press Generate.' }
+  }
+  if (accountCode.length < 2 || accountCode.length > 60) {
+    return { error: 'Account code must be 2–60 characters.' }
+  }
+  if (!/^[A-Za-z0-9][A-Za-z0-9\-._/\s]*$/.test(accountCode)) {
+    return { error: 'Account code may only contain letters, numbers, spaces, and - . _ /' }
+  }
+
+  const assetType = assetTypeRaw || ''
+  const accountTitle = accountTitleRaw || ''
+  if (!assetType) {
+    return { error: 'Asset type is required — type it in (e.g. Machinery and Equipment).' }
+  }
+  if (assetType.length < 2 || assetType.length > 120) {
+    return { error: 'Asset type must be 2–120 characters.' }
+  }
+  if (!accountTitle) {
+    return { error: 'Account title is required — type it in (e.g. OFFICE EQUIPMENT).' }
+  }
+  if (accountTitle.length < 2 || accountTitle.length > 120) {
+    return { error: 'Account title must be 2–120 characters.' }
+  }
+  // Catalog convention: titles stored uppercase; keep type as typed.
+  const accountTitleNorm = accountTitle.toUpperCase()
 
   if (!dateSupplied || Number.isNaN(Date.parse(dateSupplied))) {
     // Waiting-for-arrival logs carry a target date instead of a received date.
@@ -150,6 +184,26 @@ export async function logDelivery(
       formData.get('idempotencyKey') as string,
       'delivery:create',
       async () => {
+        // New asset/stock → new catalog code. Seed the Master Data catalog
+        // so inventory titles, asset forms, and future suggestions stay in
+        // sync. Race-safe: unique constraint wins, duplicates are ignored.
+        try {
+          const existing = await findCatalogEntry(accountCode)
+          if (!existing) {
+            await prisma.accountCatalog.create({
+              data: {
+                account_code: accountCode,
+                account_title: accountTitleNorm,
+                asset_type: assetType,
+                description: `Auto-created from delivery PO ${poReference}`,
+                status: 'active',
+                created_by: user.id,
+              },
+            })
+          }
+        } catch (e) {
+          console.warn('[logDelivery:catalog-seed]', e)
+        }
         const delivery = await prisma.delivery.create({
           data: {
             supplier: supplierName,
@@ -164,7 +218,7 @@ export async function logDelivery(
             recipient_name: recipientName || null,
             asset_type: assetType,
             account_code: accountCode,
-            account_title: accountTitle,
+            account_title: accountTitleNorm,
             items: {
               create: parsedItems.map((item) => ({
                 item_name: item.description,
@@ -520,10 +574,12 @@ export async function getDeliveriesList(): Promise<CachedDeliveryRow[]> {
 }
 
 /**
- * Chart-of-accounts options for the Log delivery form, sourced from the
- * Super Admin–managed account catalog (strict mode). Each account code maps
- * to exactly one asset type + title, so picking a code auto-fills the other
- * two fields. No custom codes — unknown codes must be added in Master Data.
+ * Chart-of-accounts suggestions for the Log delivery form, sourced from the
+ * account catalog. Suggestions-only: every delivery is a NEW asset/stock, so
+ * personnel may type (or auto-generate) a fresh code + custom type/title.
+ * Picking a known code still auto-fills type + title as a convenience, but
+ * all three fields stay editable and unknown codes are accepted — a catalog
+ * entry is seeded automatically on save.
  */
 export async function getDeliveryFormOptions(): Promise<DeliveryFormOptions> {
   const { withCache, cacheKey } = await import('@/lib/personnel-cache')

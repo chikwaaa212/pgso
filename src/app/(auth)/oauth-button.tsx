@@ -4,6 +4,7 @@ import { Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { signInWithOAuth } from './auth'
 import { OAUTH_LABEL } from './oauth'
+import type { SelfRegisterRole } from './oauth'
 import { SubmitButton } from '@/components/ui/submit-button'
 import styles from './oauth-button.module.css'
 
@@ -31,17 +32,26 @@ function GoogleIcon() {
 }
 
 /**
- * Shared Supabase OAuth entry point. New users are registered as
- * employee/pending in the auth callback; returning users (any role) sign in —
- * OAuth users have no password, so this appears on both login and signup.
+ * Shared Supabase OAuth entry point for self-registration + sign-in.
+ * On signup the picked role rides along as a hidden field so the callback
+ * can create an ACTIVE profile with that role (no admin approval).
  */
-export function OAuthButton({ mode, hideDivider = false }: { mode: 'signin' | 'signup'; hideDivider?: boolean }) {
+export function OAuthButton({
+  mode,
+  hideDivider = false,
+  role,
+}: {
+  mode: 'signin' | 'signup'
+  hideDivider?: boolean
+  role?: SelfRegisterRole
+}) {
   return (
     <div className={styles.oauthBlock}>
       <form action={signInWithOAuth}>
         <Suspense fallback={null}>
           <OAuthNextField />
         </Suspense>
+        {role ? <input type="hidden" name="role" value={role} /> : null}
         <SubmitButton
           variant="outline"
           className={styles.oauthButton}
@@ -61,12 +71,8 @@ export function OAuthButton({ mode, hideDivider = false }: { mode: 'signin' | 's
 }
 
 function OAuthNextField() {
-  let next: string | null = null
-  try {
-    next = useSearchParams().get('next')
-  } catch {
-    next = null
-  }
+  const params = useSearchParams()
+  const next = params.get('next')
   if (!next || !next.startsWith('/') || next.startsWith('//')) return null
   return <input type="hidden" name="next" value={next} />
 }

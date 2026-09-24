@@ -38,10 +38,21 @@ export interface Profile {
 
 export interface LoginState {
   error?: string;
+  /** Set when the password is right but the email is still unverified. */
+  email?: string;
+  needsVerification?: boolean;
 }
 
 export interface SignupState {
   success?: boolean;
   error?: string;
   deliveryId?: string;
+  needsVerification?: boolean;
+  email?: string;
+  /** Role picked at signup — returned so the client can route to the right dashboard. */
+  role?: string;
+  /** True when a resend request was accepted and a fresh code was emailed. */
+  resent?: boolean;
+  /** True when the address is already verified — client should point to login. */
+  alreadyVerified?: boolean;
 }

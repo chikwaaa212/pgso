@@ -103,15 +103,15 @@ export async function middleware(request: NextRequest) {
     .eq('id', user.id)
     .single()
 
-  if (!profile || profile.status === 'inactive' || profile.status === 'pending') {
+  // Self-registration is auto-active (no admin approval): only `inactive`
+  // accounts are blocked. Legacy `pending` profiles are treated as active so
+  // accounts created before self-service are never stuck.
+  if (!profile || profile.status === 'inactive') {
     await supabase.auth.signOut()
     // Public pages can render the notice; protected pages also land here.
     const url = request.nextUrl.clone()
     url.pathname = '/login'
-    url.searchParams.set(
-      'notice',
-      !profile || profile.status === 'pending' ? 'pending' : 'inactive'
-    )
+    url.searchParams.set('notice', 'inactive')
     return NextResponse.redirect(url)
   }
 

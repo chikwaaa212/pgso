@@ -179,9 +179,11 @@ export function LogDeliveryMockForm({
     );
 
   /**
-   * Strict mode: Account Code drives Step 1. Picking a code auto-fills asset
-   * type + account title from Master Data. Clearing the code clears both —
-   * there is no manual entry; unknown codes must be added by Super Admin.
+   * Custom mode: every delivery is a NEW asset/stock. Personnel type (or
+   * auto-generate) the account code and type the asset type + account title
+   * freely — the catalog is suggestions-only.
+   * Picking a known code auto-fills type + title as a convenience, but all
+   * three fields stay editable and unknown codes are accepted.
    */
   const handleAccountCodeChange = (value: string) => {
     const hit = lookupCode(value);
@@ -193,12 +195,30 @@ export function LogDeliveryMockForm({
         accountTitle: hit.accountTitle,
       }));
     } else {
-      setStep1((prev) => ({ ...prev, assetType: "", accountCode: value, accountTitle: "" }));
+      // New code — keep any custom type/title the user already typed.
+      setStep1((prev) => ({ ...prev, accountCode: value }));
     }
   };
 
+  const handleGenerateCode = () => {
+    const prefix = step1.deliveryKind === "asset" ? "AST" : "STK";
+    const date = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+    const known = new Set(formOptions.codes.map((c) => c.code.toUpperCase()));
+    let code = "";
+    for (let i = 0; i < 10; i++) {
+      // eslint-disable-next-line react-hooks/purity -- event handler, impure call is intentional for code generation
+      const rand = Math.random().toString(36).slice(2, 6).toUpperCase().padEnd(4, "0");
+      const candidate = `${prefix}-${date}-${rand}`;
+      if (!known.has(candidate.toUpperCase())) {
+        code = candidate;
+        break;
+      }
+      code = candidate;
+    }
+    setStep1((prev) => ({ ...prev, accountCode: code }));
+  };
+
   const handleAssetTypeChange = (value: string) => {
-    // Only reachable when no catalog is loaded (legacy fallback inputs).
     setStep1((prev) => ({ ...prev, assetType: value }));
   };
 
@@ -290,9 +310,9 @@ export function LogDeliveryMockForm({
 
   const isStep1Valid =
     (step1.deliveryKind === "stock" || step1.deliveryKind === "asset") &&
-    !!step1.assetType &&
-    !!step1.accountCode &&
-    !!step1.accountTitle;
+    step1.accountCode.trim().length >= 2 &&
+    step1.assetType.trim().length >= 2 &&
+    step1.accountTitle.trim().length >= 2;
   const isAwaitingArrival = step2.deliveryStatus === "Awaiting";
   const isStep2Valid =
     !!step2.supplierName &&
@@ -315,11 +335,8 @@ export function LogDeliveryMockForm({
 
   const renderStep1 = () => {
     const matchedCode = lookupCode(step1.accountCode);
-    const isAutoFilled = !!matchedCode;
-    // Strict mode: type + title are display-only whenever the catalog is
-    // loaded — they always come from the picked code.
-    const catalogMode = formOptions.codes.length > 0;
-    const locked = isAutoFilled || catalogMode;
+    const isKnownCode = !!matchedCode;
+    const isNewCode = step1.accountCode.trim() !== "" && !isKnownCode;
 
     return (
       <div className="flex flex-col gap-3">
@@ -347,148 +364,97 @@ export function LogDeliveryMockForm({
         </div>
         <div>
           <Label htmlFor="account-code" className="mb-1 block text-sm font-medium">
-            Account Code <span className="font-normal text-navy-500">(start here)</span>
+            Account Code <span className="font-normal text-navy-500">(new asset/stock — type or generate)</span>
           </Label>
-          {catalogMode ? (
-            <Select
-              value={isAutoFilled ? matchedCode.code : ""}
-              onValueChange={handleAccountCodeChange}
-            >
-              <SelectTrigger id="account-code" className="w-full">
-                <SelectValue placeholder="Select account code" />
-              </SelectTrigger>
-              <SelectContent>
-                {formOptions.codes.map((c) => (
-                  <SelectItem key={c.code} value={c.code}>
-                    {c.code}
-                    {c.accountTitle ? ` — ${c.accountTitle}` : c.assetType ? ` — ${c.assetType}` : ""}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          ) : (
+          <div className="flex gap-2">
             <Input
               id="account-code"
               name="accountCode"
               value={step1.accountCode}
               onChange={(e) => handleAccountCodeChange(e.target.value)}
-              placeholder="e.g. 1-06-05-020"
-              autoFocus
+              placeholder="Type a new code, e.g. 1-06-05-020"
+              list="delivery-account-codes"
+              className="flex-1"
             />
-          )}
+            <button
+              type="button"
+              onClick={handleGenerateCode}
+              title="Auto-generate a unique provisional code for this new asset/stock"
+              className={cn(
+                "inline-flex h-9 shrink-0 items-center justify-center rounded-[4px] border border-navy-200 bg-transparent px-3 text-xs font-semibold text-navy-700 hover:bg-navy-100"
+              )}
+            >
+              Generate
+            </button>
+          </div>
+          <datalist id="delivery-account-codes">
+            {formOptions.codes.map((c) => (
+              <option key={c.code} value={c.code}>
+                {c.accountTitle ? `${c.accountTitle}` : c.assetType}
+              </option>
+            ))}
+          </datalist>
           {step1.accountCode.trim() === "" ? (
             <p className="mt-1 text-xs text-navy-500">
-              Start by picking the account code — asset type and account title
-              fill in automatically.
+              Type a new code for this asset/stock, pick a suggestion to reuse
+              one, or press Generate for an auto code.
             </p>
-          ) : isAutoFilled ? (
+          ) : isKnownCode ? (
             <p className="mt-1 text-xs font-medium text-emerald-700">
-              Known code — asset type and account title filled in automatically.
+              Known code — type/title filled in as a suggestion, you can still edit them below.
             </p>
           ) : (
-            <p className="mt-1 text-xs text-amber-700">
-              Unknown code — ask your Super Admin to add it to Master Data.
+            <p className="mt-1 text-xs font-medium text-sky-700">
+              New code — it will be saved with this delivery and added to the catalog.
             </p>
           )}
         </div>
         <div>
           <Label htmlFor="asset-type" className="mb-1 block text-sm font-medium">
-            Asset Type
-            {isAutoFilled && (
-              <span className="ml-1 font-normal text-emerald-700">(auto-filled)</span>
+            Asset Type <span className="font-normal text-navy-500">(custom)</span>
+            {isKnownCode && (
+              <span className="ml-1 font-normal text-emerald-700">(suggested)</span>
             )}
           </Label>
-          {formOptions.assetTypes.length > 0 ? (
-            <Select
-              value={step1.assetType}
-              onValueChange={handleAssetTypeChange}
-              disabled={locked}
-            >
-              <SelectTrigger
-                id="asset-type"
-                className="w-full disabled:cursor-not-allowed disabled:opacity-70"
-              >
-                <SelectValue
-                  placeholder={
-                    isAutoFilled ? "Auto-filled from code" : "Select asset type"
-                  }
-                />
-              </SelectTrigger>
-                <SelectContent>
-                  {(isAutoFilled && matchedCode
-                    ? [matchedCode.assetType]
-                    : formOptions.assetTypes
-                  ).map((t) => (
-                    <SelectItem key={t} value={t}>
-                      {t}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-            </Select>
-          ) : (
-            <Input
-              id="asset-type"
-              name="assetType"
-              value={step1.assetType}
-              onChange={(e) => handleAssetTypeChange(e.target.value)}
-              placeholder={
-                isAutoFilled ? "Auto-filled from code" : "e.g. Machinery and Equipment"
-              }
-              disabled={locked}
-            />
-          )}
+          <Input
+            id="asset-type"
+            name="assetType"
+            value={step1.assetType}
+            onChange={(e) => handleAssetTypeChange(e.target.value)}
+            placeholder="e.g. Machinery and Equipment"
+            list="delivery-asset-types"
+          />
+          <datalist id="delivery-asset-types">
+            {formOptions.assetTypes.map((t) => (
+              <option key={t} value={t} />
+            ))}
+          </datalist>
         </div>
         <div>
           <Label htmlFor="account-title" className="mb-1 block text-sm font-medium">
-            Account Title
-            {isAutoFilled && (
-              <span className="ml-1 font-normal text-emerald-700">(auto-filled)</span>
+            Account Title <span className="font-normal text-navy-500">(custom)</span>
+            {isKnownCode && (
+              <span className="ml-1 font-normal text-emerald-700">(suggested)</span>
             )}
           </Label>
-          {formOptions.accountTitles.length > 0 ? (
-            <Select
-              value={step1.accountTitle}
-              onValueChange={(v) => handleStep1Change("accountTitle", v)}
-              disabled={locked}
-            >
-              <SelectTrigger
-                id="account-title"
-                className="w-full disabled:cursor-not-allowed disabled:opacity-70"
-              >
-                <SelectValue
-                  placeholder={
-                    isAutoFilled ? "Auto-filled from code" : "Select account title"
-                  }
-                />
-              </SelectTrigger>
-                <SelectContent>
-                  {(isAutoFilled && matchedCode
-                    ? [matchedCode.accountTitle]
-                    : formOptions.accountTitles
-                  ).map((t) => (
-                    <SelectItem key={t} value={t}>
-                      {t}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-            </Select>
-          ) : (
-            <Input
-              id="account-title"
-              name="accountTitle"
-              value={step1.accountTitle}
-              onChange={(e) => handleStep1Change("accountTitle", e.target.value)}
-              placeholder={
-                isAutoFilled ? "Auto-filled from code" : "e.g. OFFICE EQUIPMENT"
-              }
-              disabled={locked}
-            />
-          )}
+          <Input
+            id="account-title"
+            name="accountTitle"
+            value={step1.accountTitle}
+            onChange={(e) => handleStep1Change("accountTitle", e.target.value)}
+            placeholder="e.g. OFFICE EQUIPMENT"
+            list="delivery-account-titles"
+          />
+          <datalist id="delivery-account-titles">
+            {formOptions.accountTitles.map((t) => (
+              <option key={t} value={t} />
+            ))}
+          </datalist>
         </div>
-        {isAutoFilled && (
+        {isNewCode && (
           <p className="text-xs text-navy-500">
-            Showing {matchedCode?.assetType} • {matchedCode?.accountTitle}. To use a
-            different type/title, change or clear the account code above.
+            New asset/stock — no need to pick an existing record. The code, type
+            and title above will be saved as-is with this delivery.
           </p>
         )}
       </div>

@@ -32,6 +32,7 @@ export async function stockInspectionItems(
         select: {
           account_code: true,
           delivery_kind: true,
+          asset_type: true,
         items: {
             select: {
               id: true,
@@ -72,6 +73,10 @@ export async function stockInspectionItems(
   let costsFixed = 0;
   const accountCode = inspection.delivery.account_code?.trim() || null;
   const deliveryKind = inspection.delivery.delivery_kind?.trim() || null;
+  // Custom-mode deliveries carry a free-typed asset type — seed it as the
+  // inventory category so new stocks keep their type even before (or without)
+  // a catalog title lookup.
+  const assetType = inspection.delivery.asset_type?.trim() || null;
 
   await prisma.$transaction(async (tx) => {
     for (const item of inspection.delivery.items) {
@@ -86,7 +91,7 @@ export async function stockInspectionItems(
             item_name: { equals: name, mode: "insensitive" },
             unit: item.unit,
           },
-          select: { id: true, account_code: true, delivery_kind: true, unit_cost: true },
+          select: { id: true, account_code: true, delivery_kind: true, category: true, unit_cost: true },
         });
 
         if (existing) {
@@ -102,6 +107,10 @@ export async function stockInspectionItems(
           // fill the delivery kind (stocks/assets) when the row has none yet
           if (!existing.delivery_kind && deliveryKind) {
             patch.delivery_kind = deliveryKind;
+          }
+          // fill the custom asset type as category when the row has none yet
+          if (!existing.category && assetType) {
+            patch.category = assetType;
           }
           // Backfill (or refresh to the latest delivery) cost even when
           // nothing new is added — otherwise rows stocked before the
@@ -129,6 +138,7 @@ export async function stockInspectionItems(
               quantity: addable,
               account_code: accountCode,
               delivery_kind: deliveryKind,
+              category: assetType,
               ...(item.unit_cost != null
                 ? { unit_cost: item.unit_cost }
                 : {}),
