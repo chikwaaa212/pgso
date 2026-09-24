@@ -24,13 +24,7 @@ import {
 import { browseAssets, browseCategories } from "../browse/actions";
 import type { UnifiedAssetRow } from "@/app/personnel/assets/actions";
 import { AddAssetDialog, ImportAssetsDialog } from "@/app/personnel/assets/asset-dialogs";
-import {
-  AddColumnDialog,
-  CustomHeaderCells,
-  CustomRowCells,
-  customSearchText,
-  useCustomFields,
-} from "@/app/personnel/assets/custom-columns";
+import { AddColumnDialog, customSearchText } from "@/app/personnel/assets/custom-columns";
 import { IssuanceEvaluateDialog } from "@/components/personnel/IssuanceDialog";
 import { usePageSize } from "@/hooks/use-page-size";
 import { useCachedAction } from "@/hooks/use-cached-action";
@@ -48,27 +42,6 @@ function tone(status: string | null) {
 function label(value: string | null) {
   if (!value) return "—";
   return value.charAt(0).toUpperCase() + value.slice(1).replace(/_/g, " ");
-}
-
-function fmtDate(value: string | null | undefined) {
-  if (!value) return "—";
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return "—";
-  return d.toLocaleDateString("en-PH", {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-    timeZone: "Asia/Manila",
-  });
-}
-
-function fmtCurrency(value: number | null) {
-  if (value === null || value === undefined) return "—";
-  return new Intl.NumberFormat("en-PH", {
-    style: "currency",
-    currency: "PHP",
-    minimumFractionDigits: 2,
-  }).format(value);
 }
 
 const STATUS_FILTERS = [
@@ -126,9 +99,8 @@ export default function SuperAdminAssetsPage() {
   );
   const rows = useMemo(() => snapshot?.rows ?? [], [snapshot]);
   const categories = useMemo(() => snapshot?.categories ?? [], [snapshot]);
-  // User-defined columns (shared definitions table, stored in the DB).
-  const { fields: customFields, refreshFields: refreshCustomFields } =
-    useCustomFields();
+  // Custom-field values stay searchable via customSearchText; the columns
+  // themselves live on the asset detail page, not in this table.
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [sourceFilter, setSourceFilter] = useState("all");
@@ -265,10 +237,7 @@ export default function SuperAdminAssetsPage() {
             triggerClassName="h-8 gap-2 rounded-[4px] px-3.5 text-xs font-semibold"
           />
           <AddColumnDialog
-            onSuccess={() => {
-              refreshCustomFields();
-              refresh();
-            }}
+            onSuccess={() => refresh()}
             triggerClassName="h-8 gap-2 rounded-[4px] px-3.5 text-xs font-semibold"
           />
         </div>
@@ -462,46 +431,19 @@ export default function SuperAdminAssetsPage() {
           </div>
         ) : (
           <>
-            <div className={`${styles.tableWrap} ${assetStyles.tableAuto}`}>
+            <div className={`${styles.tableWrap} ${assetStyles.tableAuto} ${assetStyles.tableLean}`}>
               <table className={styles.table}>
                 <thead>
                   <tr>
-                    <th className={assetStyles.colDetails}>Details</th>
-                    <th className={assetStyles.colBase}>Account Code</th>
-                    <th className={assetStyles.colBase}>Property No.</th>
-                    <th className={assetStyles.colWide}>Asset Type</th>
-                    <th className={assetStyles.colWide}>Account Title</th>
-                    <th className={assetStyles.colWide}>Account Name</th>
-                    <th className={assetStyles.colBase}>Identifier</th>
-                    <th className={assetStyles.colWide}>Article</th>
-                    <th className={assetStyles.colNarrow}>Qty.</th>
-                    <th className={assetStyles.colNarrow}>Unit</th>
-                    <th className={assetStyles.colXl}>Description</th>
-                    <th className={assetStyles.colBase}>Date Acquired</th>
-                    <th className={assetStyles.colBase}>Location</th>
-                    <th className={assetStyles.colCost}>Total Cost</th>
-                    <th className={assetStyles.colCost}>Unit Cost</th>
-                    <th className={assetStyles.colBase}>Condition</th>
-                    <th className={assetStyles.colBase}>Status</th>
-                    <th className={assetStyles.colBase}>Brand</th>
-                    <th className={assetStyles.colNarrow}>Cyl.</th>
-                    <th className={assetStyles.colBase}>Engine Disp.</th>
-                    <th className={assetStyles.colBase}>Fuel Type</th>
-                    <th className={assetStyles.colBase}>Engine #</th>
-                    <th className={assetStyles.colBase}>Chassis #</th>
-                    <th className={assetStyles.colBase}>Color</th>
-                    <th className={assetStyles.colBase}>Plate No.</th>
-                    <th className={assetStyles.colBase}>Fund</th>
-                    <th className={assetStyles.colXl}>Remarks</th>
-                    <th className={assetStyles.colBase}>DV Tracking #</th>
-                    <th className={assetStyles.colWide}>Supplier/Payee</th>
-                    <th className={assetStyles.colWide}>Account Name (Charge)</th>
-                    <th className={assetStyles.colBase}>Account Number</th>
-                    <th className={assetStyles.colBase}>OBR Number</th>
-                    <th className={assetStyles.colBase}>DV Number</th>
-                    <th className={assetStyles.colBase}>Date Received</th>
-                    <th className={assetStyles.colBase}>Created</th>
-                    <CustomHeaderCells fields={customFields} />
+                    <th className={assetStyles.colLeanDetails}>Details</th>
+                    <th className={assetStyles.colLeanCode}>Account Code</th>
+                    <th className={assetStyles.colLeanType}>Account Title</th>
+                    <th className={assetStyles.colLeanType}>Account Name</th>
+                    <th className={assetStyles.colLeanProp}>Property No.</th>
+                    <th className={assetStyles.colLeanItem}>Item</th>
+                    <th className={assetStyles.colLeanQty}>Qty Available</th>
+                    <th className={assetStyles.colLeanLoc}>Location</th>
+                    <th className={assetStyles.colLeanStatus}>Status</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -550,7 +492,7 @@ export default function SuperAdminAssetsPage() {
                         }}
                       >
                         <td
-                          className={`${assetStyles.detailsCell} ${assetStyles.colDetails}`}
+                          className={`${assetStyles.detailsCell} ${assetStyles.colLeanDetails}`}
                           onClick={(e) => e.stopPropagation()}
                         >
                           <span className="inline-flex items-center gap-1.5">
@@ -590,29 +532,39 @@ export default function SuperAdminAssetsPage() {
                             </button>
                           </span>
                         </td>
-                        <td className={assetStyles.colBase}>
-                          <span
-                            className={assetStyles.property}
-                            title={a.account_code ?? undefined}
-                          >
-                            {a.account_code ?? "—"}
+                        <td className={assetStyles.colLeanCode} title={a.account_code ?? undefined}>
+                          {a.account_code ?? "—"}
+                        </td>
+                        <td className={assetStyles.colLeanType} title={a.account_title ?? undefined}>
+                          {label(a.account_title)}
+                        </td>
+                        <td className={assetStyles.colLeanType} title={a.account_name ?? undefined}>
+                          {label(a.account_name)}
+                        </td>
+                        <td className={assetStyles.colLeanProp} title={a.qr_code ?? undefined}>
+                          {a.qr_code ?? "—"}
+                        </td>
+                        <td
+                          className={assetStyles.colLeanItem}
+                          title={`${a.article ?? ""} — ${a.description ?? ""}`}
+                        >
+                          <span className={assetStyles.cellMain}>
+                            {label(a.article)}
+                          </span>
+                          <span className={assetStyles.itemDesc}>
+                            {a.description ?? "—"}
                           </span>
                         </td>
-                        <td className={assetStyles.colBase}>{a.qr_code ?? "—"}</td>
-                        <td className={assetStyles.colWide}>{label(a.category)}</td>
-                        <td className={assetStyles.colWide}>{label(a.account_title)}</td>
-                        <td className={assetStyles.colWide}>{label(a.account_name)}</td>
-                        <td className={assetStyles.colBase}>{a.identifier ?? "—"}</td>
-                        <td className={assetStyles.colWide}>{label(a.article)}</td>
-                        <td className={assetStyles.colNarrow}>{a.quantity ?? "—"}</td>
-                        <td className={assetStyles.colNarrow}>{label(a.unit)}</td>
-                        <td className={assetStyles.colXl}>{a.description ?? "—"}</td>
-                        <td className={assetStyles.colBase}>{fmtDate(a.date_acquired)}</td>
-                        <td className={assetStyles.colBase}>{a.location ?? "—"}</td>
-                        <td className={assetStyles.colCost}>{fmtCurrency(a.total_cost)}</td>
-                        <td className={assetStyles.colCost}>{fmtCurrency(a.unit_cost)}</td>
-                        <td className={assetStyles.colBase}>{label(a.condition)}</td>
-                        <td className={assetStyles.colBase}>
+                        <td className={assetStyles.colLeanQty}>
+                          <span className={assetStyles.qtyInline}>
+                            {a.quantity ?? "—"}
+                            {a.unit ? ` ${label(a.unit)}` : ""}
+                          </span>
+                        </td>
+                        <td className={assetStyles.colLeanLoc} title={a.location ?? undefined}>
+                          {a.location ?? "—"}
+                        </td>
+                        <td className={assetStyles.colLeanStatus}>
                           <span
                             className={styles.status}
                             data-tone={
@@ -622,7 +574,7 @@ export default function SuperAdminAssetsPage() {
                                     alreadyAssigned && statusKey === "available"
                                       ? "in use"
                                       : a.status
-                                  )
+                                    )
                             }
                           >
                             {outOfStock
@@ -632,25 +584,6 @@ export default function SuperAdminAssetsPage() {
                                 : label(a.status)}
                           </span>
                         </td>
-                        <td className={assetStyles.colBase}>{a.brand ?? "—"}</td>
-                        <td className={assetStyles.colNarrow}>{a.cylinders ?? "—"}</td>
-                        <td className={assetStyles.colBase}>{a.engine_displacement ?? "—"}</td>
-                        <td className={assetStyles.colBase}>{label(a.fuel_type)}</td>
-                        <td className={assetStyles.colBase}>{a.engine_number ?? "—"}</td>
-                        <td className={assetStyles.colBase}>{a.chassis_number ?? "—"}</td>
-                        <td className={assetStyles.colBase}>{label(a.color)}</td>
-                        <td className={assetStyles.colBase}>{a.plate_number ?? "—"}</td>
-                        <td className={assetStyles.colBase}>{a.fund ?? "—"}</td>
-                        <td className={assetStyles.colXl}>{a.remarks ?? "—"}</td>
-                        <td className={assetStyles.colBase}>{a.dv_tracking_number ?? "—"}</td>
-                        <td className={assetStyles.colWide}>{a.supplier_payee ?? "—"}</td>
-                        <td className={assetStyles.colWide}>{a.account_name_charge ?? "—"}</td>
-                        <td className={assetStyles.colBase}>{a.account_number ?? "—"}</td>
-                        <td className={assetStyles.colBase}>{a.obr_number ?? "—"}</td>
-                        <td className={assetStyles.colBase}>{a.dv_number ?? "—"}</td>
-                        <td className={assetStyles.colBase}>{fmtDate(a.date_received)}</td>
-                        <td className={assetStyles.colBase}>{fmtDate(a.created_at)}</td>
-                        <CustomRowCells row={a} fields={customFields} onSaved={() => refresh()} />
                       </tr>
                     );
                   })}

@@ -439,12 +439,23 @@ export function ImportAssetsDialog({
       const res = await importAssetsFromExcel({} as ImportAssetsState, formData);
       setResult(res);
       if (res.success) {
+        const parts = [
+          `${res.created ?? 0} new ${res.created === 1 ? "item" : "items"} added`,
+          (res.updated ?? 0) > 0 ? `${res.updated} existing ${res.updated === 1 ? "item" : "items"} updated` : "",
+          res.skipped ? `${res.skipped} ${res.skipped === 1 ? "row" : "rows"} skipped — see the notes below` : "",
+        ].filter(Boolean);
         toast({
-          title: "Import complete",
-          description: `${res.created ?? 0} added${(res.updated ?? 0) > 0 ? ` · ${res.updated} updated` : ""}${res.skipped ? ` · ${res.skipped} skipped` : ""}.`,
+          title: "Import finished",
+          description: `${parts.join(" · ")}.`,
           variant: "success",
         });
         onSuccess?.();
+      } else if (res.error) {
+        toast({
+          title: "Import needs attention",
+          description: "Nothing was saved yet. Please read the message below for what to fix.",
+          variant: "error",
+        });
       }
     });
   }
@@ -473,11 +484,10 @@ export function ImportAssetsDialog({
           <DialogHeader>
             <DialogTitle>Import assets from Excel</DialogTitle>
             <DialogDescription>
-              Upload the template or your existing file — only matching columns are read
-              (any order; extra columns ignored). Each row is verified: the code + title +
-              asset type triple must exist in Master Data, else the row is skipped. Rows
-              identical to the existing record are skipped as duplicates; differing rows
-              update the record; only verified new rows are added.
+              Upload your filled-in template and we&apos;ll check each row for you.
+              New items are added, changed items are updated, and rows that are
+              already correct or need a fix are skipped with a clear note telling
+              you what to do next. Nothing is deleted by an import.
             </DialogDescription>
           </DialogHeader>
 
@@ -503,41 +513,58 @@ export function ImportAssetsDialog({
               />
               {fileName ? <p className="text-xs text-navy-600">Selected: {fileName}</p> : null}
               <p className="text-xs text-zinc-500">
-                Start records at row 2 · one asset per row · ACCOUNT CODE required · max 10 MB.
+                Please keep row 1 as the column titles, start your records at row 2
+                with one asset per row, and make sure every row has an ACCOUNT CODE.
+                Max file size is 10 MB.
               </p>
             </div>
 
             {result?.error ? (
-              <p role="alert" className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800">
-                {result.error}
-              </p>
+              <div role="alert" className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800">
+                <p className="font-semibold">What happened</p>
+                <p className="mt-1">{result.error}</p>
+                {(result.errors?.length ?? 0) > 0 ? (
+                  <>
+                    <p className="mt-2 font-semibold">Row-by-row notes — what to fix</p>
+                    <ul className="mt-1 list-disc space-y-1 pl-5 text-xs">
+                      {result.errors!.map((m, i) => (
+                        <li key={i}>{m}</li>
+                      ))}
+                    </ul>
+                    <p className="mt-2 text-xs">
+                      Tip: fix only the rows listed above, save the file, and
+                      re-import it — correct rows will not be duplicated.
+                    </p>
+                  </>
+                ) : null}
+              </div>
             ) : null}
             {result?.success ? (
               <div className="rounded-md border border-green-300 bg-green-50 px-3 py-2 text-sm text-green-900">
-                <p className="font-semibold">
-                  {result.created ?? 0} added
-                  {(result.updated ?? 0) > 0 ? ` · ${result.updated} updated` : ""}
-                  {(result.skipped ?? 0) > 0 ? ` · ${result.skipped} skipped` : ""}
+                <p className="font-semibold">Import finished — here&apos;s what happened</p>
+                <p className="mt-1">
+                  {result.created ?? 0} new {(result.created ?? 0) === 1 ? "item" : "items"} added
+                  {(result.updated ?? 0) > 0 ? ` · ${result.updated} existing ${(result.updated ?? 0) === 1 ? "item" : "items"} updated` : ""}
+                  {(result.skipped ?? 0) > 0 ? ` · ${result.skipped} ${(result.skipped ?? 0) === 1 ? "row" : "rows"} skipped` : ""}
+                  .
                 </p>
-                {(result.matched?.length ?? 0) > 0 ? (
-                  <p className="mt-1 text-xs">
-                    {result.matched!.length} template columns read
-                  </p>
-                ) : null}
                 {(result.errors?.length ?? 0) > 0 ? (
-                  <ul className="mt-1 list-disc pl-5">
-                    {result.errors!.map((m, i) => (
-                      <li key={i}>{m}</li>
-                    ))}
-                  </ul>
-                ) : null}
+                  <>
+                    <p className="mt-2 font-semibold">Skipped rows — what to do next</p>
+                    <ul className="mt-1 list-disc space-y-1 pl-5 text-xs">
+                      {result.errors!.map((m, i) => (
+                        <li key={i}>{m}</li>
+                      ))}
+                    </ul>
+                    <p className="mt-2 text-xs">
+                      Skipped rows were not lost. Fix only the rows above and
+                      re-import the file — items already added will not be duplicated.
+                    </p>
+                  </>
+                ) : (
+                  <p className="mt-1 text-xs">Every row was imported cleanly — no action needed.</p>
+                )}
               </div>
-            ) : (result?.errors?.length ?? 0) > 0 ? (
-              <ul className="list-disc pl-5 text-xs text-amber-900">
-                {result!.errors!.map((m, i) => (
-                  <li key={i}>{m}</li>
-                ))}
-              </ul>
             ) : null}
 
             <DialogFooter>

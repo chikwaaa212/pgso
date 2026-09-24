@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -160,9 +161,10 @@ export function AddColumnDialog({
           <DialogHeader>
             <DialogTitle>Custom columns</DialogTitle>
             <DialogDescription>
-              Add a column to the assets registry — it is stored in the
-              database and shows for personnel and admin alike. Click any
-              cell to fill in values.
+              Add an extra field to assets — it is stored in the database
+              and shows for personnel and admin alike. It appears in the
+              Additional Details section of each asset&apos;s detail page —
+              open any asset to fill in values.
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-3">
@@ -270,20 +272,23 @@ export function CustomCell({
   row,
   field,
   onSaved,
+  startEditing = false,
 }: {
   row: UnifiedAssetRow;
   field: CustomFieldDef;
   onSaved: () => void;
+  /** Renders the input directly (used in the detail page's Edit mode). */
+  startEditing?: boolean;
 }) {
   const raw = row.custom_fields?.[field.key] ?? "";
-  const [editing, setEditing] = useState(false);
+  const [editing, setEditing] = useState(startEditing);
   const [val, setVal] = useState(raw);
   const [saving, setSaving] = useState(false);
   const [failed, setFailed] = useState(false);
 
   function commit(next: string) {
     if (next.trim() === raw.trim()) {
-      setEditing(false);
+      setEditing(startEditing);
       return;
     }
     setSaving(true);
@@ -296,7 +301,8 @@ export function CustomCell({
     }).then((res) => {
       setSaving(false);
       if (res.success) {
-        setEditing(false);
+        // In Edit mode the input stays open so all fields look editable.
+        setEditing(startEditing);
         onSaved();
       } else {
         setFailed(true);
@@ -344,7 +350,7 @@ export function CustomCell({
         if (e.key === "Enter") (e.target as HTMLInputElement).blur();
         if (e.key === "Escape") {
           setVal(raw);
-          setEditing(false);
+          setEditing(startEditing);
         }
       }}
       onClick={(e) => e.stopPropagation()}
@@ -396,5 +402,49 @@ export function CustomRowCells({
         </td>
       ))}
     </>
+  );
+}
+
+/**
+ * Additional-details section for the asset detail page: every custom
+ * column renders as a labelled field with the same click-to-edit cell.
+ * Returns null when no custom columns exist yet.
+ */
+export function CustomDetailSection({
+  row,
+  readOnly = false,
+  editMode = false,
+}: {
+  row: UnifiedAssetRow;
+  readOnly?: boolean;
+  /** Renders every field as a direct input (used in Edit mode). */
+  editMode?: boolean;
+}) {
+  const { fields } = useCustomFields();
+  const router = useRouter();
+  if (fields.length === 0) return null;
+  return (
+    <div className="mb-6 last:mb-0">
+      <h3 className={assetStyles.sectionTitle}>Additional Details</h3>
+      <div className={assetStyles.detailFields}>
+        {fields.map((f) => (
+          <div key={f.key} className={assetStyles.detailField}>
+            <span className={assetStyles.detailLabel}>{f.label}</span>
+            <span className={assetStyles.detailValue}>
+              {readOnly ? (
+                formatCustomValue(f, row.custom_fields?.[f.key] ?? "")
+              ) : (
+                <CustomCell
+                  row={row}
+                  field={f}
+                  onSaved={() => router.refresh()}
+                  startEditing={editMode}
+                />
+              )}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }

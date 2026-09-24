@@ -1358,9 +1358,9 @@ export async function importAssetsFromExcel(
 ): Promise<ImportAssetsState> {
   const file = formData.get("file");
   if (!file || !(file instanceof File) || file.size === 0)
-    return { success: false, error: "Choose an .xlsx file to import." };
+    return { success: false, error: "No file was chosen. Please choose your filled-in Excel file (.xlsx) first, then click Import file." };
   if (file.size > 10 * 1024 * 1024)
-    return { success: false, error: "File is too large (max 10 MB)." };
+    return { success: false, error: "That file is over 10 MB, so it can't be imported. Please remove any images, split it into smaller files, and try again." };
 
   let wb: ExcelJS.Workbook;
   try {
@@ -1369,11 +1369,11 @@ export async function importAssetsFromExcel(
     await wb.xlsx.load(buf);
   } catch (e) {
     console.error("[importAssetsFromExcel] load", e);
-    return { success: false, error: "Could not read that Excel file. Use the downloaded template (.xlsx)." };
+    return { success: false, error: "We couldn't open that file. Please download a fresh Asset Import Template from Download Templates in the sidebar, copy your data into it without renaming the column titles, and upload it again." };
   }
 
   const ws = wb.getWorksheet(ASSET_TEMPLATE_SHEET) ?? wb.worksheets[0];
-  if (!ws) return { success: false, error: "No worksheet found in that file." };
+  if (!ws) return { success: false, error: "We couldn't find any data in that file. Please check that you uploaded the filled-in template and that row 1 still has the column titles." };
 
   // Map normalized (trimmed) header -> column index. Tolerant of Excel
   // trimming the two trailing-space headers on re-save. Only columns
@@ -1393,7 +1393,7 @@ export async function importAssetsFromExcel(
   if (!colByHeader.has("ACCOUNT CODE"))
     return {
       success: false,
-      error: `No "ACCOUNT CODE" column found — the import reads only columns matching the asset template headers. Columns seen: ${foundHeaders.join(", ") || "(none)"}.`,
+      error: `We couldn't find the ACCOUNT CODE column in row 1, so nothing was imported. Please use the Asset Import Template without renaming or deleting the title row, then upload again. Titles we saw: ${foundHeaders.join(", ") || "(none)"}.`,
     };
 
   const matched = ASSET_EXCEL_HEADERS.filter((h) => colByHeader.has(h.trim()));
@@ -1471,7 +1471,7 @@ export async function importAssetsFromExcel(
     }
   } catch (e) {
     console.error("[importAssetsFromExcel] preload assets", e);
-    return { success: false, error: "Could not read the current assets. Try again." };
+    return { success: false, error: "We couldn't load your current asset list right now, so nothing was imported. Please wait a moment and try the import again." };
   }
 
   const last = ws.lastRow?.number ?? ws.rowCount;
@@ -1488,18 +1488,17 @@ export async function importAssetsFromExcel(
       continue;
     }
 
-    // The code must exist in the admin's Master Data…
+    // The code must exist in the office's approved Master Data list…
     const catalogHit = catalogByCode.get(accountCode);
     if (!catalogHit) {
       skipped++;
       errors.push(
-        `Row ${i} (${accountCode}): unknown ACCOUNT CODE — ask your Super Admin to add it to Master Data, then re-import this row.`
+        `Row ${i} (Account Code "${accountCode}"): not imported — this code is not yet in the approved Master Data list. What to do: ask your Super Admin to add code "${accountCode}" to Master Data, then re-import just this row.`
       );
       continue;
     }
 
-    // …and the row's title + type must match that catalog entry. Rows whose
-    // triple (code + title + asset type) is not in Master Data are not imported.
+    // …and the row's title + type must match that approved entry.
     const rowTitle = (strVal(at(row, "ACCOUNT TITLE")) ?? "").trim();
     const rowType = (strVal(at(row, "ASSET TYPE")) ?? "").trim();
     const titleOk = rowTitle.toUpperCase() === (catalogHit.title ?? "").trim().toUpperCase();
@@ -1507,7 +1506,7 @@ export async function importAssetsFromExcel(
     if (!titleOk || !typeOk) {
       skipped++;
       errors.push(
-        `Row ${i} (${accountCode}): ACCOUNT TITLE / ASSET TYPE does not match Master Data (expected "${catalogHit.title}" / "${catalogHit.type}") — skipped.`
+        `Row ${i} (Account Code "${accountCode}"): not imported — the Account Title or Asset Type in your file doesn't match the approved list. The approved entry is Title "${catalogHit.title}" and Type "${catalogHit.type}". What to do: correct your file to match exactly, then re-import just this row.`
       );
       continue;
     }
@@ -1519,7 +1518,7 @@ export async function importAssetsFromExcel(
       const canonical = await resolveUnitName(unitRaw);
       if (!canonical) {
         errors.push(
-          `Row ${i} (${accountCode}): unknown UNIT "${unitRaw}" — unit not saved. Ask your Super Admin to add it to Master Data.`
+          `Row ${i} (Account Code "${accountCode}"): imported, but the unit "${unitRaw}" was left blank because it isn't in the approved unit list. What to do: ask your Super Admin to add "${unitRaw}" to the unit list, then edit this item to set its unit.`
         );
       } else {
         unit = canonical;
@@ -1546,12 +1545,12 @@ export async function importAssetsFromExcel(
     if (qrCode) {
       if (seenQr.has(qrCode)) {
         skipped++;
-        errors.push(`Row ${i} (${accountCode}): duplicate PROPERTY No. "${qrCode}" in this file — skipped.`);
+        errors.push(`Row ${i} (Property No. "${qrCode}"): not imported — this number appears twice in your file. What to do: we kept the first occurrence; please remove or correct the duplicate in your file and re-import this row only if needed.`);
         continue;
       }
       if (existingQrCodes.has(qrCode)) {
         skipped++;
-        errors.push(`Row ${i} (${accountCode}): PROPERTY No. "${qrCode}" already in use — skipped.`);
+        errors.push(`Row ${i} (Property No. "${qrCode}"): not imported — this number is already used by another asset in the system. What to do: give this row a new, unused Property No. and re-import just this row.`);
         continue;
       }
       seenQr.add(qrCode);
@@ -1606,7 +1605,7 @@ export async function importAssetsFromExcel(
     const prior = assetByKey.get(accountCode);
     if (prior && provided.every((f) => valuesEqual(prior.fields[f], parsed[f]))) {
       skipped++;
-      errors.push(`Row ${i} (${accountCode}): identical to the existing record — skipped.`);
+      errors.push(`Row ${i} (Account Code "${accountCode}"): skipped — this row is exactly the same as what's already saved, so no action was needed.`);
       continue;
     }
 
@@ -1634,7 +1633,7 @@ export async function importAssetsFromExcel(
       if (qrCode) existingQrCodes.add(qrCode);
     } catch (e) {
       console.error(`[importAssetsFromExcel] row ${i}`, e);
-      errors.push(`Row ${i} (${accountCode}): could not save (${e instanceof Error ? e.message.slice(0, 120) : "unknown error"}).`);
+      errors.push(`Row ${i} (Account Code "${accountCode}"): not saved — please check that quantities are whole numbers (0 or higher), costs are valid amounts, and dates are real dates, then re-import just this row. If it keeps failing, contact your Super Admin.`);
       skipped++;
     }
   }
@@ -1642,7 +1641,7 @@ export async function importAssetsFromExcel(
   if (created === 0 && updated === 0)
     return {
       success: false,
-      error: "No rows imported — every row was skipped (exact duplicates, unmatched catalog triple, unknown codes, or blank).",
+      error: "Nothing was imported — every row was skipped. This usually means the rows are already saved and unchanged, the Account Codes aren't in the approved Master Data list yet, or the Title / Type in the file doesn't match the approved list. Please read the per-row notes below, fix your file, and re-import only the rows that failed.",
       skipped,
       errors: errors.slice(0, 20),
       matched,

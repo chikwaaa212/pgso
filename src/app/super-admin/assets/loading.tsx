@@ -3,54 +3,28 @@ import styles from "@/app/personnel/dashboard/page.module.css";
 import assetStyles from "@/app/personnel/assets/page.module.css";
 
 /**
- * Super-admin assets skeleton — mirrors SuperAdminAssetsPage 1:1 (crumb,
- * header + 2 actions, right-packed search + 4 filter selects, the
- * 35-column table with View Details buttons, pager) so content swaps in
- * without layout shift.
+ * Super-admin assets skeleton — mirrors SuperAdminAssetsPage lean table 1:1
+ * (crumb, header + actions, right-packed search + filters, the 9-column
+ * table with View Details buttons, pager) so content swaps in without
+ * layout shift.
  *
  * Static chrome renders as real text with the real classes; only live
  * values are pulse placeholders sized to the real cells. Same pattern
  * as the personnel assets skeleton.
  */
 
-type ColKind = "details" | "narrow" | "base" | "wide" | "xl" | "cost" | "status";
+type ColKind = "details" | "code" | "prop" | "item" | "type" | "qty" | "loc" | "status";
 
 const HEADERS: { label: string; className: string; kind: ColKind }[] = [
-  { label: "Details", className: assetStyles.colDetails, kind: "details" },
-  { label: "Account Code", className: assetStyles.colBase, kind: "base" },
-  { label: "Property No.", className: assetStyles.colBase, kind: "base" },
-  { label: "Asset Type", className: assetStyles.colWide, kind: "wide" },
-  { label: "Account Title", className: assetStyles.colWide, kind: "wide" },
-  { label: "Account Name", className: assetStyles.colWide, kind: "wide" },
-  { label: "Identifier", className: assetStyles.colBase, kind: "base" },
-  { label: "Article", className: assetStyles.colWide, kind: "wide" },
-  { label: "Qty.", className: assetStyles.colNarrow, kind: "narrow" },
-  { label: "Unit", className: assetStyles.colNarrow, kind: "narrow" },
-  { label: "Description", className: assetStyles.colXl, kind: "xl" },
-  { label: "Date Acquired", className: assetStyles.colBase, kind: "base" },
-  { label: "Location", className: assetStyles.colBase, kind: "base" },
-  { label: "Total Cost", className: assetStyles.colCost, kind: "cost" },
-  { label: "Unit Cost", className: assetStyles.colCost, kind: "cost" },
-  { label: "Condition", className: assetStyles.colBase, kind: "base" },
-  { label: "Status", className: assetStyles.colBase, kind: "status" },
-  { label: "Brand", className: assetStyles.colBase, kind: "base" },
-  { label: "Cyl.", className: assetStyles.colNarrow, kind: "narrow" },
-  { label: "Engine Disp.", className: assetStyles.colBase, kind: "base" },
-  { label: "Fuel Type", className: assetStyles.colBase, kind: "base" },
-  { label: "Engine #", className: assetStyles.colBase, kind: "base" },
-  { label: "Chassis #", className: assetStyles.colBase, kind: "base" },
-  { label: "Color", className: assetStyles.colBase, kind: "base" },
-  { label: "Plate No.", className: assetStyles.colBase, kind: "base" },
-  { label: "Fund", className: assetStyles.colBase, kind: "base" },
-  { label: "Remarks", className: assetStyles.colXl, kind: "xl" },
-  { label: "DV Tracking #", className: assetStyles.colBase, kind: "base" },
-  { label: "Supplier/Payee", className: assetStyles.colWide, kind: "wide" },
-  { label: "Account Name (Charge)", className: assetStyles.colWide, kind: "wide" },
-  { label: "Account Number", className: assetStyles.colBase, kind: "base" },
-  { label: "OBR Number", className: assetStyles.colBase, kind: "base" },
-  { label: "DV Number", className: assetStyles.colBase, kind: "base" },
-  { label: "Date Received", className: assetStyles.colBase, kind: "base" },
-  { label: "Created", className: assetStyles.colBase, kind: "base" },
+  { label: "Details", className: assetStyles.colLeanDetails, kind: "details" },
+  { label: "Account Code", className: assetStyles.colLeanCode, kind: "code" },
+  { label: "Account Title", className: assetStyles.colLeanType, kind: "type" },
+  { label: "Account Name", className: assetStyles.colLeanType, kind: "type" },
+  { label: "Property No.", className: assetStyles.colLeanProp, kind: "prop" },
+  { label: "Item", className: assetStyles.colLeanItem, kind: "item" },
+  { label: "Qty Available", className: assetStyles.colLeanQty, kind: "qty" },
+  { label: "Location", className: assetStyles.colLeanLoc, kind: "loc" },
+  { label: "Status", className: assetStyles.colLeanStatus, kind: "status" },
 ];
 
 const FILTERS = ["Type", "Status", "Asset type", "Condition", "Unit"] as const;
@@ -71,24 +45,22 @@ function CellPulse({ kind }: { kind: ColKind }) {
       <span className="h-[22px] w-16 animate-pulse rounded-full bg-navy-100" />
     );
   }
-  if (kind === "cost") {
+  if (kind === "qty") {
     return (
-      <span className="ml-auto block h-3.5 w-16 animate-pulse rounded bg-navy-100" />
+      <span className="block h-3.5 w-16 animate-pulse rounded bg-navy-100" />
     );
   }
-  if (kind === "narrow") {
+  if (kind === "item") {
     return (
-      <span className="block h-3.5 w-10 animate-pulse rounded bg-navy-100" />
+      <span className="flex flex-col gap-1.5">
+        <span className="block h-3.5 w-28 animate-pulse rounded bg-navy-100" />
+        <span className="block h-3 w-40 animate-pulse rounded bg-navy-100" />
+      </span>
     );
   }
-  if (kind === "wide") {
+  if (kind === "prop" || kind === "code") {
     return (
-      <span className="block h-3.5 w-28 animate-pulse rounded bg-navy-100" />
-    );
-  }
-  if (kind === "xl") {
-    return (
-      <span className="block h-3.5 w-40 animate-pulse rounded bg-navy-100" />
+      <span className="block h-3.5 w-24 animate-pulse rounded bg-navy-100" />
     );
   }
   return (
@@ -164,8 +136,8 @@ export default function AssetsLoading() {
           </span>
         </div>
 
-        {/* Table — same 35 columns with the same width classes, 10 rows */}
-        <div className={`${styles.tableWrap} ${assetStyles.tableAuto}`}>
+        {/* Table — same lean 9 columns with the same width classes, 10 rows */}
+        <div className={`${styles.tableWrap} ${assetStyles.tableAuto} ${assetStyles.tableLean}`}>
           <table className={styles.table} aria-hidden="true">
             <thead>
               <tr>

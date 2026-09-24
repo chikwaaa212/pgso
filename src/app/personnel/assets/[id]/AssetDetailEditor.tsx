@@ -18,6 +18,7 @@ import {
 import { DatePicker } from "@/components/ui/date-picker";
 import { useToast } from "@/components/ui/toaster";
 import { updateUnifiedAsset, type AssetHistory, type EditState, type UnifiedAssetRow } from "../actions";
+import { CustomDetailSection } from "../custom-columns";
 import { AssetHistorySection } from "./asset-history";
 import styles from "../../dashboard/page.module.css";
 import assetStyles from "../page.module.css";
@@ -378,7 +379,9 @@ export function AssetDetailEditor({
         <div>
           <h1 className={styles.title}>Asset Detail</h1>
           <p className={styles.subtitle}>
-            {asset.article ?? asset.description ?? "Asset"} — {asset.account_code ?? "—"}
+            {[asset.article ?? asset.description ?? "Asset", asset.account_code]
+              .filter(Boolean)
+              .join(" — ")}
           </p>
         </div>
         <div className={styles.actions}>
@@ -421,19 +424,24 @@ export function AssetDetailEditor({
 
       <Card className={styles.panel}>
         {isEditing ? (
-          <form action={handleSubmit}>
-            <input type="hidden" name="id" value={asset.id} />
-            <input type="hidden" name="source" value={asset.source} />
-            {sections.map((fields, i) => (
-              <div key={i} className="mb-6 last:mb-0">
-                <h3 className={assetStyles.sectionTitle}>{FIELD_SECTIONS[i].title}</h3>
-                <div className={assetStyles.detailFields}>
-                  {fields.map((f) => (
-                    <EditField key={f.key} field={f} asset={asset} />
-                  ))}
+          <>
+            <form id="asset-edit-form" action={handleSubmit}>
+              <input type="hidden" name="id" value={asset.id} />
+              <input type="hidden" name="source" value={asset.source} />
+              {sections.map((fields, i) => (
+                <div key={i} className="mb-6 last:mb-0">
+                  <h3 className={assetStyles.sectionTitle}>{FIELD_SECTIONS[i].title}</h3>
+                  <div className={assetStyles.detailFields}>
+                    {fields.map((f) => (
+                      <EditField key={f.key} field={f} asset={asset} />
+                    ))}
+                  </div>
                 </div>
-              </div>
-            ))}
+              ))}
+            </form>
+            <div className="mt-6">
+              <CustomDetailSection row={asset} readOnly={readOnly} editMode />
+            </div>
             <div className="mt-4 flex justify-end gap-2">
               <Button
                 type="button"
@@ -446,6 +454,7 @@ export function AssetDetailEditor({
               </Button>
               <Button
                 type="submit"
+                form="asset-edit-form"
                 variant="primary"
                 size="sm"
                 disabled={isPending}
@@ -462,7 +471,7 @@ export function AssetDetailEditor({
                 )}
               </Button>
             </div>
-          </form>
+          </>
         ) : (
           <div className={assetStyles.detailGrid}>
             <QrCard asset={asset} />
@@ -477,6 +486,7 @@ export function AssetDetailEditor({
                   </div>
                 </div>
               ))}
+              <CustomDetailSection row={asset} readOnly={readOnly} />
             </div>
           </div>
         )}
