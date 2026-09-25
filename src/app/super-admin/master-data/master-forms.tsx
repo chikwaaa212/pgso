@@ -1,9 +1,10 @@
 "use client";
 
-import { useActionState, useEffect, useRef, useState, useTransition } from "react";
+import { useActionState, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useToast } from "@/components/ui/toaster";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { ActionButton } from "@/components/ui/action-button";
 import { SubmitButton } from "@/components/ui/submit-button";
 import {
   CLIENT_CACHE_KEYS,
@@ -47,17 +48,16 @@ export function AddUnitForm({ triggerClassName }: { triggerClassName?: string })
   const [open, setOpen] = useState(false);
   const [state, formAction] = useActionState(createUnit, { ok: false });
   const formRef = useRef<HTMLFormElement>(null);
-  const { toast } = useToast();
   // Close + refresh the list on success (same pattern as the toggles).
   useEffect(() => {
     if (state?.ok) {
       bustClientCache(CLIENT_CACHE_KEYS.adminMasterData);
-      toast({ title: "Unit added", variant: "success" });
+      toast.success("Unit added", { duration: 2000, closeButton: true });
       formRef.current?.reset();
       // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional one-shot close after successful submit
       setOpen(false);
     }
-  }, [state, toast]);
+  }, [state]);
   return (
     <>
       <Button
@@ -104,30 +104,26 @@ export function AddUnitForm({ triggerClassName }: { triggerClassName?: string })
 }
 
 export function UnitToggle({ id, name, isActive }: { id: string; name: string; isActive: boolean }) {
-  const [pending, start] = useTransition();
   const router = useRouter();
-  const { toast } = useToast();
+
   return (
-    <button
-      type="button"
-      disabled={pending}
-      onClick={() => {
+    <ActionButton
+      onClick={async () => {
         if (isActive && !confirm(`Deactivate unit "${name}"? Blocked if it is in use.`)) return;
-        start(async () => {
-          const r = await setUnitStatus(id, isActive ? "inactive" : "active");
-          if (r.ok) {
-            toast({ title: isActive ? "Deactivated" : "Reactivated", variant: "success" });
-            bustClientCache(CLIENT_CACHE_KEYS.adminMasterData);
-            router.refresh();
-          } else {
-            toast({ title: "Failed", description: r.error ?? "Try again.", variant: "error" });
-          }
-        });
+        const r = await setUnitStatus(id, isActive ? "inactive" : "active");
+        if (r.ok) {
+          toast.success(isActive ? "Deactivated" : "Reactivated", { duration: 2000, closeButton: true });
+          bustClientCache(CLIENT_CACHE_KEYS.adminMasterData);
+          router.refresh();
+        } else {
+          toast.error("Failed", { description: r.error ?? "Try again.", duration: 2000, closeButton: true });
+        }
       }}
+      loadingLabel={isActive ? "Deactivating…" : "Reactivating…"}
       style={smallBtn(isActive)}
     >
       {isActive ? "Deactivate" : "Reactivate"}
-    </button>
+    </ActionButton>
   );
 }
 
@@ -135,16 +131,16 @@ export function AddCatalogForm({ triggerClassName }: { triggerClassName?: string
   const [open, setOpen] = useState(false);
   const [state, formAction] = useActionState(createCatalogEntry, { ok: false });
   const formRef = useRef<HTMLFormElement>(null);
-  const { toast } = useToast();
+
   useEffect(() => {
     if (state?.ok) {
       bustClientCache(CLIENT_CACHE_KEYS.adminMasterData);
-      toast({ title: "Catalog entry added", variant: "success" });
+      toast.success("Catalog entry added", { duration: 2000, closeButton: true });
       formRef.current?.reset();
       // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional one-shot close after successful submit
       setOpen(false);
     }
-  }, [state, toast]);
+  }, [state]);
   return (
     <>
       <Button
@@ -203,30 +199,26 @@ export function AddCatalogForm({ triggerClassName }: { triggerClassName?: string
 }
 
 export function CatalogToggle({ id, code, isActive }: { id: string; code: string; isActive: boolean }) {
-  const [pending, start] = useTransition();
   const router = useRouter();
-  const { toast } = useToast();
+
   return (
-    <button
-      type="button"
-      disabled={pending}
-      onClick={() => {
+    <ActionButton
+      onClick={async () => {
         if (isActive && !confirm(`Deactivate ${code}? Blocked if it is referenced by assets or deliveries.`)) return;
-        start(async () => {
-          const r = await setCatalogStatus(id, isActive ? "inactive" : "active");
-          if (r.ok) {
-            toast({ title: isActive ? "Deactivated" : "Reactivated", variant: "success" });
-            bustClientCache(CLIENT_CACHE_KEYS.adminMasterData);
-            router.refresh();
-          } else {
-            toast({ title: "Failed", description: r.error ?? "Try again.", variant: "error" });
-          }
-        });
+        const r = await setCatalogStatus(id, isActive ? "inactive" : "active");
+        if (r.ok) {
+          toast.success(isActive ? "Deactivated" : "Reactivated", { duration: 2000, closeButton: true });
+          bustClientCache(CLIENT_CACHE_KEYS.adminMasterData);
+          router.refresh();
+        } else {
+          toast.error("Failed", { description: r.error ?? "Try again.", duration: 2000, closeButton: true });
+        }
       }}
+      loadingLabel={isActive ? "Deactivating…" : "Reactivating…"}
       style={smallBtn(isActive)}
     >
       {isActive ? "Deactivate" : "Reactivate"}
-    </button>
+    </ActionButton>
   );
 }
 
@@ -248,9 +240,8 @@ export function CatalogEdit({
   const [n, setN] = useState(name ?? "");
   const [y, setY] = useState(type);
   const [d, setD] = useState(description ?? "");
-  const [pending, start] = useTransition();
   const router = useRouter();
-  const { toast } = useToast();
+
 
   return (
     <>
@@ -309,26 +300,23 @@ export function CatalogEdit({
             <button type="button" onClick={() => setOpen(false)} style={smallBtn(true)}>
               Cancel
             </button>
-            <button
-              type="button"
-              disabled={pending}
-              onClick={() =>
-                start(async () => {
-                  const r = await updateCatalogEntry(id, { account_title: t, account_name: n || null, asset_type: y, description: d || null });
-                  if (r.ok) {
-                    toast({ title: "Saved", variant: "success" });
-                    setOpen(false);
-                    bustClientCache(CLIENT_CACHE_KEYS.adminMasterData);
-                    router.refresh();
-                  } else {
-                    toast({ title: "Save failed", description: r.error ?? "Try again.", variant: "error" });
-                  }
-                })
-              }
+            <ActionButton
+              onClick={async () => {
+                const r = await updateCatalogEntry(id, { account_title: t, account_name: n || null, asset_type: y, description: d || null });
+                if (r.ok) {
+                  toast.success("Saved", { duration: 2000, closeButton: true });
+                  setOpen(false);
+                  bustClientCache(CLIENT_CACHE_KEYS.adminMasterData);
+                  router.refresh();
+                } else {
+                  toast.error("Save failed", { description: r.error ?? "Try again.", duration: 2000, closeButton: true });
+                }
+              }}
+              loadingLabel="Saving…"
               style={smallBtn(false)}
             >
               Save
-            </button>
+            </ActionButton>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -342,7 +330,7 @@ export function ImportCatalogDialog() {
   const [result, formAction] = useActionState(importCatalogFromExcel, {});
   const formRef = useRef<HTMLFormElement>(null);
   const router = useRouter();
-  const { toast } = useToast();
+
   const lastToasted = useRef("");
   const [resultOpen, setResultOpen] = useState(false);
 
@@ -355,15 +343,21 @@ export function ImportCatalogDialog() {
     lastToasted.current = key;
     setResultOpen(true);
     if (result.ok) {
-      toast({
-        title: "Import complete",
+      toast.success("Import complete", {
         description: `${result.created ?? 0} added · ${result.skipped ?? 0} skipped`,
-        variant: "success",
+        duration: 2000,
+        closeButton: true,
       });
       bustClientCache(CLIENT_CACHE_KEYS.adminMasterData);
       router.refresh();
+    } else if (result.error) {
+      toast.error("Import failed", {
+        description: result.error,
+        duration: 2000,
+        closeButton: true,
+      });
     }
-  }, [result, router, toast]);
+  }, [result, router]);
 
   if (!open) {
     return (
@@ -520,17 +514,17 @@ export function AddDepartmentForm({ triggerClassName }: { triggerClassName?: str
   const [open, setOpen] = useState(false);
   const [state, formAction] = useActionState(createDepartment, { ok: false });
   const formRef = useRef<HTMLFormElement>(null);
-  const { toast } = useToast();
+
   // Close + refresh the list on success (same pattern as units).
   useEffect(() => {
     if (state?.ok) {
       bustClientCache(CLIENT_CACHE_KEYS.adminMasterData);
-      toast({ title: "Department added", variant: "success" });
+      toast.success("Department added", { duration: 2000, closeButton: true });
       formRef.current?.reset();
       // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional one-shot close after successful submit
       setOpen(false);
     }
-  }, [state, toast]);
+  }, [state]);
   return (
     <>
       <Button
@@ -575,30 +569,26 @@ export function AddDepartmentForm({ triggerClassName }: { triggerClassName?: str
 }
 
 export function DepartmentToggle({ id, name, isActive }: { id: string; name: string; isActive: boolean }) {
-  const [pending, start] = useTransition();
   const router = useRouter();
-  const { toast } = useToast();
+
   return (
-    <button
-      type="button"
-      disabled={pending}
-      onClick={() => {
+    <ActionButton
+      onClick={async () => {
         if (isActive && !confirm(`Deactivate department "${name}"? Blocked while personnel are assigned to it.`)) return;
-        start(async () => {
-          const r = await setDepartmentStatus(id, isActive ? "inactive" : "active");
-          if (r.ok) {
-            toast({ title: isActive ? "Deactivated" : "Reactivated", variant: "success" });
-            bustClientCache(CLIENT_CACHE_KEYS.adminMasterData);
-            router.refresh();
-          } else {
-            toast({ title: "Failed", description: r.error ?? "Try again.", variant: "error" });
-          }
-        });
+        const r = await setDepartmentStatus(id, isActive ? "inactive" : "active");
+        if (r.ok) {
+          toast.success(isActive ? "Deactivated" : "Reactivated", { duration: 2000, closeButton: true });
+          bustClientCache(CLIENT_CACHE_KEYS.adminMasterData);
+          router.refresh();
+        } else {
+          toast.error("Failed", { description: r.error ?? "Try again.", duration: 2000, closeButton: true });
+        }
       }}
+      loadingLabel={isActive ? "Deactivating…" : "Reactivating…"}
       style={smallBtn(isActive)}
     >
       {isActive ? "Deactivate" : "Reactivate"}
-    </button>
+    </ActionButton>
   );
 }
 

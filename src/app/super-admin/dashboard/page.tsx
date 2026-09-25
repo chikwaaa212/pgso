@@ -1,13 +1,11 @@
+import { Suspense } from 'react'
 import Link from 'next/link'
 import { label } from '@/lib/labels'
-import { createClient } from '@/lib/supabase/server'
+import { getSuperAdminSession } from '@/lib/auth-guard'
 import { Card } from '@/components/ui/card'
 import { AddPersonnelForm } from './add-personnel-form'
 import { getSuperAdminOverview } from './stats'
-import { getAnalytics } from './analytics'
-import { AnalyticsGrid } from './analytics-charts'
-import { getMonthlyOverview } from '@/app/personnel/inspections/actions'
-import { DeliveryInspectionChart } from './delivery-inspection-chart'
+import { DashboardAnalytics, DashboardMonthly } from './secondary'
 import styles from './page.module.css'
 
 function fmtDateTime(iso: string | null) {
@@ -23,29 +21,40 @@ function fmtDateTime(iso: string | null) {
   })
 }
 
+function ChartFallback() {
+  return (
+    <Card className={styles.panel} aria-busy="true" aria-label="Loading delivery trend">
+      <h2 className={styles.panelTitle}>Deliveries vs inspections</h2>
+      <p className={styles.panelSub}>Last 6 months — live from records</p>
+      <div aria-hidden="true" className="flex h-[220px] items-end justify-around gap-2 px-2">
+        {[42, 68, 55, 82, 60, 74].map((h, i) => (
+          <div key={i} className="w-full max-w-10 animate-pulse rounded bg-navy-100" style={{ height: `${h}%` }} />
+        ))}
+      </div>
+    </Card>
+  )
+}
+
+function AnalyticsFallback() {
+  return (
+    <div className={styles.analyticsGrid} aria-busy="true" aria-label="Loading analytics">
+      {Array.from({ length: 8 }).map((_, i) => (
+        <Card key={i} style={{ padding: '1.25rem' }}>
+          <div aria-hidden="true" className="h-44 w-full animate-pulse rounded bg-navy-100" />
+        </Card>
+      ))}
+    </div>
+  )
+}
+
 export default async function SuperAdminDashboard() {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  const [overview, monthly, analytics] = await Promise.all([
-    getSuperAdminOverview(),
-    getMonthlyOverview(),
-    getAnalytics(),
-  ])
+  // Critical data only — monthly trend + analytics stream via Suspense so
+  // stat cards paint without waiting for the heavier aggregates. Session
+  // reuses the memoized layout guard (no extra Auth round-trip).
+  const session = await getSuperAdminSession()
+  const userEmail = session?.email ?? null
+  const overview = await getSuperAdminOverview()
   const { ops } = overview
-  const totalMonthlyDeliveries = monthly.reduce((n, m) => n + m.deliveries, 0)
-  const totalMonthlyInspections = monthly.reduce((n, m) => n + m.inspections, 0)
-  const deliveryGap = totalMonthlyDeliveries - totalMonthlyInspections
-  const busiest = [...monthly].sort((a, b) => b.deliveries - a.deliveries)[0]
-  const deliveryTrendInsight =
-    totalMonthlyDeliveries === 0
-      ? 'No deliveries in the last 6 months — the trend will build here once receiving starts.'
-      : `${totalMonthlyDeliveries} deliveries vs ${totalMonthlyInspections} inspections in the last 6 months${
-          busiest && busiest.deliveries > 0 ? `, busiest in ${busiest.month} (${busiest.deliveries})` : ''
-        }. ${
-          deliveryGap > 0
-            ? `${deliveryGap} deliver${deliveryGap === 1 ? 'y still needs' : 'ies still need'} inspection — the gap between the bars and the line is your inspection backlog.`
-            : 'Inspections are keeping pace with receipts — no backlog building up.'
-        }`
   const activeRepairs = ops.pendingRepairs + ops.inProgressRepairs
   const lowTotal = ops.lowStockCount + ops.outOfStockCount
 
@@ -69,7 +78,7 @@ export default async function SuperAdminDashboard() {
       <p className={styles.crumb}>Super Admin / Dashboard</p>
       <h1 className={styles.title}>Welcome, Super Admin</h1>
       <p className={styles.subtitle}>
-        Signed in as {user?.email} · system-wide oversight at a glance.
+        Signed in as {userEmail} · system-wide oversight at a glance.
       </p>
 
       <div className={styles.stats}>
@@ -85,12 +94,14 @@ export default async function SuperAdminDashboard() {
       </div>
 
       <div className={styles.chartWrap}>
-        <DeliveryInspectionChart data={monthly} insight={deliveryTrendInsight} />
+        <Suspense fallback={<ChartFallback />}>
+          <DashboardMonthly />
+        </Suspense>
       </div>
 
-      {analytics ? (
-        <AnalyticsGrid data={analytics} gridClass={styles.analyticsGrid} />
-      ) : null}
+      <Suspense fallback={<AnalyticsFallback />}>
+        <DashboardAnalytics gridClass={styles.analyticsGrid} />
+      </Suspense>
 
       <div className={styles.twoCol}>
         <Card className={styles.panel}>

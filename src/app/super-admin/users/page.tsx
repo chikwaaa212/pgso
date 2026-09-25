@@ -5,11 +5,12 @@ import { useMemo, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { label } from "@/lib/labels";
-import { getAllUsers, getPendingEmployees, getUserCounts } from "./actions";
-import { ActiveToggle, PendingRowActions } from "./user-actions";
+import { getAllUsers, getUserCounts } from "./actions";
+import { ActiveToggle } from "./user-actions";
 import { TablePager } from "@/components/personnel/TablePager";
 import { usePageSize } from "@/hooks/use-page-size";
 import { useCachedAction } from "@/hooks/use-cached-action";
+import { useAdminRealtime } from "@/hooks/use-admin-realtime";
 import { CLIENT_CACHE_KEYS } from "@/lib/client-cache";
 import UsersLoading from "./loading";
 import styles from "./page.module.css";
@@ -39,24 +40,30 @@ function statusTone(status: string) {
 }
 
 export default function SuperAdminUsersPage() {
-  // Cached snapshot (pending + roster + counts): back-navigation paints
+  // Cached snapshot (roster + counts): back-navigation paints
   // instantly from memory / sessionStorage and only revalidates silently
   // when stale (30s, matching the server caches) — same SWR pattern as
   // the other admin pages.
-  const { data: snapshot, loading, refresh } = useCachedAction(
+  const { data: snapshot, loading, refresh, isValidating } = useCachedAction(
     CLIENT_CACHE_KEYS.adminUsers,
     () =>
-      Promise.all([getPendingEmployees(), getAllUsers(), getUserCounts()]).then(
-        ([pending, users, counts]) => ({ pending, users, counts })
+      Promise.all([getAllUsers(), getUserCounts()]).then(
+        ([users, counts]) => ({ users, counts })
       ),
     { staleTime: 30_000 }
   );
-  const pending = useMemo(() => snapshot?.pending ?? [], [snapshot]);
   const users = useMemo(() => snapshot?.users ?? [], [snapshot]);
   const counts = snapshot?.counts ?? { pending: 0, personnel: 0, employees: 0 };
   const [query, setQuery] = useState("");
   const [pageSize, setPageSize] = usePageSize("pgso:admin:users", 10);
   const [page, setPage] = useState(1);
+
+  // Profile status/role changes by another admin sync silently.
+  useAdminRealtime({
+    channel: "admin-users",
+    tables: [{ table: "profile" }],
+    onEvent: refresh,
+  });
 
   if (loading) {
     return <UsersLoading />;
@@ -94,59 +101,15 @@ export default function SuperAdminUsersPage() {
       <div>
         <h1 className={styles.title}>Users</h1>
         <p className={styles.subtitle}>
-          {counts.pending} legacy pending · {counts.personnel} personnel ·{" "}
+          {counts.personnel} personnel ·{" "}
           {counts.employees} employees. Employee + Personnel accounts are
           self-registered (Google or Email + OTP) and active immediately — no
           approval needed.
+          {isValidating ? (
+            <span role="status" aria-live="polite"> Updating…</span>
+          ) : null}
         </p>
       </div>
-
-      <Card className={styles.panel}>
-        <h2 className={styles.panelTitle}>Legacy pending accounts</h2>
-        <p className={styles.panelSub}>
-          New self-registrations are active immediately. This queue only lists
-          accounts created before self-service — approve to activate, reject to
-          block. Rejected accounts become inactive and are signed out.
-        </p>
-        {pending.length === 0 ? (
-          <p className={styles.emptyCenter}>No legacy pending accounts — queue is clear.</p>
-        ) : (
-        <div className={`${styles.tableWrap} pgso-no-scrollbar`}>
-          <table className={styles.table}>
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Email</th>
-                <th>Requested</th>
-                <th>Status</th>
-                <th>Decision</th>
-              </tr>
-            </thead>
-              <tbody>
-                {pending.map((u) => (
-                  <tr key={u.id}>
-                    <td>{u.full_name ?? "—"}</td>
-                    <td>{u.email ?? "—"}</td>
-                    <td>{fmtDate(u.created_at)}</td>
-                    <td>
-                      <span className={styles.status} data-tone="warn">
-                        Pending
-                      </span>
-                    </td>
-                    <td>
-                      <PendingRowActions
-                        userId={u.id}
-                        name={u.full_name ?? u.email ?? "account"}
-                        onSuccess={() => refresh()}
-                      />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Card>
 
       <Card className={styles.panel}>
         <h2 className={styles.panelTitle}>All accounts</h2>

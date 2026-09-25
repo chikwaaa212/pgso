@@ -1,7 +1,6 @@
 import { getDashboardStats } from "@/app/personnel/inspections/actions";
 import { getDepartmentOptions } from "@/app/personnel/department/actions";
 import { createClient } from "@/lib/supabase/server";
-import { getPersonnelScope } from "@/lib/personnel-scope";
 import { cacheKey, withCache } from "@/lib/personnel-cache";
 import prisma from "@/lib/prisma";
 import { PersonnelNavbar } from "@/components/personnel/PersonnelNavbar";
@@ -15,18 +14,22 @@ const ROLE_LABELS: Record<string, string> = {
 async function getSidebarUser(): Promise<{ name: string; detail: string; office: string | null }> {
   const fallback = { name: "PGSO Personnel", detail: "Staff", office: null as string | null };
   try {
-    // Scope is per-request memoized — no extra auth roundtrip here.
-    const scope = await getPersonnelScope();
-    if (!scope.userId) return fallback;
+    // Single auth + single profile read: getCurrentUserId is per-request
+    // memoized, and this one findUnique covers both scope display fields
+    // (previously getPersonnelScope did role/status + this did a second
+    // findUnique for the same row).
+    const { getCurrentUserId } = await import("@/lib/personnel-scope");
+    const userId = await getCurrentUserId();
+    if (!userId) return fallback;
     // Profile display fields cached in Redis (120s, per-user key) so every
     // personnel navigation / refresh doesn't re-hit the database.
     const cached = await withCache(
-      cacheKey("personnel:sidebar-user", { u: scope.userId }),
+      cacheKey("personnel:sidebar-user", { u: userId }),
       120,
       () =>
         prisma.profile
           .findUnique({
-            where: { id: scope.userId as string },
+            where: { id: userId as string },
             select: { full_name: true, role: true, position: true, office: true },
           })
           .catch(() => null),

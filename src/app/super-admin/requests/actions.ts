@@ -74,10 +74,10 @@ export async function setReplenishmentStatus(
       },
     })
 
-    // Decisions change queue counts everywhere — bust the server caches
-    // so personnel + admin lists and badges pick it up immediately.
-    const { bustPersonnelCache } = await import('@/lib/personnel-cache')
-    await bustPersonnelCache()
+    // Decisions change queue counts — narrow bust so one decision doesn't
+    // wipe unrelated dashboards, pick-lists and snapshots.
+    const { bustSuperAdminScopes } = await import('@/lib/personnel-cache')
+    await bustSuperAdminScopes(['requests'])
 
     revalidatePath('/super-admin/requests')
     revalidatePath('/personnel/requests')

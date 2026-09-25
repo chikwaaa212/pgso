@@ -2,6 +2,7 @@
 
 import { usePathname } from "next/navigation";
 import { PersonnelNavbar } from "./PersonnelNavbar";
+import { DbDownNotifier } from "./DbDownNotifier";
 import layoutStyles from "../../app/personnel/layout.module.css";
 
 export function PersonnelChrome({
@@ -35,6 +36,7 @@ export function PersonnelChrome({
 
   return (
     <div className={layoutStyles.shell}>
+      <DbDownNotifier />
       {navbar ?? (
         <PersonnelNavbar
           pendingInspections={pendingInspections}

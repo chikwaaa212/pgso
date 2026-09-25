@@ -2,8 +2,9 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Loader2 } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { ActionButton } from "@/components/ui/action-button";
 import {
   Dialog,
   DialogContent,
@@ -86,25 +87,27 @@ export function IarDialog({
     iarDate !== undefined &&
     invoiceDate !== undefined;
 
-  function generate() {
+  async function generate() {
     if (!canGenerate || saving) return;
     setSaving(true);
     setError("");
     setWarning("");
     setSavedRecordId("");
-    void saveAir(deliveryId, {
-      entity: entity.trim(),
-      department: department.trim(),
-      rcCode: rcCode.trim(),
-      fundCluster: fundCluster.trim(),
-      iarNo: iarNo.trim(),
-      iarDate: toIso(iarDate),
-      invoiceNo: invoiceNo.trim(),
-      invoiceDate: toIso(invoiceDate),
-    }).then((res) => {
-      setSaving(false);
+    try {
+      const res = await saveAir(deliveryId, {
+        entity: entity.trim(),
+        department: department.trim(),
+        rcCode: rcCode.trim(),
+        fundCluster: fundCluster.trim(),
+        iarNo: iarNo.trim(),
+        iarDate: toIso(iarDate),
+        invoiceNo: invoiceNo.trim(),
+        invoiceDate: toIso(invoiceDate),
+      });
       if (!res.success) {
-        setError(res.error ?? "Failed to save the AIR. Please try again.");
+        const msg = res.error ?? "Failed to save the AIR. Please try again.";
+        setError(msg);
+        toast.error(msg, { duration: 2000, closeButton: true });
         return;
       }
       const href = res.recordId
@@ -122,11 +125,25 @@ export function IarDialog({
         // AIR is saved — stay and show the warning with a way through.
         setWarning(res.stockWarning);
         setSavedRecordId(href);
+        toast.success("IAR generated successfully.", {
+          duration: 2000,
+          closeButton: true,
+        });
         return;
       }
+      toast.success("IAR generated successfully.", {
+        duration: 2000,
+        closeButton: true,
+      });
       router.push(href);
       setOpen(false);
-    });
+    } catch {
+      const msg = "Failed to save the AIR. Please try again.";
+      setError(msg);
+      toast.error(msg, { duration: 2000, closeButton: true });
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
@@ -274,20 +291,14 @@ export function IarDialog({
           >
             Cancel
           </Button>
-          <Button
+          <ActionButton
             type="button"
             disabled={!canGenerate || saving}
-            onClick={generate}
+            onClick={() => generate()}
+            loadingLabel="Generating…"
           >
-            {saving ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Saving…
-              </>
-            ) : (
-              "Generate IAR"
-            )}
-          </Button>
+            Generate IAR
+          </ActionButton>
         </DialogFooter>
       </DialogContent>
     </Dialog>

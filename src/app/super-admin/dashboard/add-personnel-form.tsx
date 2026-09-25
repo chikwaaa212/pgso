@@ -2,6 +2,9 @@
 
 import { useActionState, useEffect, useRef, useState } from 'react'
 import { useFormStatus } from 'react-dom'
+import { toast } from 'sonner'
+import { bustClientCache } from '@/hooks/use-cached-action'
+import { CLIENT_CACHE_KEYS } from '@/lib/client-cache'
 import { addPersonnelEmployee } from './actions'
 import type { SignupState } from '@/types'
 import { SubmitButton } from '@/components/ui/submit-button'
@@ -47,10 +50,15 @@ export function AddPersonnelForm() {
       // Clear inputs so a success is obvious, and mint a fresh key so the
       // next submit is never treated as a duplicate of this one.
       formRef.current?.reset()
+      bustClientCache(CLIENT_CACHE_KEYS.adminUsers)
+      toast.success('Personnel employee added', { duration: 2000, closeButton: true })
       const timer = setTimeout(() => setIdempotencyKey(crypto.randomUUID()), 0)
       return () => clearTimeout(timer)
     }
-  }, [state.success])
+    if (state.error) {
+      toast.error(state.error, { duration: 2000, closeButton: true })
+    }
+  }, [state.success, state.error])
 
   return (
     <form ref={formRef} action={formAction} className={styles.addForm}>

@@ -121,16 +121,7 @@ function fmtCost(value: number | null | undefined) {
 
 export default function SuperAdminDocumentsPage() {
   return (
-    <Suspense
-      fallback={
-        <section className={styles.section}>
-          <p className={styles.crumb}>Super Admin / Documents</p>
-          <div className={styles.emptyState}>
-            <p className={styles.panelSub}>Loading documents…</p>
-          </div>
-        </section>
-      }
-    >
+    <Suspense fallback={<DocumentsLoading />}>
       <SuperAdminDocumentsContent />
     </Suspense>
   );

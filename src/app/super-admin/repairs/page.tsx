@@ -12,6 +12,7 @@ import {
 import { browseRepair, browseRepairs } from "../browse/actions";
 import type { RepairRow } from "@/app/personnel/repairs/actions";
 import { useCachedAction } from "@/hooks/use-cached-action";
+import { useAdminRealtime } from "@/hooks/use-admin-realtime";
 import { useReceipt } from "@/hooks/use-receipt";
 import { CLIENT_CACHE_KEYS } from "@/lib/client-cache";
 import { ReceiptLoading } from "@/components/personnel/ReceiptLoading";
@@ -31,11 +32,16 @@ export default function SuperAdminRepairsPage() {
   // Same client caching as the personnel repairs page: back-navigation
   // paints instantly from memory / sessionStorage and only revalidates
   // silently when stale (30s, matching the server list cache).
-  const { data, loading } = useCachedAction(
+  const { data, loading, refresh, isValidating } = useCachedAction(
     CLIENT_CACHE_KEYS.adminRepairs,
     browseRepairs,
     { staleTime: 30_000 }
   );
+  useAdminRealtime({
+    channel: "admin-repairs",
+    tables: [{ table: "repair" }],
+    onEvent: refresh,
+  });
   const rows = useMemo(() => data ?? [], [data]);
   // Overlay receipt viewer with per-record client caching (same shared
   // scheme as personnel — admin-prefixed keys keep per-role caches
@@ -104,7 +110,7 @@ export default function SuperAdminRepairsPage() {
         </p>
       </div>
       <Card className={styles.panel}>
-        <BrowseTable rows={rows} columns={columns} searchPlaceholder="Search asset, reporter, technician…" pageSizeKey="pgso:admin:repairs" />
+        <BrowseTable rows={rows} columns={columns} searchPlaceholder="Search asset, reporter, technician…" pageSizeKey="pgso:admin:repairs" isValidating={isValidating} />
       </Card>
 
       <ReceiptOverlay

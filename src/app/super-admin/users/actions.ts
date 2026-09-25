@@ -242,8 +242,8 @@ export async function approveEmployee(targetId: string): Promise<{ ok: boolean; 
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : 'Approval failed.' }
   }
-  const { bustPersonnelCache } = await import('@/lib/personnel-cache')
-  await bustPersonnelCache()
+  const { bustSuperAdminScopes } = await import('@/lib/personnel-cache')
+  await bustSuperAdminScopes(['users'])
   revalidatePath('/super-admin/users')
   revalidatePath('/super-admin/dashboard')
   return { ok: true }
@@ -274,8 +274,8 @@ export async function rejectEmployee(targetId: string): Promise<{ ok: boolean; e
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : 'Rejection failed.' }
   }
-  const { bustPersonnelCache } = await import('@/lib/personnel-cache')
-  await bustPersonnelCache()
+  const { bustSuperAdminScopes } = await import('@/lib/personnel-cache')
+  await bustSuperAdminScopes(['users'])
   revalidatePath('/super-admin/users')
   revalidatePath('/super-admin/dashboard')
   return { ok: true }
@@ -314,8 +314,8 @@ export async function setUserActive(
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : 'Update failed.' }
   }
-  const { bustPersonnelCache } = await import('@/lib/personnel-cache')
-  await bustPersonnelCache()
+  const { bustSuperAdminScopes } = await import('@/lib/personnel-cache')
+  await bustSuperAdminScopes(['users'])
   revalidatePath('/super-admin/users')
   revalidatePath('/super-admin/dashboard')
   return { ok: true }

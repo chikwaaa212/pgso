@@ -6,14 +6,14 @@ import { revalidatePath as nextRevalidatePath } from 'next/cache'
 
 // Every Next.js revalidation also busts the Upstash personnel cache so
 // Redis never serves stale lists after a write (fire-and-forget).
+// Narrow: inspection writes touch inspections/deliveries/dashboard/documents.
 function revalidatePath(path: string) {
   nextRevalidatePath(path)
   void import('@/lib/personnel-cache')
-    .then((m) => m.bustPersonnelCache())
+    .then((m) => m.bustPersonnelScopes(['inspections', 'deliveries', 'dashboard', 'documents', 'inventory']))
     .catch(() => {})
 }
 import { Prisma } from '@prisma/client'
-import { createClient } from '@/lib/supabase/server'
 import { writeAuditLog } from '@/lib/audit'
 import { stockInspectionItems } from '@/lib/stock'
 import { getPersonnelScope } from '@/lib/personnel-scope'
@@ -225,14 +225,64 @@ export interface UnifiedInspectionRow {
   logged_by: string | null
 }
 
-export async function getInspectionsList(): Promise<UnifiedInspectionRow[]> {
+export interface InspectionsPageOpts {
+  page?: number
+  pageSize?: number
+  q?: string
+  status?: string
+  /** AIR presence: issued = any inspection carries iar_no/image; awaiting = inspected but none does. */
+  air?: 'all' | 'issued' | 'awaiting'
+}
+
+/** Lightweight tab counts (no row payload) for the AIR stats cards. */
+export async function getInspectionsCounts(): Promise<{ total: number; issued: number; awaiting: number }> {
   const { withScopedCache } = await import('@/lib/personnel-cache')
+  return withScopedCache('personnel:inspections-counts', 60, async () => {
+    const zeros = { total: 0, issued: 0, awaiting: 0 }
+    try {
+      const scope = await getPersonnelScope()
+      if (scope.isEmpty || !scope.userId) return zeros
+      const me = scope.userId
+      const base: Prisma.DeliveryWhereInput = scope.isSuperAdmin
+        ? {}
+        : { OR: [{ received_by: me }, { inspections: { some: { inspector_id: me } } }] }
+      const airIssued: Prisma.DeliveryWhereInput = {
+        inspections: { some: { OR: [{ iar_no: { not: null } }, { iar_image_url: { not: null } }] } },
+      }
+      const [total, issued] = await Promise.all([
+        prisma.delivery.count({ where: base }),
+        prisma.delivery.count({ where: { ...base, ...airIssued } }),
+      ])
+      return { total, issued, awaiting: Math.max(0, total - issued) }
+    } catch (e) {
+      console.error('[getInspectionsCounts]', e)
+      return zeros
+    }
+  })
+}
+
+export async function getInspectionsList(): Promise<UnifiedInspectionRow[]> {
+  const { rows } = await getInspectionsPage({ page: 1, pageSize: 500 })
+  return rows
+}
+
+export async function getInspectionsPage(
+  opts: InspectionsPageOpts = {}
+): Promise<{ rows: UnifiedInspectionRow[]; total: number }> {
+  const { withScopedCache } = await import('@/lib/personnel-cache')
+  const page = Math.floor(Number(opts.page)) >= 1 ? Math.min(Math.floor(Number(opts.page)), 1000) : 1
+  const pageSize = Number.isFinite(Number(opts.pageSize))
+    ? Math.min(Math.max(Math.floor(Number(opts.pageSize)), 1), 100)
+    : 20
+  const q = (opts.q ?? '').trim().slice(0, 120)
+  const status = (opts.status ?? 'all').trim()
+  const air = opts.air ?? 'all'
   return withScopedCache('personnel:inspections-list', 30, async () => {
   try {
     const scope = await getPersonnelScope()
-    if (scope.isEmpty || !scope.userId) return []
+    if (scope.isEmpty || !scope.userId) return { rows: [], total: 0 }
     // Own-data only for personnel; super_admin sees all.
-    const where: Prisma.DeliveryWhereInput = scope.isSuperAdmin
+    const baseWhere: Prisma.DeliveryWhereInput = scope.isSuperAdmin
       ? {}
       : {
           OR: [
@@ -240,52 +290,102 @@ export async function getInspectionsList(): Promise<UnifiedInspectionRow[]> {
             { inspections: { some: { inspector_id: scope.userId } } },
           ],
         };
-    const deliveries = await prisma.delivery.findMany({
-      where,
-      orderBy: { created_at: 'desc' },
-      include: {
-        _count: { select: { items: true } },
+    const where: Prisma.DeliveryWhereInput = { ...baseWhere };
+    // Text search spans the delivery + its latest-inspection context
+    // (inspector/result use any-inspection approximation, matching the card
+    // badge in ~all real cases; delivery-ref prefix search stays client-side
+    // on the 20-row window since UUID prefixes have no index).
+    // AIR presence via the inspections relation (any inspection row, not
+    // just the latest — matches the card badge in ~all real cases).
+    const andClauses: Prisma.DeliveryWhereInput[] = [baseWhere]
+    if (status === 'inspected') {
+      // Documents tab shows only inspected deliveries (has a history receipt).
+      andClauses.push({ inspection_status: { not: 'pending' } })
+    } else if (status !== 'all') {
+      andClauses.push({ inspection_status: status })
+    }
+    if (air === 'issued') {
+      andClauses.push({
         inspections: {
-          orderBy: { created_at: 'desc' },
-          take: 1,
-          select: {
-            inspector_id: true,
-            inspector_name: true,
-            result: true,
-            inspection_date: true,
-            created_at: true,
-            iar_no: true,
-            iar_image_url: true,
-            stocked_at: true,
+          some: { OR: [{ iar_no: { not: null } }, { iar_image_url: { not: null } }] },
+        },
+      })
+    } else if (air === 'awaiting') {
+      andClauses.push({ inspection_status: { not: 'pending' } })
+      andClauses.push({
+        NOT: { inspections: { some: { OR: [{ iar_no: { not: null } }, { iar_image_url: { not: null } }] } } },
+      })
+    }
+    if (q) {
+      andClauses.push({
+        OR: [
+          { supplier: { contains: q, mode: 'insensitive' } },
+          { po_reference: { contains: q, mode: 'insensitive' } },
+          { inspection_status: { contains: q, mode: 'insensitive' } },
+          { inspections: { some: { inspector_name: { contains: q, mode: 'insensitive' } } } },
+          { inspections: { some: { iar_no: { contains: q, mode: 'insensitive' } } } },
+          // Any-inspection approximation for result (superset of the old
+          // latest-only match — search stays discovery-friendly).
+          { inspections: { some: { result: { contains: q, mode: 'insensitive' } } } },
+        ],
+      })
+    }
+    const finalWhere: Prisma.DeliveryWhereInput =
+      andClauses.length === 1 ? { ...baseWhere, ...where } : { AND: andClauses }
+    const [total, deliveries] = await Promise.all([
+      prisma.delivery.count({ where: finalWhere }),
+      prisma.delivery.findMany({
+        where: finalWhere,
+        orderBy: { created_at: 'desc' },
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+        include: {
+          _count: { select: { items: true } },
+          inspections: {
+            orderBy: { created_at: 'desc' },
+            take: 1,
+            select: {
+              inspector_id: true,
+              inspector_name: true,
+              result: true,
+              inspection_date: true,
+              created_at: true,
+              iar_no: true,
+              iar_image_url: true,
+              stocked_at: true,
+            },
           },
         },
-      },
-    })
+      }),
+    ])
 
-    return deliveries.map((d) => ({
-      delivery_id:       d.id,
-      delivery_ref:      d.id.slice(0, 8).toUpperCase(),
-      supplier:          d.supplier,
-      po_reference:      d.po_reference,
-      date_delivered:    d.date_delivered?.toISOString().slice(0, 10) ?? null,
-      item_count:        d._count.items,
-      delivery_status:   d.delivery_status,
-      inspector_id:      d.inspections[0]?.inspector_id ?? null,
-      inspector_name:    d.inspections[0]?.inspector_name ?? null,
-      inspection_date:   d.inspections[0]?.inspection_date?.toISOString().slice(0, 10) ?? null,
-      result:            d.inspections[0]?.result ?? null,
-      inspection_status: d.inspection_status ?? 'pending',
-      created_at:        d.inspections[0]?.created_at?.toISOString() ?? null,
-      iar_no:            d.inspections[0]?.iar_no ?? null,
-      iar_image_url:     d.inspections[0]?.iar_image_url ?? null,
-      stocked_at:        d.inspections[0]?.stocked_at?.toISOString() ?? null,
-      logged_by:         null,
-    }))
+    return {
+      total,
+      rows: deliveries.map((d) => ({
+        delivery_id:       d.id,
+        delivery_ref:      d.id.slice(0, 8).toUpperCase(),
+        supplier:          d.supplier,
+        po_reference:      d.po_reference,
+        date_delivered:    d.date_delivered?.toISOString().slice(0, 10) ?? null,
+        item_count:        d._count.items,
+        delivery_status:   d.delivery_status,
+        inspector_id:      d.inspections[0]?.inspector_id ?? null,
+        inspector_name:    d.inspections[0]?.inspector_name ?? null,
+        inspection_date:   d.inspections[0]?.inspection_date?.toISOString().slice(0, 10) ?? null,
+        result:            d.inspections[0]?.result ?? null,
+        inspection_status: d.inspection_status ?? 'pending',
+        created_at:        d.inspections[0]?.created_at?.toISOString() ?? null,
+        iar_no:            d.inspections[0]?.iar_no ?? null,
+        iar_image_url:     d.inspections[0]?.iar_image_url ?? null,
+        stocked_at:        d.inspections[0]?.stocked_at?.toISOString() ?? null,
+        logged_by:         null,
+      })),
+    }
   } catch (e) {
     console.error('[getInspectionsList]', e)
-    return []
+    return { rows: [], total: 0 }
   }
-  })
+  }, { page, pageSize, q, status, air })
 }
 
 // ─── Fetch full inspection history for a delivery ─────────────────────────
@@ -390,8 +490,15 @@ export interface DashboardStats {
 
 // Per-request memoized: layout + page render in one request and both need
 // these badges, so share a single execution instead of doubling the queries.
-export const getDashboardStats = cache(async function getDashboardStats(): Promise<DashboardStats> {
+export const getDashboardStats = cache(async function getDashboardStats(
+  scopeOverride?: import('@/lib/personnel-scope').PersonnelScope
+): Promise<DashboardStats> {
   const { withScopedCache } = await import('@/lib/personnel-cache')
+  // Scope is part of the cache key via withScopedCache — an explicit scope
+  // avoids a second getUser+profile lookup when the caller already has one.
+  const scopeHint = scopeOverride
+    ? { u: scopeOverride.userId ?? 'anon', a: scopeOverride.isSuperAdmin ? 1 : 0 }
+    : {}
   return withScopedCache('personnel:dashboard-stats', 60, async () => {
   const zeros: DashboardStats = {
     totalDeliveries: 0,
@@ -404,7 +511,7 @@ export const getDashboardStats = cache(async function getDashboardStats(): Promi
   }
   try {
     // Own-data only for personnel sidebar badges; super_admin sees all.
-    const scope = await getPersonnelScope()
+    const scope = scopeOverride ?? (await getPersonnelScope())
     if (scope.isEmpty || !scope.userId) return zeros
     const all = scope.isSuperAdmin
     const me = scope.userId
@@ -418,15 +525,17 @@ export const getDashboardStats = cache(async function getDashboardStats(): Promi
             { inspections: { some: { inspector_id: me } } },
           ],
         }
-    const issuanceDocs = all
-      ? await prisma
-          .$queryRaw<Array<{ count: bigint }>>`SELECT COUNT(*)::bigint AS count FROM issuance_records`
-          .then((r) => Number(r[0]?.count ?? 0))
-          .catch(() => 0)
-      : await prisma
-          .$queryRaw<Array<{ count: bigint }>>`SELECT COUNT(*)::bigint AS count FROM issuance_records WHERE created_by = ${me}::uuid`
-          .then((r) => Number(r[0]?.count ?? 0))
-          .catch(() => 0)
+    const issuanceDocsPromise = (
+      all
+        ? prisma
+            .$queryRaw<Array<{ count: bigint }>>`SELECT COUNT(*)::bigint AS count FROM issuance_records`
+            .then((r) => Number(r[0]?.count ?? 0))
+            .catch(() => 0)
+        : prisma
+            .$queryRaw<Array<{ count: bigint }>>`SELECT COUNT(*)::bigint AS count FROM issuance_records WHERE created_by = ${me}::uuid`
+            .then((r) => Number(r[0]?.count ?? 0))
+            .catch(() => 0)
+    )
     // Repairs badge matches the repairs page (strict own-data:
     // created_by = me, no legacy-NULL fallback — see getRepairs v2).
     // Raw SQL keeps working whether or not the generated client knows the column.
@@ -454,10 +563,10 @@ export const getDashboardStats = cache(async function getDashboardStats(): Promi
     const myRequestFilter = all
       ? { status: 'pending' }
       : { status: 'pending', recipient_id: me }
-    // Two sequential batches of 6 (was one 12-way fan-out): the dashboard
-    // shares one pooler connection pool, and a 12-wide burst plus the page's
-    // own queries was tripping the connection timeout.
-    const countBatch = async (which: 'core' | 'docs') => {
+    // Two sequential batches (was one 12-way fan-out that tripped the
+    // pooler). issuanceDocs runs concurrently inside the docs batch instead
+    // of as a third serial hop before both batches.
+    const countBatch = async (which: 'core' | 'docs'): Promise<number[]> => {
       if (which === 'core') {
         return await Promise.all([
           prisma.delivery.count({ where: myDeliveryFilter }),
@@ -484,6 +593,7 @@ export const getDashboardStats = cache(async function getDashboardStats(): Promi
           SELECT COUNT(*)::bigint AS count FROM document_views WHERE viewer_id = ${me}::uuid`
           .then((r) => Number(r[0]?.count ?? 0))
           .catch(() => 0),
+        issuanceDocsPromise,
       ])
     }
     const [
@@ -495,12 +605,13 @@ export const getDashboardStats = cache(async function getDashboardStats(): Promi
       pendingRepairs,
     ] = await countBatch('core')
     const [
-      deliveryDocs,
-      stockDocs,
-      assetDocs,
-      repairDocs,
-      iarDocs,
-      viewedDocs,
+      deliveryDocs = 0,
+      stockDocs = 0,
+      assetDocs = 0,
+      repairDocs = 0,
+      iarDocs = 0,
+      viewedDocs = 0,
+      issuanceDocs = 0,
     ] = await countBatch('docs')
     return {
       totalDeliveries,
@@ -518,7 +629,7 @@ export const getDashboardStats = cache(async function getDashboardStats(): Promi
     console.error('[getDashboardStats]', e)
     return zeros
   }
-  })
+  }, scopeHint)
 })
 
 export interface MonthlyPoint {
@@ -527,13 +638,18 @@ export interface MonthlyPoint {
   inspections: number
 }
 
-export async function getMonthlyOverview(): Promise<MonthlyPoint[]> {
+export async function getMonthlyOverview(
+  scopeOverride?: import('@/lib/personnel-scope').PersonnelScope
+): Promise<MonthlyPoint[]> {
   const { withScopedCache } = await import('@/lib/personnel-cache')
+  const scopeHint = scopeOverride
+    ? { u: scopeOverride.userId ?? 'anon', a: scopeOverride.isSuperAdmin ? 1 : 0 }
+    : {}
   return withScopedCache('personnel:monthly-overview', 60, async () => {
   const now = new Date()
   const months: MonthlyPoint[] = []
   // Own-data only for personnel; super_admin sees all.
-  const scope = await getPersonnelScope()
+  const scope = scopeOverride ?? (await getPersonnelScope())
   const windowStart = new Date(now.getFullYear(), now.getMonth() - 5, 1)
 
   // One grouped query per table (was 12 per-month counts): keeps the
@@ -589,7 +705,7 @@ export async function getMonthlyOverview(): Promise<MonthlyPoint[]> {
   }
 
   return months
-  })
+  }, scopeHint)
 }
 
 export interface RecentDeliveryRow {
@@ -601,11 +717,17 @@ export interface RecentDeliveryRow {
   date_delivered: string | null
 }
 
-export async function getRecentDeliveries(limit = 5): Promise<RecentDeliveryRow[]> {
+export async function getRecentDeliveries(
+  limit = 5,
+  scopeOverride?: import('@/lib/personnel-scope').PersonnelScope
+): Promise<RecentDeliveryRow[]> {
   const { withScopedCache } = await import('@/lib/personnel-cache')
+  const scopeHint = scopeOverride
+    ? { u: scopeOverride.userId ?? 'anon', a: scopeOverride.isSuperAdmin ? 1 : 0, limit }
+    : { limit }
   return withScopedCache('personnel:recent-deliveries', 60, async () => {
   try {
-    const scope = await getPersonnelScope()
+    const scope = scopeOverride ?? (await getPersonnelScope())
     if (scope.isEmpty) return []
     // Clamp client-controlled take: huge/negative values scanned or flipped rows.
     const take = Number.isFinite(limit)
@@ -681,10 +803,8 @@ export async function saveAir(
     return { error: 'A valid invoice date is required.' }
   }
 
-  const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
+  const inspectionScope = await getPersonnelScope()
+  const user = inspectionScope.userId ? ({ id: inspectionScope.userId } as { id: string }) : null
 
   if (!user) {
     return { error: 'You must be signed in to generate an AIR.' }
@@ -799,10 +919,8 @@ export async function attachIarImage(
     return { error: 'A valid image URL is required.' }
   }
 
-  const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
+  const attachScope = await getPersonnelScope()
+  const user = attachScope.userId ? ({ id: attachScope.userId } as { id: string }) : null
   if (!user) return { error: 'You must be signed in to attach an IAR.' }
 
   try {
@@ -864,10 +982,8 @@ export async function removeIarImage(
 ): Promise<AttachAirState> {
   if (!deliveryId) return { error: 'Delivery ID is required.' }
 
-  const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
+  const removeScope = await getPersonnelScope()
+  const user = removeScope.userId ? ({ id: removeScope.userId } as { id: string }) : null
   if (!user) return { error: 'You must be signed in to remove an IAR.' }
 
   try {

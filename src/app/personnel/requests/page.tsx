@@ -1,11 +1,13 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Loader2 } from "lucide-react";
+import { toast } from "sonner";
 import { Card } from "@/components/ui/card";
+/* Loader2 now provided via ActionButton spinner */
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
+import { ActionButton } from "@/components/ui/action-button";
 import {
   Dialog,
   DialogContent,
@@ -24,12 +26,13 @@ import {
 import {
   createRequest,
   getRequestFormOptions,
-  getRequestsSnapshot,
+  getRequestsPage,
   setRequestStatus,
   type AssetOption,
   type EmployeeOption,
   type RequestRow,
 } from "./actions";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { IssuanceEvaluateDialog } from "@/components/personnel/IssuanceDialog";
 import { RequestQrButton } from "@/components/personnel/RequestQrButton";
 import {
@@ -37,8 +40,7 @@ import {
   type RequestStatus,
 } from "./request-types";
 import { formatPeso } from "@/lib/issuance-rules";
-import { TablePager } from "@/components/personnel/TablePager";
-import { usePageSize } from "@/hooks/use-page-size";
+import { TablePager, FIXED_PAGE_SIZE } from "@/components/personnel/TablePager";
 import { useCachedAction } from "@/hooks/use-cached-action";
 import { CLIENT_CACHE_KEYS, bustClientCache } from "@/lib/client-cache";
 import RequestsLoading from "./loading";
@@ -92,18 +94,42 @@ function blankLine(key: number): ReqLine {
 }
 
 export default function PersonnelRequestsPage() {
-  // Cached queue (own requests): back-navigation paints instantly from
-  // memory / sessionStorage and only revalidates silently when stale —
-  // same SWR pattern as dashboard / deliveries / inspections / stocks /
-  // assets / documents / issues.
+  const [query, setQuery] = useState("");
+  const [statusTab, setStatusTab] =
+    useState<(typeof STATUS_TABS)[number]["value"]>("all");
+  const [typeFilter, setTypeFilter] = useState("all");
+  // Fixed 20 rows/page (no selector) — server pages the DB window.
+  const pageSize = FIXED_PAGE_SIZE;
+  const [page, setPage] = useState(1);
+  // Debounced server search — typing no longer fires a fetch per keystroke.
+  const debouncedQuery = useDebouncedValue(query, 250);
+  const resetPage = () => setPage(1);
+  // Server-paged queue (own requests): search/status/type/page all filter
+  // in the DB; back-navigation still paints instantly from the client SWR
+  // cache and revalidates silently when stale.
+  const cacheKey = `${CLIENT_CACHE_KEYS.requests}:${page}:${pageSize}:${debouncedQuery}:${statusTab}:${typeFilter}`;
   const {
     data: snapshot,
     loading,
+    isValidating,
     refresh: refreshRows,
-  } = useCachedAction(CLIENT_CACHE_KEYS.requests, getRequestsSnapshot, {
-    staleTime: 30_000,
-  });
+  } = useCachedAction(
+    cacheKey,
+    () =>
+      getRequestsPage({
+        forRecipient: true,
+        page,
+        pageSize,
+        q: debouncedQuery,
+        status: statusTab,
+        type: typeFilter,
+      }),
+    {
+      staleTime: 30_000,
+    }
+  );
   const baseRows = useMemo(() => snapshot?.rows ?? [], [snapshot]);
+  const total = snapshot?.total ?? 0;
   // Local optimistic copy — takes over display while an approve / reject /
   // complete write confirms in the background. Cleared whenever fresh
   // server rows arrive so server truth always wins.
@@ -112,12 +138,7 @@ export default function PersonnelRequestsPage() {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- fresh server rows replace optimistic rows
     setRowsState(null);
   }, [snapshot]);
-  const rows = rowsState ?? baseRows;  const [query, setQuery] = useState("");
-  const [statusTab, setStatusTab] =
-    useState<(typeof STATUS_TABS)[number]["value"]>("all");
-  const [typeFilter, setTypeFilter] = useState("all");
-  const [pageSize, setPageSize] = usePageSize("pgso:page-size:requests", 10);
-  const [page, setPage] = useState(1);
+  const rows = rowsState ?? baseRows;
   const [actingId, setActingId] = useState<string | null>(null);
   const [actionError, setActionError] = useState("");
   const [actionOpen, setActionOpen] = useState(false);
@@ -174,50 +195,31 @@ export default function PersonnelRequestsPage() {
   };
 
   useEffect(() => {
-    if (dialogOpen && employees.length === 0) {
-      void getRequestFormOptions().then((opts) => {
-        setEmployees(opts.employees);
-        setAssets(opts.assets);
-      });
+    if (dialogOpen) {
+      // Prefetch on first open; subsequent opens reuse state (was lazy
+      // waterfall on every open with empty check only).
+      if (employees.length === 0) {
+        void getRequestFormOptions().then((opts) => {
+          setEmployees(opts.employees);
+          setAssets(opts.assets);
+        });
+      }
     }
   }, [dialogOpen, employees.length]);
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return rows.filter((r) => {
-      if (statusTab !== "all" && (r.status ?? "pending") !== statusTab)
-        return false;
-      if (typeFilter !== "all" && r.request_type !== typeFilter) return false;
-      if (q) {
-        const haystack = [
-          r.employee_name,
-          requestTypeLabel(r.request_type),
-          r.asset_label,
-          r.description,
-          r.status,
-          ...(r.lines ?? []).map((l) => l.description),
-        ]
-          .filter(Boolean)
-          .join(" ")
-          .toLowerCase();
-        if (!haystack.includes(q)) return false;
-      }
-      return true;
-    });
-  }, [rows, query, statusTab, typeFilter]);
-
-  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
+  // Server already filtered + paged — visible is the page window.
+  const visible = rows;
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
   const safePage = Math.min(Math.max(1, page), pageCount);
-  const visible = filtered.slice(
-    (safePage - 1) * pageSize,
-    (safePage - 1) * pageSize + pageSize
-  );
+  const searching = query.trim() !== debouncedQuery.trim();
 
   const pendingCount = rows.filter(
     (r) => (r.status ?? "pending") === "pending"
   ).length;
 
-  if (loading) {
+  // Cold start only: filter/page changes keep stale rows visible with
+  // an "updating…" badge instead of flashing the full skeleton.
+  if (loading && baseRows.length === 0) {
     return <RequestsLoading />;
   }
 
@@ -231,7 +233,7 @@ export default function PersonnelRequestsPage() {
   }
 
   async function onActionConfirm() {
-    if (!actionRow) return;
+    if (!actionRow || actionSaving) return;
     if (actionNote.trim() === "") {
       setActionFormError("Enter remarks for this action.");
       return;
@@ -241,6 +243,12 @@ export default function PersonnelRequestsPage() {
     const note = actionNote;
     const prevRows = rows;
     const nowIso = new Date().toISOString();
+    const verb =
+      status === "approved"
+        ? "Approved"
+        : status === "rejected"
+          ? "Rejected"
+          : "Completed";
     // Stay open with a spinner until the database confirms: the modal only
     // closes on success. The row paints optimistically behind the dialog;
     // failures roll it back and surface the error inside the modal.
@@ -259,18 +267,32 @@ export default function PersonnelRequestsPage() {
           : r
       )
     );
-    const res = await setRequestStatus(target.id, status, note);
-    setActionSaving(false);
-    setActingId(null);
-    if (!res.success) {
+    try {
+      const res = await setRequestStatus(target.id, status, note);
+      if (!res.success) {
+        setRowsState(prevRows);
+        const msg = res.error ?? "Failed to update the request.";
+        setActionFormError(msg);
+        toast.error(msg, { duration: 2000, closeButton: true });
+        return;
+      }
+      setActionOpen(false);
+      setActionRow(null);
+      setActionNote("");
+      reload();
+      toast.success(`Request ${verb.toLowerCase()} successfully.`, {
+        duration: 2000,
+        closeButton: true,
+      });
+    } catch {
       setRowsState(prevRows);
-      setActionFormError(res.error ?? "Failed to update the request.");
-      return;
+      const msg = "Failed to update the request. Please try again.";
+      setActionFormError(msg);
+      toast.error(msg, { duration: 2000, closeButton: true });
+    } finally {
+      setActionSaving(false);
+      setActingId(null);
     }
-    setActionOpen(false);
-    setActionRow(null);
-    setActionNote("");
-    reload();
   }
 
   function resetForm() {
@@ -307,46 +329,60 @@ export default function PersonnelRequestsPage() {
   }
 
   async function onSubmit() {
+    if (saving) return;
     setSaving(true);
     setFormError("");
-    const transferIsStock =
-      requestType === "transfer" &&
-      (assets.find((a) => a.id === assetId)?.kind === "stock");
-    const effectiveTransferTo =
-      transferToMode === "select"
-        ? (employees.find((e) => e.id === transferToId)?.full_name ?? "")
-        : transferTo;
-    const res = await createRequest({
-      employeeId,
-      requestType,
-      assetId: assetId === "" ? undefined : assetId,
-      quantity:
-        requestType === "stock_replenishment"
-          ? Number(restockQty)
-          : transferIsStock
-            ? Number(transferQty)
-            : undefined,
-      transferTo: effectiveTransferTo,
-      newLocation,
-      reason,
-      ...(requestType === "new_assignment"
-        ? {
-            items: lines.map((l) => ({
-              assetId: l.assetId === "" ? undefined : l.assetId,
-              description: l.itemNeeded,
-              quantity: Number(l.quantity),
-            })),
-          }
-        : {}),
-    });
-    setSaving(false);
-    if (!res.success) {
-      setFormError(res.error ?? "Failed to submit the request.");
-      return;
+    try {
+      const transferIsStock =
+        requestType === "transfer" &&
+        (assets.find((a) => a.id === assetId)?.kind === "stock");
+      const effectiveTransferTo =
+        transferToMode === "select"
+          ? (employees.find((e) => e.id === transferToId)?.full_name ?? "")
+          : transferTo;
+      const res = await createRequest({
+        employeeId,
+        requestType,
+        assetId: assetId === "" ? undefined : assetId,
+        quantity:
+          requestType === "stock_replenishment"
+            ? Number(restockQty)
+            : transferIsStock
+              ? Number(transferQty)
+              : undefined,
+        transferTo: effectiveTransferTo,
+        newLocation,
+        reason,
+        ...(requestType === "new_assignment"
+          ? {
+              items: lines.map((l) => ({
+                assetId: l.assetId === "" ? undefined : l.assetId,
+                description: l.itemNeeded,
+                quantity: Number(l.quantity),
+              })),
+            }
+          : {}),
+      });
+      if (!res.success) {
+        const msg = res.error ?? "Failed to submit the request.";
+        setFormError(msg);
+        toast.error(msg, { duration: 2000, closeButton: true });
+        return;
+      }
+      setDialogOpen(false);
+      resetForm();
+      reload();
+      toast.success("Request submitted successfully.", {
+        duration: 2000,
+        closeButton: true,
+      });
+    } catch {
+      const msg = "Failed to submit the request. Please try again.";
+      setFormError(msg);
+      toast.error(msg, { duration: 2000, closeButton: true });
+    } finally {
+      setSaving(false);
     }
-    setDialogOpen(false);
-    resetForm();
-    reload();
   }
 
   // Every delivered item is an asset; "stock" is just its quantity on hand —
@@ -402,12 +438,12 @@ export default function PersonnelRequestsPage() {
         <div>
           <h1 className={styles.title}>Requests</h1>
           <p className={styles.subtitle}>
-            {filtered.length} of {rows.length}{" "}
-            {rows.length === 1 ? "request" : "requests"} shown
+            {total} {total === 1 ? "request" : "requests"} found
             {pendingCount > 0
-              ? ` · ${pendingCount} pending`
+              ? ` · ${pendingCount} pending on this page`
               : ""}{" "}
             · only requests sent to you
+            {(isValidating || searching) ? " · updating…" : ""}
           </p>
         </div>
         <div className={styles.actions}>
@@ -481,10 +517,10 @@ export default function PersonnelRequestsPage() {
           </Select>
         </div>
 
-        {filtered.length === 0 ? (
+        {visible.length === 0 ? (
           <div className={styles.emptyState}>
             <p className={styles.panelSub}>
-              {rows.length === 0
+              {total === 0
                 ? "No requests submitted yet — file the first one above."
                 : "No requests match your search or filters."}
             </p>
@@ -589,13 +625,11 @@ export default function PersonnelRequestsPage() {
             </table>
           </div>
         )}
-        {filtered.length > 0 ? (
+        {total > 0 ? (
           <TablePager
             id="requests"
-            total={filtered.length}
-            pageSize={pageSize}
+            total={total}
             page={safePage}
-            onPageSizeChange={setPageSize}
             onPageChange={setPage}
           />
         ) : null}
@@ -1059,14 +1093,15 @@ export default function PersonnelRequestsPage() {
             >
               Cancel
             </Button>
-            <Button
+            <ActionButton
               type="button"
               disabled={!canSubmit || saving}
-              onClick={() => void onSubmit()}
+              onClick={() => onSubmit()}
+              loadingLabel="Submitting…"
               className="h-8 rounded-[4px] px-3.5 text-xs font-semibold"
             >
-              {saving ? "Submitting…" : "Submit request"}
-            </Button>
+              Submit request
+            </ActionButton>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -1157,25 +1192,25 @@ export default function PersonnelRequestsPage() {
             >
               Cancel
             </Button>
-            <Button
+            <ActionButton
               type="button"
               disabled={actionNote.trim() === "" || actionSaving}
-              onClick={() => void onActionConfirm()}
+              onClick={() => onActionConfirm()}
+              loadingLabel={
+                actionStatus === "approved"
+                  ? "Approving…"
+                  : actionStatus === "rejected"
+                    ? "Rejecting…"
+                    : "Completing…"
+              }
               className="h-8 gap-2 rounded-[4px] px-3.5 text-xs font-semibold"
             >
-              {actionSaving ? (
-                <>
-                  <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-                  Saving…
-                </>
-              ) : actionStatus === "approved" ? (
-                "Approve"
-              ) : actionStatus === "rejected" ? (
-                "Reject"
-              ) : (
-                "Complete"
-              )}
-            </Button>
+              {actionStatus === "approved"
+                ? "Approve"
+                : actionStatus === "rejected"
+                  ? "Reject"
+                  : "Complete"}
+            </ActionButton>
           </DialogFooter>
         </DialogContent>
       </Dialog>

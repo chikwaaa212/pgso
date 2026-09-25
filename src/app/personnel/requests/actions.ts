@@ -4,17 +4,17 @@ import { revalidatePath as nextRevalidatePath } from 'next/cache'
 
 // Every Next.js revalidation also busts the Upstash personnel cache so
 // Redis never serves stale lists after a write (fire-and-forget).
+// Narrow: request writes touch requests/dashboard/documents/issues only.
 function revalidatePath(path: string) {
   nextRevalidatePath(path)
   void import('@/lib/personnel-cache')
-    .then((m) => m.bustPersonnelCache())
+    .then((m) => m.bustPersonnelScopes(['requests', 'dashboard', 'documents', 'issues', 'repairs']))
     .catch(() => {})
 }
 import { createClient } from '@/lib/supabase/server'
 import prisma from '@/lib/prisma'
 import { writeAuditLog } from '@/lib/audit'
 import { generateQrDataUrl } from '@/lib/qrcode'
-import { getAllUnifiedAssets } from '../assets/actions'
 import {
   REQUEST_STATUSES,
   REQUEST_TYPES,
@@ -107,49 +107,108 @@ async function getAssetLabelMap(): Promise<
  * (strict `recipient_id` match — legacy recipient-less rows are excluded).
  * Fails closed: without an authenticated user it returns nothing instead of
  * the whole queue. */
+export interface RequestsPageOpts {
+  forRecipient?: boolean
+  page?: number
+  pageSize?: number
+  q?: string
+  status?: string
+  type?: string
+}
+
+function clampPage(n: unknown, fallback: number): number {
+  const v = Math.floor(Number(n))
+  return Number.isFinite(v) && v >= 1 ? Math.min(v, 1000) : fallback
+}
+
+function clampPageSize(n: unknown, fallback: number): number {
+  const v = Math.floor(Number(n))
+  return Number.isFinite(v) ? Math.min(Math.max(v, 1), 100) : fallback
+}
+
 export async function getRequests(filter?: {
   forRecipient?: boolean
 }): Promise<RequestRow[]> {
+  const { rows } = await getRequestsPage({
+    forRecipient: filter?.forRecipient,
+    page: 1,
+    pageSize: 500,
+  })
+  return rows
+}
+
+export async function getRequestsPage(
+  opts: RequestsPageOpts = {}
+): Promise<{ rows: RequestRow[]; total: number }> {
   const { withScopedCache } = await import('@/lib/personnel-cache')
+  const page = clampPage(opts.page, 1)
+  const pageSize = clampPageSize(opts.pageSize, 20)
+  const q = (opts.q ?? '').trim().slice(0, 120)
+  const status = (opts.status ?? 'all').trim()
+  const type = (opts.type ?? 'all').trim()
   return withScopedCache('personnel:requests', 30, async () => {
   try {
+    const { getPersonnelScope } = await import('@/lib/personnel-scope')
+    const scope = await getPersonnelScope()
+    if (scope.isEmpty || !scope.userId) return { rows: [], total: 0 }
     let recipientId: string | null = null
-    if (filter?.forRecipient) {
-      try {
-        const supabase = await createClient()
-        const {
-          data: { user },
-        } = await supabase.auth.getUser()
-        recipientId = user?.id ?? null
-      } catch {
-        recipientId = null
-      }
+    if (opts.forRecipient) {
+      recipientId = scope.userId
       // Fail closed — an unauthenticated caller must not fall through to
       // the unfiltered queue and leak other personnel's requests.
-      if (recipientId === null) return []
+      if (recipientId === null) return { rows: [], total: 0 }
+    }
+    const where: Record<string, unknown> = {}
+    if (recipientId !== null) (where as Record<string, string>).recipient_id = recipientId
+    if (status !== 'all') (where as Record<string, string>).status = status
+    if (type !== 'all') (where as Record<string, string>).request_type = type
+    if (q) {
+      ;(where as Record<string, unknown>).OR = [
+        { description: { contains: q, mode: 'insensitive' } },
+        { request_type: { contains: q, mode: 'insensitive' } },
+        { status: { contains: q, mode: 'insensitive' } },
+      ]
     }
     // Label-only lookup: getRequests only needs asset labels, so fetch two
     // slim selects instead of getAllUnifiedAssets() — the full build
     // generates a QR data URL per asset/stock row, which dominated this
     // query's cost while rendering zero QR codes on this page.
-    const [requests, profiles, labels] = await Promise.all([
+    const [total, requests] = await Promise.all([
+      prisma.request.count({ where: where as never }),
       prisma.request.findMany({
-        where:
-          recipientId !== null
-            ? { recipient_id: recipientId }
-            : undefined,
+        where: where as never,
         orderBy: { date_requested: 'desc' },
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+        select: {
+          id: true,
+          request_type: true,
+          description: true,
+          status: true,
+          date_requested: true,
+          date_resolved: true,
+          employee_id: true,
+          recipient_id: true,
+          asset_id: true,
+        },
       }),
-      prisma.profile.findMany({
-        select: { id: true, full_name: true },
-      }),
+    ])
+    if (requests.length === 0) return { rows: [], total }
+    const employeeIds = [...new Set(requests.flatMap((r) => [r.employee_id, r.recipient_id].filter(Boolean) as string[]))]
+    const [profiles, labels] = await Promise.all([
+      employeeIds.length > 0
+        ? prisma.profile.findMany({
+            where: { id: { in: employeeIds } },
+            select: { id: true, full_name: true },
+          })
+        : Promise.resolve([] as { id: string; full_name: string | null }[]),
       getAssetLabelMap(),
     ])
 
     const names = new Map(profiles.map((p) => [p.id, p.full_name ?? '—']))
     const lineMap = await listRequestLines(requests.map((r) => r.id))
 
-    return await Promise.all(requests.map(async (r) => {
+    const rows = await Promise.all(requests.map(async (r) => {
       const stored = lineMap.get(r.id) ?? []
       // Legacy rows (filed before line items existed) synthesize one line
       // from asset_id + the "Qty: N" description line.
@@ -193,11 +252,19 @@ export async function getRequests(filter?: {
         item_count: lines.length,
       }
     }))
+    return { rows, total }
   } catch (e) {
     console.error('[getRequests]', e)
-    return []
+    return { rows: [], total: 0 }
   }
-  }, { forRecipient: filter?.forRecipient ?? false })
+  }, {
+    forRecipient: opts.forRecipient ?? false,
+    page,
+    pageSize,
+    q,
+    status,
+    type,
+  })
 }
 
 export interface RequestsSnapshot {
@@ -354,15 +421,76 @@ export async function getRequestFormOptions(): Promise<{
   const { withCache, cacheKey } = await import('@/lib/personnel-cache')
   return withCache(cacheKey('personnel:request-form-options'), 60, async () => {
   try {
-    const [profiles, assets] = await Promise.all([
+    // Slim pick-list (labels only, no QR / custom-bag fan-out of
+    // getAllUnifiedAssets() — the dialog renders zero QR codes).
+    const [profiles, assetRows, stockRows] = await Promise.all([
       // Only employees can file requests — personnel cannot request.
       prisma.profile.findMany({
         where: { status: 'active', role: 'employee' },
         orderBy: { full_name: 'asc' },
         select: { id: true, full_name: true, role: true },
       }),
-      getAllUnifiedAssets(),
+      prisma.asset
+        .findMany({
+          orderBy: { created_at: 'desc' },
+          take: 500,
+          select: {
+            id: true, qr_code: true, account_code: true, article: true,
+            description: true, account_title: true, account_name: true,
+            category: true, location: true, status: true, quantity: true,
+            unit_cost: true, assigned_to: true,
+          },
+        })
+        .catch(() => []),
+      prisma.inventoryItem
+        .findMany({
+          orderBy: { item_name: 'asc' },
+          take: 500,
+          select: {
+            id: true, item_name: true, account_code: true, quantity: true,
+            location: true, unit_cost: true,
+          },
+        })
+        .catch(() => []),
     ])
+    const unified = [
+      ...assetRows.map((a) => ({
+        id: a.id,
+        kind: 'asset' as const,
+        label: assetLabel(a),
+        location: a.location,
+        status: a.status,
+        quantity: a.quantity,
+        account_code: a.account_code,
+        account_title: a.account_title ?? a.account_name,
+        asset_type: a.category,
+        unit_cost: a.unit_cost != null ? Number(a.unit_cost) : null,
+        disabledReason: assetOptionDisabledReason({
+          source: 'asset',
+          status: a.status,
+          quantity: a.quantity,
+          assigned_to: a.assigned_to,
+        }),
+      })),
+      ...stockRows.map((s) => ({
+        id: s.id,
+        kind: 'stock' as const,
+        label: assetLabel({
+          qr_code: null,
+          account_code: s.account_code,
+          article: s.item_name,
+          description: null,
+        }),
+        location: s.location,
+        status: 'available' as string | null,
+        quantity: s.quantity,
+        account_code: s.account_code,
+        account_title: null as string | null,
+        asset_type: null as string | null,
+        unit_cost: s.unit_cost != null ? Number(s.unit_cost) : null,
+        disabledReason: assetOptionDisabledReason({ source: 'stock', quantity: s.quantity }),
+      })),
+    ]
 
     return {
       employees: profiles.map((p) => ({
@@ -370,21 +498,7 @@ export async function getRequestFormOptions(): Promise<{
         full_name: p.full_name ?? 'Unnamed',
         role: p.role,
       })),
-      assets: assets
-        .filter((a) => a.source === 'asset' || a.source === 'stock')
-        .map((a) => ({
-          id: a.id,
-          kind: a.source,
-          label: assetLabel(a),
-          location: a.location,
-          status: a.status,
-          quantity: a.quantity,
-          account_code: a.account_code,
-          account_title: a.account_title ?? a.account_name,
-          asset_type: a.category,
-          unit_cost: a.unit_cost,
-          disabledReason: assetOptionDisabledReason(a),
-        })),
+      assets: unified,
     }
   } catch (e) {
     console.error('[getRequestFormOptions]', e)
@@ -560,20 +674,12 @@ export async function createRequest(
               quantity: input.quantity,
             },
           ]
-    for (let i = 0; i < rawLines.length; i++) {
-      const line = rawLines[i]
-      const lineNo = `Item ${i + 1}`
-      const lineAssetId = line.assetId?.trim() || null
-      const lineDesc = line.description?.trim() ?? ''
-      if (!lineDesc) return { error: `${lineNo}: describe the item needed.` }
-      let kind: 'asset' | 'stock' | null = null
-      let onHand = 0
-      let snapCost: number | null = null
-      let stockName: string | null = null
-      if (lineAssetId) {
-        const [asset, stock] = await Promise.all([
-          prisma.asset.findUnique({
-            where: { id: lineAssetId },
+    // Batch ID lookups once (was 2× findUnique per line, serial).
+    const lineIds = [...new Set(rawLines.map((l) => l.assetId?.trim()).filter(Boolean) as string[])]
+    const [batchAssets, batchStocks] = lineIds.length > 0
+      ? await Promise.all([
+          prisma.asset.findMany({
+            where: { id: { in: lineIds } },
             select: {
               id: true,
               article: true,
@@ -585,11 +691,27 @@ export async function createRequest(
               assigned_to: true,
             },
           }),
-          prisma.inventoryItem.findUnique({
-            where: { id: lineAssetId },
+          prisma.inventoryItem.findMany({
+            where: { id: { in: lineIds } },
             select: { id: true, item_name: true, quantity: true, unit_cost: true },
           }),
         ])
+      : [[], []]
+    const assetById = new Map(batchAssets.map((a) => [a.id, a]))
+    const stockById = new Map(batchStocks.map((s) => [s.id, s]))
+    for (let i = 0; i < rawLines.length; i++) {
+      const line = rawLines[i]
+      const lineNo = `Item ${i + 1}`
+      const lineAssetId = line.assetId?.trim() || null
+      const lineDesc = line.description?.trim() ?? ''
+      if (!lineDesc) return { error: `${lineNo}: describe the item needed.` }
+      let kind: 'asset' | 'stock' | null = null
+      let onHand = 0
+      let snapCost: number | null = null
+      let stockName: string | null = null
+      if (lineAssetId) {
+        const asset = assetById.get(lineAssetId) ?? null
+        const stock = stockById.get(lineAssetId) ?? null
         if (!asset && !stock)
           return { error: `${lineNo}: selected item no longer exists.` }
         kind = asset ? 'asset' : 'stock'
@@ -697,12 +819,15 @@ export async function createRequest(
       select: { id: true },
     })
     createdId = created.id
-    if (requestType === 'new_assignment') {
-      for (const l of validLines) {
-        await prisma.$executeRaw`
-          INSERT INTO request_items (id, request_id, asset_id, description, quantity, unit_cost)
-          VALUES (${randomUUID()}::uuid, ${created.id}::uuid, ${l.assetId}::uuid, ${l.description}, ${l.quantity}, ${l.unitCost})`
-      }
+    if (requestType === 'new_assignment' && validLines.length > 0) {
+      // One transaction (was serial per-line INSERTs awaiting one by one).
+      await prisma.$transaction(
+        validLines.map((l) =>
+          prisma.$executeRaw`
+            INSERT INTO request_items (id, request_id, asset_id, description, quantity, unit_cost)
+            VALUES (${randomUUID()}::uuid, ${created.id}::uuid, ${l.assetId}::uuid, ${l.description}, ${l.quantity}, ${l.unitCost})`
+        )
+      )
     }
   } catch (e) {
     console.error('[createRequest]', e)
@@ -710,13 +835,11 @@ export async function createRequest(
   }
 
   try {
-    const supabase = await createClient()
-    const {
-      data: { user },
-    } = await supabase.auth.getUser()
-    if (user) {
-      await writeAuditLog({
-        userId: user.id,
+    const { getPersonnelScope: getScopeForAudit } = await import('@/lib/personnel-scope')
+    const auditScope = await getScopeForAudit()
+    if (auditScope.userId) {
+      void writeAuditLog({
+        userId: auditScope.userId,
         action: 'request:create',
         module: 'requests',
         details: {
@@ -725,7 +848,7 @@ export async function createRequest(
           reference_id: createdId,
           request_type: requestType,
         },
-      })
+      }).catch(() => {})
     }
   } catch {
     // best-effort only
@@ -734,8 +857,8 @@ export async function createRequest(
   // Await the Redis bust BEFORE reporting success: revalidatePath() below
   // only fires it off, and the client's immediate refetch would otherwise
   // win the race, serve pre-write rows, and re-cache them as fresh.
-  const { bustPersonnelCache } = await import('@/lib/personnel-cache')
-  await bustPersonnelCache()
+  const { bustPersonnelScopes } = await import('@/lib/personnel-cache')
+  await bustPersonnelScopes(['requests', 'dashboard', 'documents', 'issues'])
   revalidatePath('/personnel/requests')
   return { success: true }
 }

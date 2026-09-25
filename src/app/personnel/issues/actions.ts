@@ -120,33 +120,140 @@ function qrPayloadFor(args: {
  * One row per LINE (a 3-line PAR yields 3 rows sharing doc_no/employee).
  * Missing table → [].
  */
+export interface PublicIssuesPageOpts {
+  page?: number
+  pageSize?: number
+  q?: string
+  docType?: string
+  assetType?: string
+}
+
+/** Distinct asset-type options for the issues filter dropdown (bounded). */
+export async function getIssueFilterOptions(): Promise<string[]> {
+  const { withCache, cacheKey } = await import('@/lib/personnel-cache')
+  return withCache(cacheKey('personnel:issue-filter-options'), 300, async () => {
+    try {
+      const [a, s] = await Promise.all([
+        prisma.$queryRaw<Array<{ category: string | null }>>`
+          SELECT DISTINCT category FROM assets WHERE category IS NOT NULL ORDER BY 1 LIMIT 200`
+          .catch(() => []),
+        prisma.$queryRaw<Array<{ category: string | null }>>`
+          SELECT DISTINCT category FROM inventory WHERE category IS NOT NULL ORDER BY 1 LIMIT 200`
+          .catch(() => []),
+      ])
+      const set = new Map<string, string>()
+      for (const r of [...a, ...s]) {
+        const raw = (r.category ?? '').trim()
+        if (raw && !set.has(raw.toLowerCase())) set.set(raw.toLowerCase(), raw)
+      }
+      return [...set.values()].sort((x, y) => x.localeCompare(y))
+    } catch (e) {
+      console.error('[getIssueFilterOptions]', e)
+      return []
+    }
+  })
+}
+
 export async function getPublicIssues(): Promise<PublicIssueLine[]> {
+  const { rows } = await getPublicIssuesPage({ page: 1, pageSize: 200 })
+  return rows
+}
+
+/**
+ * Paged issuance documents (fixed 20/page): the DB returns only the doc
+ * window — line expansion + QR generation run on the window, not the whole
+ * registry. `total` counts documents (one doc may expand to several lines).
+ */
+export async function getPublicIssuesPage(
+  opts: PublicIssuesPageOpts = {}
+): Promise<{ rows: PublicIssueLine[]; total: number }> {
   const { withScopedCache } = await import('@/lib/personnel-cache')
+  const page = Math.floor(Number(opts.page)) >= 1 ? Math.min(Math.floor(Number(opts.page)), 1000) : 1
+  // Personnel UI always sends 20; compat callers (snapshots, admin browse)
+  // may request up to 200 per window.
+  const pageSize = Number.isFinite(Number(opts.pageSize))
+    ? Math.min(Math.max(Math.floor(Number(opts.pageSize)), 1), 200)
+    : 20
+  const q = (opts.q ?? '').trim().slice(0, 120)
+  const docType = (opts.docType ?? 'all').trim().toUpperCase()
+  const assetType = (opts.assetType ?? 'all').trim()
   return withScopedCache('personnel:public-issues', 60, async () => {
-  let rows: IssuanceDbRow[] = []
   try {
     // Own-data only for personnel; super_admin sees all.
     const scope = await getPersonnelScope()
-    if (scope.isEmpty || !scope.userId) return []
-    rows = scope.isSuperAdmin
-      ? await prisma.$queryRaw<IssuanceDbRow[]>`
+    if (scope.isEmpty || !scope.userId) return { rows: [], total: 0 }
+    const { Prisma } = await import('@prisma/client')
+    const me = scope.userId
+    const like = q ? `%${q}%` : null
+    const typeFilter = docType !== 'ALL' ? docType : null
+    // Filterable joins: employee name + single-FK item labels participate
+    // in text search (multi-line JSONB items are matched client-side only).
+    const conds: InstanceType<typeof Prisma.Sql>[] = []
+    if (!scope.isSuperAdmin) conds.push(Prisma.sql`ir.created_by = ${me}::uuid`)
+    if (typeFilter) conds.push(Prisma.sql`ir.doc_type = ${typeFilter}`)
+    if (assetType !== 'all') {
+      // Single-FK lines match exactly; multi-line JSONB items are expanded
+      // after fetch and filtered client-side on the window.
+      conds.push(Prisma.sql`(a.category = ${assetType} OR s.category = ${assetType})`)
+    }
+    if (like) {
+      conds.push(Prisma.sql`(
+        ir.doc_no ILIKE ${like} OR ir.doc_type ILIKE ${like}
+        OR p.full_name ILIKE ${like} OR lb.full_name ILIKE ${like}
+        OR a.article ILIKE ${like} OR a.account_code ILIKE ${like}
+        OR a.account_title ILIKE ${like}
+        OR s.item_name ILIKE ${like} OR s.account_code ILIKE ${like}
+        OR a.category ILIKE ${like} OR s.category ILIKE ${like}
+      )`)
+    }
+    const whereClause = conds.length > 0 ? Prisma.sql`WHERE ${Prisma.join(conds, ' AND ')}` : Prisma.empty
+    const offset = (page - 1) * pageSize
+    const [countRows, idRows] = await Promise.all([
+      prisma.$queryRaw<Array<{ count: bigint }>>`
+        SELECT COUNT(DISTINCT ir.id)::bigint AS count FROM issuance_records ir
+        LEFT JOIN profiles p ON p.id = ir.employee_id
+        LEFT JOIN profiles lb ON lb.id = ir.created_by
+        LEFT JOIN assets a ON a.id = ir.asset_id
+        LEFT JOIN inventory s ON s.id = ir.inventory_id
+        ${whereClause}`,
+      prisma.$queryRaw<Array<{ id: string }>>`
+        SELECT ir.id::text AS id FROM issuance_records ir
+        LEFT JOIN profiles p ON p.id = ir.employee_id
+        LEFT JOIN profiles lb ON lb.id = ir.created_by
+        LEFT JOIN assets a ON a.id = ir.asset_id
+        LEFT JOIN inventory s ON s.id = ir.inventory_id
+        ${whereClause}
+        ORDER BY ir.created_at DESC LIMIT ${pageSize} OFFSET ${offset}`,
+    ])
+    const total = Number(countRows[0]?.count ?? 0)
+    if (idRows.length === 0) return { rows: [], total }
+    const ids = idRows.map((r) => r.id)
+    const rows = await prisma.$queryRaw<IssuanceDbRow[]>`
       SELECT id::text AS id, doc_type, doc_no, doc_date,
              asset_id::text AS asset_id, inventory_id::text AS inventory_id,
              employee_id::text AS employee_id, request_id::text AS request_id,
              quantity, issuance_data, created_at,
              created_by::text AS created_by
-      FROM issuance_records ORDER BY created_at DESC`
-      : await prisma.$queryRaw<IssuanceDbRow[]>`
-      SELECT id::text AS id, doc_type, doc_no, doc_date,
-             asset_id::text AS asset_id, inventory_id::text AS inventory_id,
-             employee_id::text AS employee_id, request_id::text AS request_id,
-             quantity, issuance_data, created_at,
-             created_by::text AS created_by
-      FROM issuance_records WHERE created_by = ${scope.userId}::uuid ORDER BY created_at DESC`
+      FROM issuance_records WHERE id = ANY(${ids}::uuid[])`
+    // Preserve newest-first order within the window.
+    const order = new Map(ids.map((id, i) => [id, i]))
+    rows.sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0))
+    let lines = await buildIssueLines(rows)
+    // Multi-line JSONB items aren't visible to the joined category filter —
+    // apply the exact type match on the expanded window as well.
+    if (assetType !== 'all') {
+      lines = lines.filter((l) => (l.asset_type ?? '').trim().toLowerCase() === assetType.toLowerCase())
+    }
+    return { rows: lines, total }
   } catch (e) {
     console.error('[getPublicIssues:list]', e)
-    return []
+    return { rows: [], total: 0 }
   }
+  }, { page, pageSize, q, docType, assetType })
+}
+
+/** Expands issuance docs to sanitized per-line rows with QR (window-sized). */
+async function buildIssueLines(rows: IssuanceDbRow[]): Promise<PublicIssueLine[]> {
   if (rows.length === 0) return []
 
   // Employee names (receiving employee per issue) + issuers (logged by).
@@ -227,7 +334,9 @@ export async function getPublicIssues(): Promise<PublicIssueLine[]> {
     return l ? l.slice(0, 80) : null
   }
 
-  const out: PublicIssueLine[] = []
+  // Build rows without QR first, then generate all QR data URLs
+  // concurrently (was serial `await` per line, blocking the whole list).
+  const pending: Omit<PublicIssueLine, 'qr_data_url'>[] = []
   for (const r of rows) {
     const employee = names.get(r.employee_id) ?? 'Unknown employee'
     const loggedBy = (r.created_by ? names.get(r.created_by) : undefined) ?? null
@@ -265,7 +374,7 @@ export async function getPublicIssues(): Promise<PublicIssueLine[]> {
           asset_type,
           quantity,
         })
-        out.push({
+        pending.push({
           issuance_id: r.id,
           line_index: i,
           line_count: multi.length,
@@ -280,7 +389,6 @@ export async function getPublicIssues(): Promise<PublicIssueLine[]> {
           asset_type,
           quantity,
           qr_payload,
-          qr_data_url: await generateQrDataUrl(qr_payload, 120),
           created_at,
         })
       }
@@ -309,7 +417,7 @@ export async function getPublicIssues(): Promise<PublicIssueLine[]> {
         asset_type,
         quantity,
       })
-      out.push({
+      pending.push({
         issuance_id: r.id,
         line_index: 0,
         line_count: 1,
@@ -324,13 +432,14 @@ export async function getPublicIssues(): Promise<PublicIssueLine[]> {
         asset_type,
         quantity,
         qr_payload,
-        qr_data_url: await generateQrDataUrl(qr_payload, 120),
         created_at,
       })
     }
   }
-  return out
-  })
+  const qrUrls = await Promise.all(
+    pending.map((p) => generateQrDataUrl(p.qr_payload, 120).catch(() => ''))
+  )
+  return pending.map((p, i) => ({ ...p, qr_data_url: qrUrls[i] ?? '' }))
 }
 
 // ─── Completed requests as QR records ────────────────────────────────────────
@@ -350,9 +459,14 @@ export async function getCompletedRequestIssues(): Promise<
   try {
     const scope = await getPersonnelScope()
     if (scope.isEmpty || !scope.userId) return []
-    const { getRequests } = await import('@/app/personnel/requests/actions')
-    const all = await getRequests()
-    const completed = all.filter((r) => (r.status ?? 'pending') === 'completed')
+    const { getRequestsPage } = await import('@/app/personnel/requests/actions')
+    // Server-filtered completed rows (was full-queue download + JS filter).
+    const { rows: completed } = await getRequestsPage({
+      forRecipient: scope.isSuperAdmin ? false : false,
+      page: 1,
+      pageSize: 500,
+      status: 'completed',
+    })
     if (scope.isSuperAdmin) return completed
     const me = scope.userId
     // Requests this personnel actioned: approve/complete audit entries.

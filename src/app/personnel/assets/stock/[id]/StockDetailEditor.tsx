@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -166,7 +165,6 @@ export function StockDetailEditor({
   /** Overrides the leading crumb segments (defaults to the personnel trail). */
   crumbBase?: string;
 }) {
-  const router = useRouter();
   const { toast } = useToast();
   const [isEditing, setIsEditing] = useState(false);
   const [isPending, startTransition] = useTransition();
@@ -181,7 +179,9 @@ export function StockDetailEditor({
           variant: "success",
         });
         setIsEditing(false);
-        router.refresh();
+        void import('@/lib/client-cache').then((m) =>
+          m.bustClientCache(['pgso:client:assets-snapshot', 'pgso:client:inventory-items'])
+        );
       }
       if (result.error) {
         toast({

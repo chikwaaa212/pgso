@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { Eye, QrCode, Search, Send } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -21,11 +22,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { getAssetsSnapshot, type UnifiedAssetRow } from "./actions";
-import { AddColumnDialog, customSearchText } from "./custom-columns";
+import { getAssetFilterOptions, getUnifiedAssetsPage, type UnifiedAssetRow } from "./actions";
+import { AddColumnDialog } from "./custom-columns";
 import { AddAssetDialog, ImportAssetsDialog } from "./asset-dialogs";
 import { IssuanceEvaluateDialog } from "@/components/personnel/IssuanceDialog";
-import { usePageSize } from "@/hooks/use-page-size";
+import { FIXED_PAGE_SIZE } from "@/components/personnel/TablePager";
 import { useCachedAction } from "@/hooks/use-cached-action";
 import { CLIENT_CACHE_KEYS, bustClientCache } from "@/lib/client-cache";
 import AssetsLoading from "./loading";
@@ -57,21 +58,6 @@ const SOURCE_FILTERS = [
   { value: "stock", label: "Stock" },
 ] as const;
 
-const PAGE_SIZES = [10, 20, 50, 100];
-
-const norm = (v: string | null | undefined) => (v ?? "").trim().toLowerCase();
-
-function distinctValues(rows: UnifiedAssetRow[], pick: (r: UnifiedAssetRow) => string | null) {
-  const map = new Map<string, string>();
-  for (const r of rows) {
-    const raw = (pick(r) ?? "").trim();
-    if (!raw) continue;
-    const key = raw.toLowerCase();
-    if (!map.has(key)) map.set(key, raw);
-  }
-  return [...map.entries()].sort((a, b) => a[1].localeCompare(b[1]));
-}
-
 function pageWindow(current: number, total: number) {
   const start = Math.max(1, Math.min(current - 2, total - 4));
   const end = Math.min(total, start + 4);
@@ -81,35 +67,54 @@ function pageWindow(current: number, total: number) {
 }
 
 export default function PersonnelAssetsPage() {
-  // Cached snapshot (rows + categories): back-navigation paints instantly
-  // from memory / sessionStorage and only revalidates silently when stale —
-  // same SWR pattern as dashboard / deliveries / inspections / stocks.
-  const {
-    data: snapshot,
-    loading,
-    refresh: refreshSnapshot,
-  } = useCachedAction(CLIENT_CACHE_KEYS.assets, getAssetsSnapshot, {
-    staleTime: 60_000,
-  });
-  const rows = useMemo(() => snapshot?.rows ?? [], [snapshot]);
-  const categories = useMemo(() => snapshot?.categories ?? [], [snapshot]);
-  // Custom-field values stay searchable via customSearchText; the columns
-  // themselves live on the asset detail page, not in this table.
   const [query, setQuery] = useState("");
+  const debouncedQuery = useDebouncedValue(query, 250);
+  const searching = query.trim() !== debouncedQuery.trim();
   const [statusFilter, setStatusFilter] = useState("all");
   const [sourceFilter, setSourceFilter] = useState("all");
   const [conditionFilter, setConditionFilter] = useState("all");
   const [unitFilter, setUnitFilter] = useState("all");
   const [assetTypeFilter, setAssetTypeFilter] = useState("all");
-  const [pageSize, setPageSize] = usePageSize(
-    "pgso:page-size:assets",
-    PAGE_SIZES[0]
-  );
+  // Fixed 20 rows/page (no selector) — the server returns only this window.
+  const pageSize = FIXED_PAGE_SIZE;
   const [page, setPage] = useState(1);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [issuanceOpen, setIssuanceOpen] = useState(false);
   const [presetAssetId, setPresetAssetId] = useState<string | null>(null);
   const [qrRow, setQrRow] = useState<UnifiedAssetRow | null>(null);
+
+  // Server-filtered registry window: search + all 5 filters + page run in
+  // the DB layer; QR + custom bags hydrate for the visible 20 only.
+  // Back-navigation still paints instantly from the client SWR cache.
+  const {
+    data: paged,
+    loading,
+    isValidating,
+    refresh: refreshSnapshot,
+  } = useCachedAction(
+    `${CLIENT_CACHE_KEYS.assets}:${page}:${debouncedQuery}:${statusFilter}:${sourceFilter}:${conditionFilter}:${unitFilter}:${assetTypeFilter}`,
+    () =>
+      getUnifiedAssetsPage({
+        page,
+        q: debouncedQuery,
+        status: statusFilter,
+        source: sourceFilter,
+        condition: conditionFilter,
+        unit: unitFilter,
+        category: assetTypeFilter,
+      }),
+    { staleTime: 60_000 }
+  );
+  const rows = useMemo(() => paged?.rows ?? [], [paged]);
+  const total = paged?.total ?? 0;
+  // Bounded dropdown options from the server (the page window no longer
+  // contains every value).
+  const { data: filterOptions } = useCachedAction(
+    `${CLIENT_CACHE_KEYS.assets}-filter-options`,
+    getAssetFilterOptions,
+    { staleTime: 300_000 }
+  );
+  const categories = useMemo(() => filterOptions?.categories ?? [], [filterOptions]);
 
   const reload = () => {
     // Own write (add / import / issue / edit) — force fresh rows now and drop
@@ -130,9 +135,18 @@ export default function PersonnelAssetsPage() {
     setSelectedId(null);
   };
 
-  const conditionOptions = useMemo(() => distinctValues(rows, (r) => r.condition), [rows]);
-  const unitOptions = useMemo(() => distinctValues(rows, (r) => r.unit), [rows]);
-  const assetTypeOptions = useMemo(() => distinctValues(rows, (r) => r.category), [rows]);
+  const conditionOptions = useMemo(
+    () => (filterOptions?.conditions ?? []).map((v) => [v.toLowerCase(), v] as [string, string]),
+    [filterOptions]
+  );
+  const unitOptions = useMemo(
+    () => (filterOptions?.units ?? []).map((v) => [v.toLowerCase(), v] as [string, string]),
+    [filterOptions]
+  );
+  const assetTypeOptions = useMemo(
+    () => (filterOptions?.categories ?? []).map((v) => [v.toLowerCase(), v] as [string, string]),
+    [filterOptions]
+  );
 
   const hasActiveFilters =
     query.trim() !== "" ||
@@ -142,58 +156,12 @@ export default function PersonnelAssetsPage() {
     unitFilter !== "all" ||
     assetTypeFilter !== "all";
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return rows.filter((a) => {
-      if (q) {
-        const hay = [
-          a.account_code,
-          a.qr_code,
-          a.category,
-          a.account_title,
-          a.account_name,
-          a.identifier,
-          a.article,
-          a.description,
-          a.location,
-          a.remarks,
-          a.brand,
-          a.engine_displacement,
-          a.fuel_type,
-          a.engine_number,
-          a.chassis_number,
-          a.color,
-          a.plate_number,
-          a.fund,
-          a.status,
-          a.condition,
-          a.unit,
-          a.dv_tracking_number,
-          a.supplier_payee,
-          a.account_name_charge,
-          a.account_number,
-          a.obr_number,
-          a.dv_number,
-          customSearchText(a),
-        ]
-          .filter(Boolean)
-          .join(" ")
-          .toLowerCase();
-        if (!hay.includes(q)) return false;
-      }
-      if (statusFilter !== "all" && norm(a.status) !== statusFilter) return false;
-      if (sourceFilter !== "all" && a.source !== sourceFilter) return false;
-      if (conditionFilter !== "all" && norm(a.condition) !== conditionFilter) return false;
-      if (unitFilter !== "all" && norm(a.unit) !== unitFilter) return false;
-      if (assetTypeFilter !== "all" && norm(a.category) !== assetTypeFilter) return false;
-      return true;
-    });
-  }, [rows, query, statusFilter, conditionFilter, unitFilter, assetTypeFilter, sourceFilter]);
-
-  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
+  // Server already filtered + paged — visible is the page window.
+  const filtered = rows;
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
   const safePage = Math.min(page, pageCount);
   const start = (safePage - 1) * pageSize;
-  const visible = filtered.slice(start, start + pageSize);
+  const visible = filtered;
   const { pages } = pageWindow(safePage, pageCount);
 
   const selectedRow = rows.find((r) => r.id === selectedId) ?? null;
@@ -203,7 +171,9 @@ export default function PersonnelAssetsPage() {
     !(typeof selectedRow.quantity === "number" && selectedRow.quantity <= 0) &&
     selectedRow.assigned_to == null;
 
-  if (loading) {
+  // Cold start only: background refetches keep stale rows visible with
+  // an "updating…" badge instead of flashing the full skeleton.
+  if (loading && rows.length === 0) {
     return <AssetsLoading />;
   }
 
@@ -214,8 +184,8 @@ export default function PersonnelAssetsPage() {
         <div>
           <h1 className={styles.title}>Assets</h1>
           <p className={styles.subtitle}>
-            {rows.length} {rows.length === 1 ? "asset" : "assets"} registered
-            {hasActiveFilters ? ` · ${filtered.length} shown` : ""}
+            {total} {total === 1 ? "asset" : "assets"} found
+            {(isValidating || searching) ? " · updating…" : ""}
           </p>
         </div>
         <div className={styles.actions}>
@@ -429,10 +399,10 @@ export default function PersonnelAssetsPage() {
           </span>
         </div>
 
-        {filtered.length === 0 ? (
+        {visible.length === 0 ? (
           <div className={styles.emptyState}>
             <p className={styles.panelSub}>
-              {rows.length === 0
+              {total === 0
                 ? "No assets have been registered yet. Use Add asset or Import Excel to get started."
                 : "No assets match your search or filters."}
             </p>
@@ -601,36 +571,11 @@ export default function PersonnelAssetsPage() {
 
             <div className={styles.pager}>
               <span className={styles.pagerInfo}>
-                Showing {start + 1}–
-                {Math.min(start + pageSize, filtered.length)} of{" "}
-                {filtered.length}
+                Showing {total === 0 ? 0 : start + 1}–
+                {Math.min(start + pageSize, total)} of{" "}
+                {total}
               </span>
               <div className={styles.pagerControls}>
-                <span className={styles.pageSizeWrap}>
-                  <label htmlFor="assets-page-size">Rows</label>
-                  <Select
-                    value={String(pageSize)}
-                    onValueChange={(v) => {
-                      setPageSize(Number(v));
-                      setPage(1);
-                    }}
-                  >
-                    <SelectTrigger
-                      id="assets-page-size"
-                      size="sm"
-                      className="w-[5.5rem]"
-                    >
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {PAGE_SIZES.map((size) => (
-                        <SelectItem key={size} value={String(size)}>
-                          {size}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </span>
                 <button
                   type="button"
                   className={styles.pageBtn}

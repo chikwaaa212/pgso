@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Input } from "@/components/ui/input";
 import { TablePager } from "@/components/personnel/TablePager";
 import { usePageSize } from "@/hooks/use-page-size";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { label } from "@/lib/labels";
 import { fmtDate } from "@/lib/format";
 import styles from "../../app/super-admin/users/page.module.css";
@@ -42,22 +43,28 @@ export function BrowseTable<T>({
   searchPlaceholder = "Search records…",
   pageSizeKey,
   getRowKey,
+  isValidating = false,
 }: {
   rows: T[];
   columns: BrowseColumn<T>[];
   searchPlaceholder?: string;
   pageSizeKey: string;
   getRowKey?: (row: T) => string;
+  /** True while a background refetch runs — shows a subtle pill, never a skeleton. */
+  isValidating?: boolean;
 }) {
   const [query, setQuery] = useState("");
   const [pageSize, setPageSize] = usePageSize(pageSizeKey, 10);
   const [page, setPage] = useState(1);
+  // Debounced filtering so fast typing over large rosters doesn't re-run
+  // the full text scan on every keystroke; input stays immediate.
+  const debouncedQuery = useDebouncedValue(query, 250);
 
   const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
+    const q = debouncedQuery.trim().toLowerCase();
     if (!q) return rows;
     return rows.filter((r) => columns.some((c) => c.text(r).toLowerCase().includes(q)));
-  }, [rows, columns, query]);
+  }, [rows, columns, debouncedQuery]);
 
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
   const safePage = Math.min(Math.max(1, page), pageCount);
@@ -76,6 +83,11 @@ export function BrowseTable<T>({
             setPage(1);
           }}
         />
+        {isValidating ? (
+          <span role="status" aria-live="polite" style={{ fontSize: "0.75rem", color: "var(--color-navy-500)", whiteSpace: "nowrap" }}>
+            Updating…
+          </span>
+        ) : null}
       </div>
       <div className={styles.tableWrap}>
         <table className={styles.table}>

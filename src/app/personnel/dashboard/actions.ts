@@ -58,8 +58,13 @@ async function countMyRepairsByStatus(
   }
 }
 
-export async function getOperationsStats(): Promise<OperationsStats> {
+export async function getOperationsStats(
+  scopeOverride?: import('@/lib/personnel-scope').PersonnelScope
+): Promise<OperationsStats> {
   const { withScopedCache } = await import('@/lib/personnel-cache')
+  const scopeHint = scopeOverride
+    ? { u: scopeOverride.userId ?? 'anon', a: scopeOverride.isSuperAdmin ? 1 : 0 }
+    : {}
   return withScopedCache('personnel:ops-stats', 60, async () => {
   const zeros: OperationsStats = {
     totalDeliveries: 0,
@@ -79,7 +84,7 @@ export async function getOperationsStats(): Promise<OperationsStats> {
   try {
     // Own-data scope for personnel activity; super_admin sees all.
     // Shared pools (requests queue, stocks, assets registry) stay global.
-    const scope = await getPersonnelScope()
+    const scope = scopeOverride ?? (await getPersonnelScope())
     if (scope.isEmpty || !scope.userId) return zeros
     const me = scope.userId
     const myDeliveryFilter = scope.isSuperAdmin ? {} : { received_by: me }
@@ -90,8 +95,10 @@ export async function getOperationsStats(): Promise<OperationsStats> {
     const myRequestFilter = scope.isSuperAdmin
       ? { status: 'pending' }
       : { status: 'pending', recipient_id: me }
+    const { getDashboardStats } = await import('../inspections/actions')
     // Two sequential batches (was one 11-way fan-out): the dashboard shares
     // one pooler connection pool with the layout's own stats queries.
+    // totalDocuments joins the second batch instead of a third serial hop.
     const [
       totalDeliveries,
       pendingInspections,
@@ -112,36 +119,25 @@ export async function getOperationsStats(): Promise<OperationsStats> {
       totalAssets,
       totalStockSkus,
       totalIssuances,
-      stocks,
+      out,
+      low,
+      totalDocuments,
     ] = await Promise.all([
       countMyRepairsByStatus(me, 'in_progress', scope.isSuperAdmin),
       prisma.asset.count().catch(() => 0),
       prisma.inventoryItem.count().catch(() => 0),
       countIssuances(me, scope.isSuperAdmin),
-      prisma.inventoryItem
-        .findMany({ select: { quantity: true, reorder_threshold: true } })
-        .catch(() => [] as { quantity: number; reorder_threshold: number | null }[]),
+      // Count in the DB instead of downloading every stock row to tally in JS.
+      prisma.inventoryItem.count({ where: { quantity: { lte: 0 } } }).catch(() => 0),
+      prisma.$queryRaw<Array<{ count: bigint }>>`
+        SELECT COUNT(*)::bigint AS count FROM inventory
+        WHERE quantity > 0 AND reorder_threshold IS NOT NULL AND quantity <= reorder_threshold`
+        .then((r) => Number(r[0]?.count ?? 0))
+        .catch(() => 0),
+      // Same "unviewed documents" notion as the sidebar badge so the
+      // dashboard card and the nav stay in sync — same scope, no re-lookup.
+      getDashboardStats(scope).then((s) => s.totalDocuments).catch(() => 0),
     ])
-
-    let low = 0
-    let out = 0
-    for (const s of stocks) {
-      if (s.quantity <= 0) {
-        out += 1
-      } else if (s.reorder_threshold != null && s.quantity <= s.reorder_threshold) {
-        low += 1
-      }
-    }
-
-    // Reuse the same "unviewed documents" notion as the sidebar badge so the
-    // dashboard card and the nav stay in sync.
-    let totalDocuments = 0
-    try {
-      const { getDashboardStats } = await import('../inspections/actions')
-      totalDocuments = (await getDashboardStats()).totalDocuments
-    } catch {
-      totalDocuments = 0
-    }
 
     return {
       totalDeliveries,
@@ -162,7 +158,7 @@ export async function getOperationsStats(): Promise<OperationsStats> {
     console.error('[getOperationsStats]', e)
     return zeros
   }
-  })
+  }, scopeHint)
 }
 
 // ─── Low-stock watchlist ────────────────────────────────────────────────────
@@ -227,14 +223,20 @@ export interface RecentRequestRow {
   date_requested: string | null
 }
 
-export async function getRecentRequests(limit = 5): Promise<RecentRequestRow[]> {
+export async function getRecentRequests(
+  limit = 5,
+  scopeOverride?: import('@/lib/personnel-scope').PersonnelScope
+): Promise<RecentRequestRow[]> {
   const { withScopedCache } = await import('@/lib/personnel-cache')
+  const scopeHint = scopeOverride
+    ? { u: scopeOverride.userId ?? 'anon', a: scopeOverride.isSuperAdmin ? 1 : 0, limit }
+    : { limit }
   return withScopedCache('personnel:recent-requests', 60, async () => {
   try {
     // Personnel inbox only (recipient = me — same filter as the requests
     // page); super_admin sees the whole queue. Scoped per-user so one
     // login's dashboard never shows another user's requests.
-    const scope = await getPersonnelScope()
+    const scope = scopeOverride ?? (await getPersonnelScope())
     if (scope.isEmpty || !scope.userId) return []
     const take = Number.isFinite(limit)
       ? Math.min(Math.max(Math.floor(limit), 1), 100)
@@ -272,7 +274,7 @@ export async function getRecentRequests(limit = 5): Promise<RecentRequestRow[]> 
     console.error('[getRecentRequests]', e)
     return []
   }
-  }, { limit })
+  }, scopeHint)
 }
 
 // ─── Recent repairs ─────────────────────────────────────────────────────────
@@ -286,13 +288,19 @@ export interface RecentRepairRow {
   repair_date: string
 }
 
-export async function getRecentRepairs(limit = 5): Promise<RecentRepairRow[]> {
+export async function getRecentRepairs(
+  limit = 5,
+  scopeOverride?: import('@/lib/personnel-scope').PersonnelScope
+): Promise<RecentRepairRow[]> {
   const { withScopedCache } = await import('@/lib/personnel-cache')
+  const scopeHint = scopeOverride
+    ? { u: scopeOverride.userId ?? 'anon', a: scopeOverride.isSuperAdmin ? 1 : 0, limit }
+    : { limit }
   return withScopedCache('personnel:recent-repairs', 60, async () => {
   try {
     // Own-data only for personnel (strict created_by = me — same filter as
     // getRepairs() behind the repairs page); super_admin sees all.
-    const scope = await getPersonnelScope()
+    const scope = scopeOverride ?? (await getPersonnelScope())
     if (scope.isEmpty || !scope.userId) return []
     const me = scope.userId
     interface RepairRecentDb {
@@ -363,7 +371,7 @@ export async function getRecentRepairs(limit = 5): Promise<RecentRepairRow[]> {
     console.error('[getRecentRepairs]', e)
     return []
   }
-  }, { limit })
+  }, scopeHint)
 }
 
 // ─── Recent PAR / ICS issuances ─────────────────────────────────────────────
@@ -376,12 +384,18 @@ export interface RecentIssuanceRow {
   created_at: string | null
 }
 
-export async function getRecentIssuances(limit = 5): Promise<RecentIssuanceRow[]> {
+export async function getRecentIssuances(
+  limit = 5,
+  scopeOverride?: import('@/lib/personnel-scope').PersonnelScope
+): Promise<RecentIssuanceRow[]> {
   const { withScopedCache } = await import('@/lib/personnel-cache')
+  const scopeHint = scopeOverride
+    ? { u: scopeOverride.userId ?? 'anon', a: scopeOverride.isSuperAdmin ? 1 : 0, limit }
+    : { limit }
   return withScopedCache('personnel:recent-issuances', 60, async () => {
   try {
     // Own-data only for personnel; super_admin sees all.
-    const scope = await getPersonnelScope()
+    const scope = scopeOverride ?? (await getPersonnelScope())
     if (scope.isEmpty || !scope.userId) return []
     const me = scope.userId
     const rows = scope.isSuperAdmin
@@ -435,7 +449,7 @@ export async function getRecentIssuances(limit = 5): Promise<RecentIssuanceRow[]
     console.error('[getRecentIssuances]', e)
     return []
   }
-  }, { limit })
+  }, scopeHint)
 }
 
 // ─── Snapshot (single round-trip for the cached client dashboard) ──────────
@@ -462,6 +476,10 @@ export async function getDashboardSnapshot(): Promise<DashboardSnapshot> {
     const { getMonthlyOverview, getRecentDeliveries } = await import(
       '../inspections/actions'
     )
+    // Resolve scope once and thread it — 7 readers sharing one Auth+profile
+    // lookup instead of 7 independent getUser+profile chains.
+    const { getPersonnelScope } = await import('@/lib/personnel-scope')
+    const scope = await getPersonnelScope()
     const [
       stats,
       monthly,
@@ -471,13 +489,13 @@ export async function getDashboardSnapshot(): Promise<DashboardSnapshot> {
       lowStock,
       recentIssuances,
     ] = await Promise.all([
-      getOperationsStats(),
-      getMonthlyOverview(),
-      getRecentDeliveries(5),
-      getRecentRequests(7),
-      getRecentRepairs(5),
+      getOperationsStats(scope),
+      getMonthlyOverview(scope),
+      getRecentDeliveries(5, scope),
+      getRecentRequests(7, scope),
+      getRecentRepairs(5, scope),
       getLowStockItems(5),
-      getRecentIssuances(5),
+      getRecentIssuances(5, scope),
     ])
     return {
       stats,

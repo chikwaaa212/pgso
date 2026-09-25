@@ -1,28 +1,13 @@
 'use client';
 
+import { useState } from "react";
 import { Card } from "@/components/ui/card";
-import { getMyLogs } from "./actions";
-import { useCachedAction } from "@/hooks/use-cached-action";
-import { CLIENT_CACHE_KEYS } from "@/lib/client-cache";
 import { LogsTable } from "./logs-table";
-import LogsLoading from "./loading";
 import styles from "../dashboard/page.module.css";
 
 export default function PersonnelLogsPage() {
-  // Cached trail: back-navigation paints instantly from memory /
-  // sessionStorage and only revalidates silently when stale — same
-  // SWR pattern as dashboard / deliveries / requests.
-  const { data: rows, loading } = useCachedAction(
-    CLIENT_CACHE_KEYS.logs,
-    getMyLogs,
-    { staleTime: 30_000 }
-  );
-
-  if (loading) {
-    return <LogsLoading />;
-  }
-
-  const list = rows ?? [];
+  // Total comes from the server-paged table (fixed 20/page, DB window).
+  const [total, setTotal] = useState(0);
 
   return (
     <section className={styles.section}>
@@ -31,7 +16,7 @@ export default function PersonnelLogsPage() {
         <div>
           <h1 className={styles.title}>My Activity Logs</h1>
           <p className={styles.subtitle}>
-            {list.length} {list.length === 1 ? "entry" : "entries"} created
+            {total} {total === 1 ? "entry" : "entries"} created
             under your account — newest first.
           </p>
         </div>
@@ -45,7 +30,7 @@ export default function PersonnelLogsPage() {
             timestamp.
           </p>
         </div>
-        <LogsTable rows={list} />
+        <LogsTable onTotalChange={setTotal} />
       </Card>
     </section>
   );

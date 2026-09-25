@@ -38,7 +38,7 @@ export default function SuperAdminRecordsPage() {
   // instantly from memory / sessionStorage and only revalidates silently
   // when stale (60s, matching the server caches) — same SWR pattern as
   // the other admin pages.
-  const { data: snapshot, loading } = useCachedAction(
+  const { data: snapshot, loading, isValidating } = useCachedAction(
     CLIENT_CACHE_KEYS.adminRecords,
     () =>
       Promise.all([
@@ -87,6 +87,9 @@ export default function SuperAdminRecordsPage() {
         <p className={styles.subtitle}>
           Registry totals and recent entries across assets, stocks, documents and
           issuances.
+          {isValidating ? (
+            <span role="status" aria-live="polite"> Updating…</span>
+          ) : null}
         </p>
       </div>
 

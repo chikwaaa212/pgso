@@ -1,5 +1,6 @@
 import 'server-only'
 
+import { cache } from 'react'
 import { createClient } from '@/lib/supabase/server'
 import prisma from '@/lib/prisma'
 
@@ -19,8 +20,12 @@ export interface SuperAdminSession {
 /**
  * Throws if the caller is not an active super_admin.
  * Use as the first line of every super-admin server action / page.
+ *
+ * Per-request memoized via React `cache()` so middleware → layout → page →
+ * readers sharing one RSC request only pay for a single Auth + profile
+ * lookup instead of N duplicate round-trips.
  */
-export async function requireSuperAdmin(): Promise<SuperAdminSession> {
+async function requireSuperAdminUncached(): Promise<SuperAdminSession> {
   const supabase = await createClient()
   const {
     data: { user },
@@ -41,6 +46,8 @@ export async function requireSuperAdmin(): Promise<SuperAdminSession> {
 
   return { userId: user.id, email: user.email ?? null, profile }
 }
+
+export const requireSuperAdmin = cache(requireSuperAdminUncached)
 
 /** Non-throwing variant for layouts — returns null when not super_admin. */
 export async function getSuperAdminSession(): Promise<SuperAdminSession | null> {

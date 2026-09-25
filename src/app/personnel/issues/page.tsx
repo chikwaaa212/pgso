@@ -1,10 +1,11 @@
 "use client";
 
-import { useMemo } from "react";
-import { getIssuesSnapshot } from "./actions";
+import { useCallback, useMemo, useState } from "react";
+import { getCompletedRequestIssues, getIssueFilterOptions, getPublicIssuesPage } from "./actions";
 import { IssuesTable } from "./issues-table";
 import { Card } from "@/components/ui/card";
 import { RequestQrButton } from "@/components/personnel/RequestQrButton";
+import { TablePager, FIXED_PAGE_SIZE } from "@/components/personnel/TablePager";
 import { requestTypeLabel } from "@/app/personnel/requests/request-types";
 import { useCachedAction } from "@/hooks/use-cached-action";
 import { CLIENT_CACHE_KEYS } from "@/lib/client-cache";
@@ -23,18 +24,62 @@ function fmtDate(value: string | null) {
   });
 }
 
+// Fixed 20 rows for the completed-requests section (no selector).
+const COMPLETED_PAGE_SIZE = FIXED_PAGE_SIZE;
+
 export default function PersonnelIssuesPage() {
-  // Cached snapshot (issued lines + completed requests): back-navigation
-  // paints instantly from memory / sessionStorage and only revalidates
-  // silently when stale — same SWR pattern as dashboard / deliveries /
-  // inspections / stocks / assets / documents.
-  const { data: snapshot, loading } = useCachedAction(
-    CLIENT_CACHE_KEYS.issues,
-    getIssuesSnapshot,
+  // Server-driven filters (reported up by the table, debounced there).
+  const [filters, setFilters] = useState({ q: "", docType: "all", assetType: "all" });
+  // Stable handler — shallow-equal guard breaks the report→render→report loop.
+  const handleFiltersChange = useCallback(
+    (f: { q: string; docType: string; assetType: string }) => {
+      setFilters((prev) =>
+        prev.q === f.q && prev.docType === f.docType && prev.assetType === f.assetType
+          ? prev
+          : f
+      );
+      setPage(1);
+    },
+    []
+  );
+  // Fixed 20 documents/page (no selector) — the DB returns only this window.
+  const [page, setPage] = useState(1);
+  const [completedPage, setCompletedPage] = useState(1);
+
+  // Server-paged issued lines: 20 documents per fetch, QR generated only
+  // for this window instead of the whole registry.
+  const { data: paged, loading, isValidating } = useCachedAction(
+    `${CLIENT_CACHE_KEYS.issues}:${page}:${filters.q}:${filters.docType}:${filters.assetType}`,
+    () =>
+      getPublicIssuesPage({
+        page,
+        q: filters.q,
+        docType: filters.docType,
+        assetType: filters.assetType,
+      }),
     { staleTime: 60_000 }
   );
-  const rows = useMemo(() => snapshot?.rows ?? [], [snapshot]);
-  const completed = useMemo(() => snapshot?.completed ?? [], [snapshot]);
+  const rows = useMemo(() => paged?.rows ?? [], [paged]);
+  const totalDocs = paged?.total ?? 0;
+
+  const { data: typeOptions } = useCachedAction(
+    `${CLIENT_CACHE_KEYS.issues}-type-options`,
+    getIssueFilterOptions,
+    { staleTime: 300_000 }
+  );
+
+  const { data: completedData } = useCachedAction(
+    `${CLIENT_CACHE_KEYS.issues}-completed`,
+    getCompletedRequestIssues,
+    { staleTime: 60_000 }
+  );
+  const completed = useMemo(() => completedData ?? [], [completedData]);
+  const completedPageCount = Math.max(1, Math.ceil(completed.length / COMPLETED_PAGE_SIZE));
+  const completedSafePage = Math.min(Math.max(1, completedPage), completedPageCount);
+  const completedVisible = completed.slice(
+    (completedSafePage - 1) * COMPLETED_PAGE_SIZE,
+    (completedSafePage - 1) * COMPLETED_PAGE_SIZE + COMPLETED_PAGE_SIZE
+  );
 
   if (loading) {
     return <IssuesLoading />;
@@ -47,11 +92,12 @@ export default function PersonnelIssuesPage() {
         <div>
           <h1 className={styles.title}>Issues</h1>
           <p className={styles.subtitle}>
-            {rows.length} {rows.length === 1 ? "issued item" : "issued items"} · assets
+            {totalDocs} {totalDocs === 1 ? "issued document" : "issued documents"} · assets
             and stock issued to employees · costs excluded
             {completed.length > 0
               ? ` · ${completed.length} completed ${completed.length === 1 ? "request" : "requests"}`
               : ""}
+            {isValidating ? " · updating…" : ""}
           </p>
         </div>
       </div>
@@ -62,7 +108,19 @@ export default function PersonnelIssuesPage() {
           QR record. No cost, supplier, or account-number data is shown or
           encoded.
         </p>
-        <IssuesTable rows={rows} />
+        <IssuesTable
+          rows={rows}
+          serverTypeOptions={typeOptions ?? []}
+          onFiltersChange={handleFiltersChange}
+        />
+        {totalDocs > 0 ? (
+          <TablePager
+            id="issues"
+            total={totalDocs}
+            page={page}
+            onPageChange={setPage}
+          />
+        ) : null}
       </Card>
       <Card className={styles.panel}>
         <h2 className={styles.panelTitle}>Completed request QR records</h2>
@@ -84,7 +142,7 @@ export default function PersonnelIssuesPage() {
               </tr>
             </thead>
             <tbody>
-              {completed.map((r) => {
+              {completedVisible.map((r) => {
                 const qty = (r.lines ?? []).reduce(
                   (sum, l) => sum + (l.quantity || 0),
                   0
@@ -112,6 +170,14 @@ export default function PersonnelIssuesPage() {
             </tbody>
           </table>
         </div>
+        {completed.length > COMPLETED_PAGE_SIZE ? (
+          <TablePager
+            id="issues-completed"
+            total={completed.length}
+            page={completedSafePage}
+            onPageChange={setCompletedPage}
+          />
+        ) : null}
       </Card>
     </section>
   );

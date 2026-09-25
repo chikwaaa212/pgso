@@ -233,3 +233,98 @@ export async function bustPersonnelCache(): Promise<void> {
     'assets:',
   ])
 }
+
+/**
+ * Narrow, per-mutation busts. Prefer these over bustPersonnelCache() so one
+ * cell edit / issuance / repair doesn't wipe dashboards, pick-lists and
+ * snapshots that it never touched.
+ */
+export async function bustPersonnelScopes(
+  scopes: Array<
+    | 'dashboard'
+    | 'deliveries'
+    | 'inspections'
+    | 'inventory'
+    | 'assets'
+    | 'documents'
+    | 'issuances'
+    | 'requests'
+    | 'repairs'
+    | 'issues'
+    | 'logs'
+    | 'sidebar'
+  >
+): Promise<void> {
+  const map: Record<string, string[]> = {
+    dashboard: ['personnel:dashboard', 'personnel:ops-stats', 'personnel:monthly'],
+    deliveries: ['personnel:deliveries', 'personnel:delivery-'],
+    inspections: ['personnel:inspection', 'personnel:iar-', 'personnel:monthly'],
+    inventory: ['inventory:', 'personnel:inventory', 'personnel:low-stock'],
+    assets: ['assets:', 'personnel:asset', 'personnel:unified'],
+    documents: ['personnel:delivery-documents', 'personnel:iar-reports', 'personnel:viewed-doc'],
+    issuances: ['personnel:issuance', 'personnel:public-issues'],
+    requests: ['personnel:request'],
+    repairs: ['personnel:repair'],
+    issues: ['personnel:public-issues', 'personnel:completed-request'],
+    logs: ['personnel:my-logs', 'personnel:logs'],
+    sidebar: ['personnel:sidebar-user', 'personnel:dashboard-stats'],
+  }
+  const prefixes = [...new Set(scopes.flatMap((s) => map[s] ?? []))]
+  if (prefixes.length === 0) return bustPersonnelCache()
+  await bustCachePrefixes(prefixes)
+}
+
+/**
+ * Narrow busts for Super Admin writes. Each scope only wipes the
+ * `super-admin:` namespaces it actually changes plus the personnel readers
+ * that mirror the same data (badges, queues). Never use the blanket
+ * `bustPersonnelCache()` from super-admin mutations — one approval must not
+ * wipe dashboards, pick-lists and snapshots it never touched.
+ */
+export async function bustSuperAdminScopes(
+  scopes: Array<'users' | 'requests' | 'inventory' | 'master-data' | 'dashboard'>
+): Promise<void> {
+  const map: Record<string, string[]> = {
+    users: [
+      'super-admin:pending-employees',
+      'super-admin:all-users',
+      'super-admin:user-counts',
+      'super-admin:overview',
+      'personnel:dashboard-stats',
+      'personnel:dashboard',
+    ],
+    requests: [
+      'super-admin:requests-list',
+      'super-admin:overview',
+      'personnel:request',
+      'personnel:dashboard-stats',
+    ],
+    inventory: [
+      'super-admin:inventory-list',
+      'super-admin:overview',
+      'super-admin:record-counts',
+      'super-admin:recent-assets',
+      'inventory:',
+      'personnel:inventory',
+      'personnel:low-stock',
+      'personnel:dashboard',
+    ],
+    'master-data': [
+      'super-admin:master-',
+      'super-admin:overview',
+      'master-data:',
+      'catalog:',
+    ],
+    dashboard: [
+      'super-admin:pending-employees',
+      'super-admin:all-users',
+      'super-admin:user-counts',
+      'super-admin:overview',
+      'personnel:dashboard-stats',
+      'personnel:dashboard',
+    ],
+  }
+  const prefixes = [...new Set(scopes.flatMap((s) => map[s] ?? []))]
+  if (prefixes.length === 0) return bustPersonnelCache()
+  await bustCachePrefixes(prefixes)
+}

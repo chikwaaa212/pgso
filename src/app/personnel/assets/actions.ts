@@ -4,10 +4,11 @@ import { revalidatePath as nextRevalidatePath } from "next/cache";
 
 // Every Next.js revalidation also busts the Upstash personnel cache so
 // Redis never serves stale lists after a write (fire-and-forget).
+// Narrow: asset writes touch assets/inventory/dashboard/documents only.
 function revalidatePath(path: string) {
   nextRevalidatePath(path);
   void import("@/lib/personnel-cache")
-    .then((m) => m.bustPersonnelCache())
+    .then((m) => m.bustPersonnelScopes(['assets', 'inventory', 'dashboard', 'documents']))
     .catch(() => {});
 }
 import ExcelJS from "exceljs";
@@ -112,6 +113,9 @@ export async function getAssets(): Promise<AssetRow[]> {
   try {
     const assets = await prisma.asset.findMany({
       orderBy: { created_at: "desc" },
+      // Server cap: registry pages slice client-side today; bound the
+      // transfer while true server paging lands per-tab.
+      take: 500,
       select: {
         id: true,
         account_code: true,
@@ -349,6 +353,7 @@ export async function getStocks(): Promise<StockRow[]> {
   try {
     const items = await prisma.inventoryItem.findMany({
       orderBy: { item_name: "asc" },
+      take: 500,
       select: {
         id: true,
         item_name: true,
@@ -709,6 +714,210 @@ export async function getAssetsSnapshot(): Promise<AssetsSnapshot> {
   return { rows, categories };
 }
 
+export interface UnifiedAssetsPageOpts {
+  page?: number
+  q?: string
+  status?: string
+  source?: string
+  condition?: string
+  unit?: string
+  category?: string
+  /** Skip QR hydration (documents tab blanks QR anyway) — faster window. */
+  slim?: boolean
+}
+
+/** Distinct filter options for the registry dropdowns (bounded). */
+export async function getAssetFilterOptions(): Promise<{
+  statuses: string[]
+  conditions: string[]
+  units: string[]
+  categories: string[]
+}> {
+  const { withCache, cacheKey } = await import('@/lib/personnel-cache')
+  return withCache(cacheKey('personnel:asset-filter-options'), 300, async () => {
+    try {
+      const [statuses, conditions, units, categories] = await Promise.all([
+        prisma.$queryRaw<Array<{ v: string | null }>>`
+          SELECT DISTINCT status AS v FROM assets WHERE status IS NOT NULL ORDER BY 1 LIMIT 100`
+          .catch(() => []),
+        prisma.$queryRaw<Array<{ v: string | null }>>`
+          SELECT DISTINCT condition AS v FROM assets WHERE condition IS NOT NULL ORDER BY 1 LIMIT 100`
+          .catch(() => []),
+        prisma.$queryRaw<Array<{ v: string | null }>>`
+          SELECT DISTINCT unit AS v FROM assets WHERE unit IS NOT NULL ORDER BY 1 LIMIT 100`
+          .catch(() => []),
+        getCategories().catch(() => [] as string[]),
+      ])
+      const clean = (rows: Array<{ v: string | null }>) =>
+        [...new Set(rows.map((r) => (r.v ?? '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b))
+      return {
+        statuses: clean(statuses),
+        conditions: clean(conditions),
+        units: clean(units),
+        categories,
+      }
+    } catch (e) {
+      console.error('[getAssetFilterOptions]', e)
+      return { statuses: [], conditions: [], units: [], categories: [] }
+    }
+  })
+}
+
+const norm = (v: string | null | undefined) => (v ?? '').trim().toLowerCase()
+
+/**
+ * Server-filtered unified registry window (fixed 20/page).
+ *
+ * Why this shape: assets + stocks live in two tables with a merged
+ * localeCompare sort, so a single SQL window can't page the union. Instead
+ * the server fetches SLIM rows (no QR data URLs), filters + sorts the
+ * merged set, then hydrates QR + custom bags for the 20 visible rows only.
+ * Transfer stays small and the DOM stays at 20 rows; `total` is the exact
+ * merged filtered count (bounded to the first 2000 rows per source).
+ */
+export async function getUnifiedAssetsPage(
+  opts: UnifiedAssetsPageOpts = {}
+): Promise<{ rows: UnifiedAssetRow[]; total: number }> {
+  const { withCache, cacheKey } = await import('@/lib/personnel-cache')
+  const page = Math.floor(Number(opts.page)) >= 1 ? Math.min(Math.floor(Number(opts.page)), 1000) : 1
+  const pageSize = 20
+  const q = (opts.q ?? '').trim().toLowerCase().slice(0, 120)
+  const status = (opts.status ?? 'all').trim().toLowerCase()
+  const source = (opts.source ?? 'all').trim().toLowerCase()
+  const condition = (opts.condition ?? 'all').trim().toLowerCase()
+  const unit = (opts.unit ?? 'all').trim().toLowerCase()
+  const category = (opts.category ?? 'all').trim().toLowerCase()
+  const slim = opts.slim === true
+  return withCache(
+    cacheKey('personnel:unified-assets-page', { page, q, status, source, condition, unit, category, slim }),
+    60,
+    async () => {
+      try {
+        const wantAssets = source === 'all' || source === 'asset'
+        const wantStocks = source === 'all' || source === 'stock'
+        // Built as named promises (not inline ternaries) so both tables
+        // query concurrently.
+        const assetsPromise = wantAssets
+          ? prisma.asset
+              .findMany({
+                orderBy: { created_at: 'desc' },
+                take: 2000,
+                select: {
+                  id: true, account_code: true, identifier: true, account_title: true,
+                  account_name: true, category: true, article: true, quantity: true,
+                  unit: true, description: true, date_acquired: true, location: true,
+                  total_cost: true, remarks: true, condition: true, unit_cost: true,
+                  end_user: true, brand: true, cylinders: true, engine_displacement: true,
+                  fuel_type: true, engine_number: true, chassis_number: true, color: true,
+                  plate_number: true, fund: true, status: true, dv_tracking_number: true,
+                  supplier_payee: true, account_name_charge: true, account_number: true,
+                  obr_number: true, dv_number: true, date_received: true, qr_code: true,
+                  created_at: true, assigned_to: true,
+                },
+              })
+              .catch(() => [])
+          : Promise.resolve([])
+        const stocksPromise = wantStocks
+          ? prisma.inventoryItem
+              .findMany({
+                orderBy: { item_name: 'asc' },
+                take: 2000,
+                select: {
+                  id: true, item_name: true, category: true, account_code: true,
+                  quantity: true, unit: true, unit_cost: true, reorder_threshold: true,
+                  location: true, updated_at: true,
+                },
+              })
+              .catch(() => [])
+          : Promise.resolve([])
+        const [assets, stocks] = await Promise.all([assetsPromise, stocksPromise])
+        // Custom bags in two batched queries (needed for custom-field search).
+        const { fetchCustomBags } = await import('./custom-fields')
+        const bags = await fetchCustomBags(
+          assets.map((a) => a.id),
+          stocks.map((s) => s.id)
+        )
+        // Same haystack as customSearchText() (kept inline: that module is
+        // client-side and can't be imported from a server action).
+        const customSearchText = (bag: CustomBag): string => Object.values(bag ?? {}).join(' ')
+        // Merge slim rows (no QR yet) with the same sort as the registry.
+        type Slim = UnifiedAssetRow & { qr_data_url: string }
+        const merged: Slim[] = [
+          ...assets.map((a) =>
+            mapAssetToUnified({
+              ...a,
+              date_acquired: a.date_acquired?.toISOString().slice(0, 10) ?? null,
+              date_received: a.date_received?.toISOString().slice(0, 10) ?? null,
+              created_at: a.created_at?.toISOString() ?? null,
+              total_cost: a.total_cost != null ? Number(a.total_cost) : null,
+              unit_cost: a.unit_cost != null ? Number(a.unit_cost) : null,
+              qr_data_url: '',
+              custom_fields: bags.get(`asset:${a.id}`) ?? {},
+            } as AssetRow)
+          ),
+          ...stocks.map((s) =>
+            mapStockToUnified({
+              ...s,
+              unit_cost: s.unit_cost != null ? Number(s.unit_cost) : null,
+              total_cost: s.unit_cost != null ? Number(s.unit_cost) * s.quantity : null,
+              updated_at: s.updated_at?.toISOString() ?? null,
+              qr_data_url: '',
+              custom_fields: bags.get(`stock:${s.id}`) ?? {},
+            } as StockRow)
+          ),
+        ]
+        merged.sort((a, b) => {
+          const aField = a.article ?? a.account_code ?? a.category ?? a.id
+          const bField = b.article ?? b.account_code ?? b.category ?? b.id
+          return String(aField).localeCompare(String(bField))
+        })
+        // Exact same filter semantics as the registry page.
+        const filtered = merged.filter((a) => {
+          if (q) {
+            const hay = [
+              a.account_code, a.qr_code, a.category, a.account_title, a.account_name,
+              a.identifier, a.article, a.description, a.location, a.remarks, a.brand,
+              a.engine_displacement, a.fuel_type, a.engine_number, a.chassis_number,
+              a.color, a.plate_number, a.fund, a.status, a.condition, a.unit,
+              a.dv_tracking_number, a.supplier_payee, a.account_name_charge,
+              a.account_number, a.obr_number, a.dv_number, customSearchText(a.custom_fields),
+            ]
+              .filter(Boolean)
+              .join(' ')
+              .toLowerCase()
+            if (!hay.includes(q)) return false
+          }
+          if (status !== 'all' && norm(a.status) !== status) return false
+          if (source !== 'all' && a.source !== source) return false
+          if (condition !== 'all' && norm(a.condition) !== condition) return false
+          if (unit !== 'all' && norm(a.unit) !== unit) return false
+          if (category !== 'all' && norm(a.category) !== category) return false
+          return true
+        })
+        const total = filtered.length
+        const window = filtered.slice((page - 1) * pageSize, (page - 1) * pageSize + pageSize)
+        if (slim) {
+          return { rows: window.map((a) => ({ ...a, qr_data_url: '' })), total }
+        }
+        // Hydrate QR only for the visible 20 (was per-row for the registry).
+        const rows = await Promise.all(
+          window.map(async (a) => ({
+            ...a,
+            qr_data_url:
+              a.source === 'asset'
+                ? await generateAssetQrDataUrl(a.id).catch(() => '')
+                : await generateStockQrDataUrl(a.id).catch(() => ''),
+          }))
+        )
+        return { rows, total }
+      } catch (e) {
+        console.error('[getUnifiedAssetsPage]', e)
+        return { rows: [], total: 0 }
+      }
+    }
+  )
+}
+
 export async function getUnifiedAsset(id: string): Promise<UnifiedAssetRow | null> {
   try {
     const asset = await getAsset(id);
@@ -816,10 +1025,22 @@ export async function getAssetHistory(id: string): Promise<AssetHistory> {
         .findMany({
           where: { asset_id: id },
           orderBy: { created_at: "desc" },
+          take: 50,
+          select: {
+            id: true,
+            reported_by: true,
+            description: true,
+            status: true,
+            technician: true,
+            repair_date: true,
+            cost: true,
+            created_at: true,
+          },
         })
         .catch(() => []),
-      // All issuance rows — multi-line docs keep the asset only inside
-      // issuance_data.lines[].assetId, so matching happens in JS below.
+      // Scoped issuance rows — direct asset match in SQL (multi-line docs
+      // keep the asset inside issuance_data.lines[], filtered in JS below
+      // on this bounded window instead of the whole table).
       prisma.$queryRaw<
         Array<{
           id: string;
@@ -837,12 +1058,15 @@ export async function getAssetHistory(id: string): Promise<AssetHistory> {
               asset_id::text AS asset_id,
               employee_id::text AS employee_id, quantity, total_amount,
               issuance_data, created_at
-       FROM issuance_records ORDER BY created_at DESC`.catch(() => []),
+       FROM issuance_records WHERE asset_id = ${id}::uuid
+       ORDER BY created_at DESC LIMIT 50`.catch(() => []),
       // Requests naming this asset (directly or via line items) — approvals
       // assign assets without necessarily creating an issuance row.
       prisma.request
         .findMany({
+          where: { asset_id: id },
           orderBy: { date_requested: "desc" },
+          take: 50,
           select: {
             id: true,
             request_type: true,
@@ -855,10 +1079,13 @@ export async function getAssetHistory(id: string): Promise<AssetHistory> {
         })
         .catch(() => []),
       prisma.requestItem
-        .findMany({ select: { request_id: true, asset_id: true } })
+        .findMany({ where: { asset_id: id }, select: { request_id: true, asset_id: true }, take: 50 })
         .catch(() => [] as { request_id: string; asset_id: string | null }[]),
       prisma.profile
-        .findMany({ select: { id: true, full_name: true } })
+        .findMany({
+          where: { id: { in: [asset.assigned_to].filter(Boolean) as string[] } },
+          select: { id: true, full_name: true },
+        })
         .catch(() => [] as { id: string; full_name: string | null }[]),
     ]);
 
@@ -899,9 +1126,49 @@ export async function getAssetHistory(id: string): Promise<AssetHistory> {
         .filter((l) => l.asset_id === id)
         .map((l) => l.request_id)
     );
-    const matchedRequests = requestRows.filter(
+    let matchedRequests = requestRows.filter(
       (r) => r.asset_id === id || requestIdsForAsset.has(r.id)
     );
+    // Line-linked requests not in the direct-match window — fetch by id.
+    const missingRequestIds = [...requestIdsForAsset].filter(
+      (rid) => !matchedRequests.some((r) => r.id === rid)
+    ).slice(0, 20)
+    if (missingRequestIds.length > 0) {
+      try {
+        const extra = await prisma.request.findMany({
+          where: { id: { in: missingRequestIds } },
+          select: {
+            id: true,
+            request_type: true,
+            status: true,
+            date_requested: true,
+            employee_id: true,
+            asset_id: true,
+            description: true,
+          },
+        })
+        matchedRequests = [...matchedRequests, ...extra]
+      } catch { /* keep direct matches */ }
+    }
+    // Names for everyone referenced on this sheet (bounded id list).
+    try {
+      const need = new Set<string>()
+      if (asset.assigned_to) need.add(asset.assigned_to)
+      for (const r of repairs) if (r.reported_by) need.add(r.reported_by as string)
+      for (const r of matchedIssuances) if (r.employee_id) need.add(r.employee_id)
+      for (const r of matchedRequests) if (r.employee_id) need.add(r.employee_id)
+      const have = new Set(profiles.map((p) => p.id))
+      const missing = [...need].filter((nid) => !have.has(nid)).slice(0, 100)
+      if (missing.length > 0) {
+        const extra = await prisma.profile
+          .findMany({ where: { id: { in: missing } }, select: { id: true, full_name: true } })
+          .catch(() => [])
+        for (const p of extra) {
+          profiles.push(p)
+          names.set(p.id, p.full_name ?? 'Unknown')
+        }
+      }
+    } catch { /* names fall back to Unknown */ }
 
     return {
       assignedToName: asset.assigned_to ? (names.get(asset.assigned_to) ?? null) : null,
@@ -1425,7 +1692,47 @@ export async function importAssetsFromExcel(
   const assetByKey = new Map<string, { id: string; fields: Record<string, unknown> }>();
   const existingQrCodes = new Set<string>();
   try {
-    const rows = await prisma.asset.findMany();
+    // Compare-fields only (was SELECT * full-table into memory).
+    const rows = await prisma.asset.findMany({
+      select: {
+        id: true,
+        property_number: true,
+        account_code: true,
+        identifier: true,
+        account_title: true,
+        account_name: true,
+        category: true,
+        article: true,
+        quantity: true,
+        unit: true,
+        description: true,
+        date_acquired: true,
+        location: true,
+        total_cost: true,
+        remarks: true,
+        condition: true,
+        unit_cost: true,
+        end_user: true,
+        brand: true,
+        cylinders: true,
+        engine_displacement: true,
+        fuel_type: true,
+        engine_number: true,
+        chassis_number: true,
+        color: true,
+        plate_number: true,
+        fund: true,
+        status: true,
+        dv_tracking_number: true,
+        supplier_payee: true,
+        account_name_charge: true,
+        account_number: true,
+        obr_number: true,
+        dv_number: true,
+        date_received: true,
+        qr_code: true,
+      },
+    });
     for (const r of rows) {
       const fields: Record<string, unknown> = {
         property_number: r.property_number,

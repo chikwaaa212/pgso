@@ -1,8 +1,7 @@
 "use client";
 
-import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
-import { useToast } from "@/components/ui/toaster";
+import { useState } from "react";
+import { toast } from "sonner";
 import {
   Dialog,
   DialogContent,
@@ -11,124 +10,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { approveEmployee, rejectEmployee, setUserActive } from "./actions";
-
-export function PendingRowActions({ userId, name, onSuccess }: { userId: string; name: string; onSuccess?: () => void }) {
-  const [pending, start] = useTransition();
-  const [approveOpen, setApproveOpen] = useState(false);
-  const [rejectOpen, setRejectOpen] = useState(false);
-  const router = useRouter();
-  const { toast } = useToast();
-
-  const handleApprove = () =>
-    start(async () => {
-      const r = await approveEmployee(userId);
-      if (r.ok) {
-        setApproveOpen(false);
-        toast({ title: "Approved", description: `${name} can now sign in.`, variant: "success" });
-        onSuccess?.();
-        router.refresh();
-      } else {
-        toast({ title: "Approval failed", description: r.error ?? "Try again.", variant: "error" });
-      }
-    });
-
-  const handleReject = () =>
-    start(async () => {
-      const r = await rejectEmployee(userId);
-      if (r.ok) {
-        setRejectOpen(false);
-        toast({ title: "Rejected", description: `${name} was rejected.`, variant: "success" });
-        onSuccess?.();
-        router.refresh();
-      } else {
-        toast({ title: "Rejection failed", description: r.error ?? "Try again.", variant: "error" });
-      }
-    });
-
-  return (
-    <>
-      <div style={{ display: "flex", gap: "0.5rem" }}>
-        <button
-          type="button"
-          disabled={pending}
-          onClick={() => setApproveOpen(true)}
-          style={btnPrimary}
-        >
-          Approve
-        </button>
-        <button
-          type="button"
-          disabled={pending}
-          onClick={() => setRejectOpen(true)}
-          style={btnDanger}
-        >
-          Reject
-        </button>
-      </div>
-
-      <Dialog open={approveOpen} onOpenChange={(open) => !pending && setApproveOpen(open)}>
-        <DialogContent className="bg-white sm:max-w-md dark:bg-white">
-          <DialogHeader>
-            <DialogTitle>Approve account?</DialogTitle>
-            <DialogDescription>
-              {name} will be able to sign in as an employee. Please confirm this
-              registration is legitimate.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <button
-              type="button"
-              disabled={pending}
-              onClick={() => setApproveOpen(false)}
-              style={btnSecondary}
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              disabled={pending}
-              onClick={handleApprove}
-              style={btnPrimary}
-            >
-              {pending ? "Approving…" : "Confirm approve"}
-            </button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={rejectOpen} onOpenChange={(open) => !pending && setRejectOpen(open)}>
-        <DialogContent className="bg-white sm:max-w-md dark:bg-white">
-          <DialogHeader>
-            <DialogTitle>Reject account?</DialogTitle>
-            <DialogDescription>
-              {name} will not be able to sign in. Rejected accounts become
-              inactive and are signed out.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <button
-              type="button"
-              disabled={pending}
-              onClick={() => setRejectOpen(false)}
-              style={btnSecondary}
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              disabled={pending}
-              onClick={handleReject}
-              style={btnDanger}
-            >
-              {pending ? "Rejecting…" : "Confirm reject"}
-            </button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </>
-  );
-}
+import { ActionButton } from "@/components/ui/action-button";
+import { setUserActive } from "./actions";
 
 export function ActiveToggle({
   userId,
@@ -141,46 +24,54 @@ export function ActiveToggle({
   isActive: boolean;
   onSuccess?: () => void;
 }) {
-  const [pending, start] = useTransition();
+  const [busy, setBusy] = useState(false);
   const [deactivateOpen, setDeactivateOpen] = useState(false);
-  const router = useRouter();
-  const { toast } = useToast();
 
-  const runToggle = (active: boolean) =>
-    start(async () => {
+  const runToggle = async (active: boolean) => {
+    setBusy(true);
+    try {
       const r = await setUserActive(userId, active);
       if (r.ok) {
         setDeactivateOpen(false);
-        toast({
-          title: active ? "Reactivated" : "Deactivated",
+        toast.success(active ? "Reactivated" : "Deactivated", {
           description: active ? `${name} is active again.` : `${name} was signed out.`,
-          variant: "success",
+          duration: 2000,
+          closeButton: true,
         });
         onSuccess?.();
-        router.refresh();
       } else {
-        toast({ title: "Failed", description: r.error ?? "Try again.", variant: "error" });
+        toast.error("Failed", { description: r.error ?? "Try again.", duration: 2000, closeButton: true });
       }
-    });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Reactivate has no confirmation — its own spinner prevents double-clicks.
+  if (!isActive) {
+    return (
+      <ActionButton
+        onClick={() => runToggle(true)}
+        loadingLabel="Reactivating…"
+        disabled={busy}
+        style={btnPrimary}
+      >
+        Reactivate
+      </ActionButton>
+    );
+  }
 
   return (
     <>
       <button
         type="button"
-        disabled={pending}
-        onClick={() => {
-          if (!isActive) {
-            runToggle(true);
-            return;
-          }
-          setDeactivateOpen(true);
-        }}
-        style={isActive ? btnDanger : btnPrimary}
+        onClick={() => setDeactivateOpen(true)}
+        style={btnDanger}
       >
-        {isActive ? "Deactivate" : "Reactivate"}
+        Deactivate
       </button>
 
-      <Dialog open={deactivateOpen} onOpenChange={(open) => !pending && setDeactivateOpen(open)}>
+      <Dialog open={deactivateOpen} onOpenChange={(open) => !busy && setDeactivateOpen(open)}>
         <DialogContent className="bg-white sm:max-w-md dark:bg-white">
           <DialogHeader>
             <DialogTitle>Deactivate account?</DialogTitle>
@@ -192,20 +83,19 @@ export function ActiveToggle({
           <DialogFooter>
             <button
               type="button"
-              disabled={pending}
               onClick={() => setDeactivateOpen(false)}
               style={btnSecondary}
             >
               Cancel
             </button>
-            <button
-              type="button"
-              disabled={pending}
+            <ActionButton
               onClick={() => runToggle(false)}
+              loadingLabel="Deactivating…"
+              disabled={busy}
               style={btnDanger}
             >
-              {pending ? "Deactivating…" : "Confirm deactivate"}
-            </button>
+              Confirm deactivate
+            </ActionButton>
           </DialogFooter>
         </DialogContent>
       </Dialog>

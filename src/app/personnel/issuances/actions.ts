@@ -51,30 +51,75 @@ function isoDateTime(v: Date | string | null): string | null {
   return d.toISOString()
 }
 
-async function listIssuanceRows(): Promise<IssuanceDbRow[]> {
+export interface IssuanceListOpts {
+  page?: number
+  pageSize?: number
+  q?: string
+  docType?: string
+}
+
+async function listIssuanceRows(opts: IssuanceListOpts = {}): Promise<{ rows: IssuanceDbRow[]; total: number }> {
   try {
     // Own-data only for personnel; super_admin sees all.
     const scope = await getPersonnelScope()
-    if (scope.isEmpty || !scope.userId) return []
-    if (scope.isSuperAdmin) {
-      return await prisma.$queryRaw<IssuanceDbRow[]>`
-        SELECT id::text AS id, doc_type, doc_no, doc_date,
-               asset_id::text AS asset_id, inventory_id::text AS inventory_id,
-               employee_id::text AS employee_id, request_id::text AS request_id,
-               quantity, unit_cost, total_amount, issuance_data, image_url, created_at,
-               created_by::text AS created_by
-        FROM issuance_records ORDER BY created_at DESC`
+    if (scope.isEmpty || !scope.userId) return { rows: [], total: 0 }
+    const page = Math.floor(Number(opts.page)) >= 1 ? Math.min(Math.floor(Number(opts.page)), 1000) : 1
+    const pageSize = Number.isFinite(Number(opts.pageSize))
+      ? Math.min(Math.max(Math.floor(Number(opts.pageSize)), 1), 100)
+      : 500
+    const offset = (page - 1) * pageSize
+    const q = (opts.q ?? '').trim().slice(0, 120)
+    const docType = (opts.docType ?? 'all').trim().toUpperCase()
+    const like = q ? `%${q}%` : null
+    const typeFilter = docType !== 'ALL' ? docType : null
+    const me = scope.userId
+    // Composed filter: owner + doc-type + text search across doc no/type,
+    // receiving employee, and the JSONB payload text (covers multi-line item
+    // labels that live only inside issuance_data).
+    const { Prisma } = await import('@prisma/client')
+    const issuanceConds: InstanceType<typeof Prisma.Sql>[] = []
+    if (!scope.isSuperAdmin) issuanceConds.push(Prisma.sql`ir.created_by = ${me}::uuid`)
+    if (typeFilter) issuanceConds.push(Prisma.sql`ir.doc_type = ${typeFilter}`)
+    if (like) {
+      issuanceConds.push(Prisma.sql`(
+        ir.doc_no ILIKE ${like} OR ir.doc_type ILIKE ${like}
+        OR p.full_name ILIKE ${like}
+        OR ir.issuance_data::text ILIKE ${like}
+        OR a.article ILIKE ${like} OR a.account_code ILIKE ${like}
+        OR s.item_name ILIKE ${like} OR s.account_code ILIKE ${like}
+      )`)
     }
-    return await prisma.$queryRaw<IssuanceDbRow[]>`
-      SELECT id::text AS id, doc_type, doc_no, doc_date,
-             asset_id::text AS asset_id, inventory_id::text AS inventory_id,
-             employee_id::text AS employee_id, request_id::text AS request_id,
-             quantity, unit_cost, total_amount, issuance_data, image_url, created_at,
-             created_by::text AS created_by
-      FROM issuance_records WHERE created_by = ${scope.userId}::uuid ORDER BY created_at DESC`
+    const issuanceWhere =
+      issuanceConds.length > 0 ? Prisma.sql`WHERE ${Prisma.join(issuanceConds, ' AND ')}` : Prisma.empty
+    const issuanceFrom = Prisma.sql`
+      FROM issuance_records ir
+      LEFT JOIN profiles p ON p.id = ir.employee_id
+      LEFT JOIN assets a ON a.id = ir.asset_id
+      LEFT JOIN inventory s ON s.id = ir.inventory_id`
+    async function countRows(): Promise<number> {
+      try {
+        const r = await prisma.$queryRaw<Array<{ count: bigint }>>`
+          SELECT COUNT(*)::bigint AS count ${issuanceFrom} ${issuanceWhere}`
+        return Number(r[0]?.count ?? 0)
+      } catch {
+        return 0
+      }
+    }
+    async function fetchRows(): Promise<IssuanceDbRow[]> {
+      return prisma.$queryRaw<IssuanceDbRow[]>`
+        SELECT ir.id::text AS id, ir.doc_type, ir.doc_no, ir.doc_date,
+               ir.asset_id::text AS asset_id, ir.inventory_id::text AS inventory_id,
+               ir.employee_id::text AS employee_id, ir.request_id::text AS request_id,
+               ir.quantity, ir.unit_cost, ir.total_amount, ir.issuance_data, ir.image_url, ir.created_at,
+               ir.created_by::text AS created_by
+        ${issuanceFrom} ${issuanceWhere}
+        ORDER BY ir.created_at DESC LIMIT ${pageSize} OFFSET ${offset}`
+    }
+    const [rows, total] = await Promise.all([fetchRows(), countRows()])
+    return { rows, total }
   } catch (e) {
     console.error('[listIssuanceRows]', e)
-    return []
+    return { rows: [], total: 0 }
   }
 }
 
@@ -276,12 +321,20 @@ async function fetchEmployeeNames(ids: string[]): Promise<Map<string, string>> {
   }
 }
 
-/** Every PAR/ICS issuance, newest first. Missing table → [] (run migration 13). */
-export async function getIssuances(): Promise<IssuanceRecordRow[]> {
+export async function getIssuancesPage(
+  opts: IssuanceListOpts = {}
+): Promise<{ rows: IssuanceRecordRow[]; total: number }> {
   const { withScopedCache } = await import('@/lib/personnel-cache')
+  const page = Math.floor(Number(opts.page)) >= 1 ? Math.min(Math.floor(Number(opts.page)), 1000) : 1
+  const pageSize = Number.isFinite(Number(opts.pageSize))
+    ? Math.min(Math.max(Math.floor(Number(opts.pageSize)), 1), 100)
+    : 20
+  const q = (opts.q ?? '').trim().slice(0, 120)
+  const docType = (opts.docType ?? 'all').trim()
   return withScopedCache('personnel:issuances', 30, async () => {
   try {
-    const rows = await listIssuanceRows()
+    const { rows, total } = await listIssuanceRows({ page, pageSize, q, docType })
+    if (rows.length === 0) return { rows: [], total }
     const names = await fetchEmployeeNames([...new Set(rows.map((r) => r.employee_id))])
 
     const [assets, stocks] = await Promise.all([
@@ -301,7 +354,7 @@ export async function getIssuances(): Promise<IssuanceRecordRow[]> {
     const assetMap = new Map(assets.map((a) => [a.id, a]))
     const stockMap = new Map(stocks.map((s) => [s.id, s]))
 
-    return rows.map((r) => {
+    const mapped = rows.map((r) => {
       const item = r.asset_id
         ? (assetMap.get(r.asset_id) ?? null)
         : r.inventory_id
@@ -330,19 +383,40 @@ export async function getIssuances(): Promise<IssuanceRecordRow[]> {
         created_by: r.created_by ?? null,
       }
     })
+    return { rows: mapped, total }
   } catch (e) {
     console.error('[getIssuances]', e)
-    return []
+    return { rows: [], total: 0 }
   }
-  })
+  }, { page, pageSize, q, docType })
+}
+
+/** Every PAR/ICS issuance, newest first. Missing table → [] (run migration 13). */
+export async function getIssuances(): Promise<IssuanceRecordRow[]> {
+  const { rows } = await getIssuancesPage({ page: 1, pageSize: 500 })
+  return rows
+}
+
+async function getIssuancesByType(docType: 'PAR' | 'ICS'): Promise<IssuanceRecordRow[]> {
+  const { rows } = await getIssuancesPage({ page: 1, pageSize: 500, docType })
+  return rows
 }
 
 export async function getParReports(): Promise<IssuanceRecordRow[]> {
-  return (await getIssuances()).filter((r) => r.doc_type === 'PAR')
+  return getIssuancesByType('PAR')
 }
 
 export async function getIcsReports(): Promise<IssuanceRecordRow[]> {
-  return (await getIssuances()).filter((r) => r.doc_type === 'ICS')
+  return getIssuancesByType('ICS')
+}
+
+/** Single DB round-trip for both PAR + ICS (documents page called both). */
+export async function getParAndIcsReports(): Promise<{ pars: IssuanceRecordRow[]; icss: IssuanceRecordRow[] }> {
+  const { rows } = await getIssuancesPage({ page: 1, pageSize: 500 })
+  return {
+    pars: rows.filter((r) => r.doc_type === 'PAR'),
+    icss: rows.filter((r) => r.doc_type === 'ICS'),
+  }
 }
 
 /** Single issuance with live asset/stock snapshots for the sheet.
@@ -850,8 +924,8 @@ async function evaluateAndAssign(
     // Await the single Redis bust BEFORE revalidating/reporting success:
     // the client's immediate refetch must not re-cache pre-write rows as
     // fresh. revalidatePath() below is pure Next.js (no hidden extra busts).
-    const { bustPersonnelCache } = await import('@/lib/personnel-cache')
-    await bustPersonnelCache()
+    const { bustPersonnelScopes } = await import('@/lib/personnel-cache')
+    await bustPersonnelScopes(['issuances', 'documents', 'dashboard', 'assets', 'requests', 'issues'])
     revalidatePath('/personnel/documents')
     revalidatePath('/personnel/issuances')
     revalidatePath(`/personnel/issuances/${recordId}`)
@@ -1394,8 +1468,8 @@ export async function approveRequestWithIssuance(
     // must not re-cache pre-write rows as fresh. Pure Next revalidations
     // below — no per-path bust fan-out (that stormed Upstash with ~6 busts
     // per write and stalled actions for seconds).
-    const { bustPersonnelCache } = await import('@/lib/personnel-cache')
-    await bustPersonnelCache()
+    const { bustPersonnelScopes } = await import('@/lib/personnel-cache')
+    await bustPersonnelScopes(['issuances', 'documents', 'dashboard', 'assets', 'requests', 'issues'])
     revalidatePath('/personnel/documents')
     revalidatePath('/personnel/issuances')
     revalidatePath(`/personnel/issuances/${newId}`)
@@ -1447,8 +1521,8 @@ export async function attachIssuanceScan(
     if (!existing) return { error: 'Issuance record not found.' }
     await prisma.$executeRaw`
       UPDATE issuance_records SET image_url = ${url} WHERE id = ${issuanceId}::uuid`
-    const { bustPersonnelCache } = await import('@/lib/personnel-cache')
-    await bustPersonnelCache()
+    const { bustPersonnelScopes } = await import('@/lib/personnel-cache')
+    await bustPersonnelScopes(['issuances', 'documents', 'dashboard', 'assets', 'requests', 'issues'])
     revalidatePath('/personnel/documents')
     revalidatePath(`/personnel/issuances/${issuanceId}`)
     return { success: true }
@@ -1467,8 +1541,8 @@ export async function removeIssuanceScan(
   try {
     await prisma.$executeRaw`
       UPDATE issuance_records SET image_url = NULL WHERE id = ${issuanceId}::uuid`
-    const { bustPersonnelCache } = await import('@/lib/personnel-cache')
-    await bustPersonnelCache()
+    const { bustPersonnelScopes } = await import('@/lib/personnel-cache')
+    await bustPersonnelScopes(['issuances', 'documents', 'dashboard', 'assets', 'requests', 'issues'])
     revalidatePath('/personnel/documents')
     revalidatePath(`/personnel/issuances/${issuanceId}`)
     return { success: true }

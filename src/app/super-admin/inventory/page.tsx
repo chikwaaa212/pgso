@@ -3,7 +3,9 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { X } from "lucide-react";
+import { toast } from "sonner";
 import { Card } from "@/components/ui/card";
+import { ActionButton } from "@/components/ui/action-button";
 import {
   BrowseTable,
   StatusPill,
@@ -97,24 +99,31 @@ function ThresholdCell({ row, onSaved }: { row: InventoryRow; onSaved: () => voi
   async function save() {
     setSaving(true);
     setError("");
-    const trimmed = val.trim();
-    let threshold: number | null = null;
-    if (trimmed !== "") {
-      const n = Number(trimmed);
-      if (!Number.isInteger(n) || n < 0) {
-        setSaving(false);
-        setError("Whole number ≥ 0, or empty to clear.");
+    try {
+      const trimmed = val.trim();
+      let threshold: number | null = null;
+      if (trimmed !== "") {
+        const n = Number(trimmed);
+        if (!Number.isInteger(n) || n < 0) {
+          setError("Whole number ≥ 0, or empty to clear.");
+          return;
+        }
+        threshold = n;
+      }
+      const res = await setReorderThreshold(row.id, threshold);
+      if (!res.success) {
+        setError(res.error ?? "Failed to save threshold.");
+        toast.error("Save failed", { description: res.error ?? "Failed to save threshold.", duration: 2000, closeButton: true });
         return;
       }
-      threshold = n;
+      toast.success("Threshold saved", { description: `${row.item_name} threshold updated.`, duration: 2000, closeButton: true });
+      onSaved();
+    } catch {
+      setError("Failed to save threshold. Please try again.");
+      toast.error("Save failed", { description: "Failed to save threshold. Please try again.", duration: 2000, closeButton: true });
+    } finally {
+      setSaving(false);
     }
-    const res = await setReorderThreshold(row.id, threshold);
-    setSaving(false);
-    if (!res.success) {
-      setError(res.error ?? "Failed to save threshold.");
-      return;
-    }
-    onSaved();
   }
 
   return (
@@ -135,9 +144,10 @@ function ThresholdCell({ row, onSaved }: { row: InventoryRow; onSaved: () => voi
           fontSize: "0.8125rem",
         }}
       />
-      <button
+      <ActionButton
         type="button"
-        onClick={() => void save()}
+        onClick={save}
+        loadingLabel="Saving…"
         disabled={!dirty || saving}
         aria-label={`Save threshold for ${row.item_name}`}
         style={{
@@ -152,8 +162,8 @@ function ThresholdCell({ row, onSaved }: { row: InventoryRow; onSaved: () => voi
           whiteSpace: "nowrap",
         }}
       >
-        {saving ? "Saving…" : "Set"}
-      </button>
+        Set
+      </ActionButton>
       {error ? (
         <span style={{ fontSize: "0.6875rem", color: "#991b1b" }}>{error}</span>
       ) : null}
@@ -169,6 +179,7 @@ export default function SuperAdminInventoryPage() {
     data,
     loading,
     refresh,
+    isValidating,
   } = useCachedAction(
     CLIENT_CACHE_KEYS.adminInventory,
     browseInventory,
@@ -332,7 +343,7 @@ export default function SuperAdminInventoryPage() {
       ) : null}
 
       <Card className={styles.panel}>
-        <BrowseTable rows={rows} columns={columns} searchPlaceholder="Search item, code, location…" pageSizeKey="pgso:admin:inventory" />
+        <BrowseTable rows={rows} columns={columns} searchPlaceholder="Search item, code, location…" pageSizeKey="pgso:admin:inventory" isValidating={isValidating} />
       </Card>
     </section>
   );

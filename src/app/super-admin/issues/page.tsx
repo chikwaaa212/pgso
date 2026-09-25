@@ -27,7 +27,7 @@ export default function SuperAdminIssuesPage() {
   // Same client caching as the personnel issues page: back-navigation
   // paints instantly from memory / sessionStorage and only revalidates
   // silently when stale (60s, matching the server snapshot cache).
-  const { data: snapshot, loading } = useCachedAction(
+  const { data: snapshot, loading, isValidating } = useCachedAction(
     CLIENT_CACHE_KEYS.adminIssues,
     () =>
       Promise.all([browseIssues(), browseCompletedRequests()]).then(
@@ -53,6 +53,9 @@ export default function SuperAdminIssuesPage() {
           {completed.length > 0
             ? ` · ${completed.length} completed ${completed.length === 1 ? "request" : "requests"}`
             : ""}
+          {isValidating ? (
+            <span role="status" aria-live="polite"> · Updating…</span>
+          ) : null}
         </p>
       </div>
       <Card className={styles.panel}>

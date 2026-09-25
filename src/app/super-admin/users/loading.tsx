@@ -5,30 +5,22 @@ import actionStyles from "@/app/personnel/dashboard/page.module.css";
 
 /**
  * Super-admin users skeleton — mirrors SuperAdminUsersPage 1:1 (crumb,
- * header with counts, pending-approvals panel with Approve/Reject
- * buttons, all-accounts panel with toggle buttons) so content swaps in
- * without layout shift.
+ * header with counts, all-accounts panel with toggle buttons) so content
+ * swaps in without layout shift.
  *
  * Static chrome renders as real text with the real classes; only live
  * values are pulse placeholders sized to the real cells.
  */
 
-const btnPrimary: React.CSSProperties = {
+const btnDanger: React.CSSProperties = {
   padding: "0.375rem 0.75rem",
   fontSize: "0.75rem",
   fontWeight: 600,
   borderRadius: "0.375rem",
-  border: "1px solid var(--color-navy-600)",
-  background: "var(--color-navy-900)",
-  color: "#fff",
-  whiteSpace: "nowrap",
-};
-
-const btnDanger: React.CSSProperties = {
-  ...btnPrimary,
   border: "1px solid #b91c1c",
   background: "#fff",
   color: "#b91c1c",
+  whiteSpace: "nowrap",
 };
 
 function TextPulse({ className }: { className: string }) {
@@ -68,51 +60,6 @@ export default function UsersLoading() {
           approval.
         </p>
       </div>
-
-      <Card className={styles.panel}>
-        <h2 className={styles.panelTitle}>Pending employee approvals</h2>
-        <p className={styles.panelSub}>
-          Approve to let them sign in, reject to block. Rejected accounts become
-          inactive and are signed out.
-        </p>
-        <div className={styles.tableWrap}>
-          <table className={styles.table} aria-hidden="true">
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Email</th>
-                <th>Requested</th>
-                <th>Status</th>
-                <th>Decision</th>
-              </tr>
-            </thead>
-            <tbody>
-              {Array.from({ length: 3 }).map((_, r) => (
-                <tr key={r} style={{ opacity: 1 - r * 0.1 }}>
-                  <td>
-                    <TextPulse className="h-3.5 w-28" />
-                  </td>
-                  <td>
-                    <TextPulse className="h-3.5 w-40" />
-                  </td>
-                  <td>
-                    <TextPulse className="h-3.5 w-20" />
-                  </td>
-                  <td>
-                    <PillPulse />
-                  </td>
-                  <td>
-                    <span style={{ display: "flex", gap: "0.5rem" }}>
-                      <span style={btnPrimary}>Approve</span>
-                      <span style={btnDanger}>Reject</span>
-                    </span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </Card>
 
       <Card className={styles.panel}>
         <h2 className={styles.panelTitle}>All accounts</h2>

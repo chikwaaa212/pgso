@@ -14,8 +14,10 @@ export interface DepartmentOption {
 function revalidateAll() {
   nextRevalidatePath('/personnel/dashboard')
   nextRevalidatePath('/super-admin/users')
+  // Narrow bust: department change only affects sidebar/user + dashboard
+  // snapshots — never wipe catalog/inventory/assets pools.
   void import('@/lib/personnel-cache')
-    .then((m) => m.bustPersonnelCache())
+    .then((m) => m.bustCachePrefixes(['personnel:sidebar-user', 'personnel:dashboard']))
     .catch(() => {})
 }
 
@@ -48,8 +50,9 @@ export async function updateMyDepartment(
   } catch {
     return { ok: false, error: 'Not authenticated.' }
   }
+  let canonical: string | null = null
   try {
-    const canonical = await resolveDepartmentName(name)
+    canonical = await resolveDepartmentName(name)
     if (!canonical) {
       return { ok: false, error: 'Select a valid active department.' }
     }
@@ -57,7 +60,7 @@ export async function updateMyDepartment(
       where: { id: userId },
       data: { office: canonical },
     })
-    await writeAuditLog({
+    void writeAuditLog({
       userId,
       action: 'personnel:update_department',
       module: 'personnel',
@@ -65,18 +68,11 @@ export async function updateMyDepartment(
         purpose: 'Update assigned department',
         summary: `Set assigned department to "${canonical}"`,
       },
-    })
+    }).catch(() => {})
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : 'Failed to update department.' }
   }
   revalidateAll()
-  try {
-    const fresh = await prisma.profile.findUnique({
-      where: { id: userId },
-      select: { office: true },
-    })
-    return { ok: true, department: fresh?.office ?? undefined }
-  } catch {
-    return { ok: true }
-  }
+  // No re-read: return what was just written.
+  return { ok: true, department: canonical ?? undefined }
 }

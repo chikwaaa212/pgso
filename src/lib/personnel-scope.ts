@@ -60,6 +60,18 @@ export interface PersonnelScope {
  */
 export const getPersonnelScope = cache(async (): Promise<PersonnelScope> => {
   const userId = await getCurrentUserId()
+  return resolvePersonnelScope(userId)
+})
+
+/**
+ * Build a scope from an already-known user id without another
+ * `auth.getUser()` round-trip. Snapshot composers should resolve the scope
+ * once and thread it into readers instead of letting every reader re-derive
+ * it (each derivation is an Auth + profile lookup on a cold request).
+ */
+export async function resolvePersonnelScope(
+  userId: string | null
+): Promise<PersonnelScope> {
   if (!userId) return { userId: null, isSuperAdmin: false, isEmpty: true }
   try {
     const { default: prisma } = await import('@/lib/prisma')
@@ -74,4 +86,4 @@ export const getPersonnelScope = cache(async (): Promise<PersonnelScope> => {
     /* fall through to personnel scope */
   }
   return { userId, isSuperAdmin: false, isEmpty: false }
-})
+}

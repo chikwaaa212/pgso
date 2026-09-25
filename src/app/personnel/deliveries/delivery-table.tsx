@@ -1,21 +1,21 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { cn } from "@/lib/utils";
-import { usePageSize } from "@/hooks/use-page-size";
+import { useCachedAction } from "@/hooks/use-cached-action";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
+import { CLIENT_CACHE_KEYS } from "@/lib/client-cache";
+import { FIXED_PAGE_SIZE } from "@/components/personnel/TablePager";
+import {
+  DataTableSkeleton,
+  PagerSkeleton,
+} from "@/components/personnel/skeletons";
 import { InspectConfirmButton } from "@/components/personnel/InspectConfirmDialog";
+import { getDeliveriesPage } from "./actions";
 import styles from "../dashboard/page.module.css";
 
 const statusFilters = ["All", "Complete", "Partial", "Awaiting arrival"] as const;
-const pageSizes = [10, 20, 50, 100];
 
 export interface DeliveryRow {
   id: string;
@@ -29,6 +29,18 @@ export interface DeliveryRow {
   itemCount: number;
   inspectionStatus: "pending" | "passed" | "failed" | "partial";
   inspectionRef: string;
+}
+
+function formatDateISO(value: string | null) {
+  if (!value) return "—";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleDateString("en-PH", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    timeZone: "Asia/Manila",
+  });
 }
 
 function pageWindow(current: number, total: number) {
@@ -51,34 +63,108 @@ const inspectionTone = (s: DeliveryRow["inspectionStatus"]) => {
   return "info";
 };
 
-export function DeliveryTable({ rows: allRows }: { rows: DeliveryRow[] }) {
+export function DeliveryTable({
+  onTotalChange,
+}: {
+  onTotalChange?: (total: number) => void;
+}) {
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<(typeof statusFilters)[number]>(
     "All"
   );
-  const [pageSize, setPageSize] = usePageSize(
-    "pgso:page-size:deliveries",
-    pageSizes[0]
-  );
+  // Fixed 20 rows/page (no selector) — the DB returns only this window.
+  const pageSize = FIXED_PAGE_SIZE;
   const [page, setPage] = useState(1);
+  // Debounced search — the DB query fires only after typing pauses.
+  const debouncedQuery = useDebouncedValue(query, 250);
 
-  const filtered = allRows.filter((d) => {
-    const matchesStatus =
-      statusFilter === "All" || d.status === statusFilter;
-    const q = query.trim().toLowerCase();
-    const matchesQuery =
-      q === "" ||
-      d.supplier.toLowerCase().includes(q) ||
-      d.po.toLowerCase().includes(q) ||
-      d.id.toLowerCase().includes(q);
-    return matchesStatus && matchesQuery;
-  });
+  const cacheKey = `${CLIENT_CACHE_KEYS.deliveries}:${page}:${debouncedQuery}:${statusFilter}`;
+  const { data, loading, isValidating } = useCachedAction(
+    cacheKey,
+    () =>
+      getDeliveriesPage({
+        page,
+        pageSize,
+        q: debouncedQuery,
+        status: statusFilter === "All" ? "all" : statusFilter,
+      }),
+    { staleTime: 30_000 }
+  );
+  const total = data?.total ?? 0;
+  const rows: DeliveryRow[] = useMemo(() => {
+    return (data?.rows ?? []).map((d) => ({
+      id: d.id.slice(0, 8).toUpperCase(),
+      deliveryId: d.id,
+      supplier: d.supplier ?? "—",
+      po: d.po_reference ?? "—",
+      date: formatDateISO(d.date_delivered),
+      arrival: formatDateISO(d.expected_arrival_date),
+      kind:
+        d.delivery_kind === "stock"
+          ? "Stocks"
+          : d.delivery_kind === "asset"
+            ? "Assets"
+            : "—",
+      status:
+        d.delivery_status === "partial"
+          ? "Partial"
+          : d.delivery_status === "awaiting"
+            ? "Awaiting arrival"
+            : "Complete",
+      itemCount: d.item_count,
+      inspectionStatus: (d.inspection_status as DeliveryRow["inspectionStatus"]) ?? "pending",
+      inspectionRef: d.id.slice(0, 8).toUpperCase(),
+    }));
+  }, [data]);
 
-  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
+  useEffect(() => {
+    onTotalChange?.(total);
+  }, [total, onTotalChange]);
+
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
   const safePage = Math.min(page, pageCount);
   const start = (safePage - 1) * pageSize;
-  const visible = filtered.slice(start, start + pageSize);
   const { pages } = pageWindow(safePage, pageCount);
+  const searching = query.trim() !== debouncedQuery.trim();
+
+  if (loading && rows.length === 0) {
+    return (
+      <div aria-busy="true" aria-label="Loading deliveries">
+        <div className={styles.filterRow} aria-hidden="true">
+          <div
+            className={styles.filterBtns}
+            role="group"
+            aria-label="Filter by delivery status"
+          >
+            {statusFilters.map((f) => (
+              <span key={f} className={styles.filterBtn} data-active={f === statusFilter}>
+                {f}
+              </span>
+            ))}
+          </div>
+          <div className="h-9 w-64 animate-pulse rounded-md bg-navy-100" />
+        </div>
+        <DataTableSkeleton
+          headers={[
+            "ID",
+            "Supplier",
+            "PO ref",
+            "Date",
+            "Target arrival",
+            "Type",
+            "Items",
+            "Delivery",
+            "Inspection",
+            "Action",
+          ]}
+          cols={10}
+          rows={10}
+          label="Loading deliveries"
+        />
+        <PagerSkeleton />
+      </div>
+    );
+  }
 
   return (
     <div>
@@ -115,11 +201,14 @@ export function DeliveryTable({ rows: allRows }: { rows: DeliveryRow[] }) {
           className={styles.addInput}
         />
       </div>
+      {(isValidating || searching) ? (
+        <p className={styles.panelSub} role="status">Updating…</p>
+      ) : null}
 
-      {filtered.length === 0 ? (
+      {rows.length === 0 ? (
         <div className={styles.emptyState}>
           <p className={styles.panelSub}>
-            {allRows.length === 0
+            {total === 0
               ? "No transactions yet — log the first delivery above."
               : "No deliveries match your search."}
           </p>
@@ -143,7 +232,7 @@ export function DeliveryTable({ rows: allRows }: { rows: DeliveryRow[] }) {
                 </tr>
               </thead>
               <tbody>
-                {visible.map((d) => (
+                {rows.map((d) => (
                   <tr key={d.id}>
                     <td>{d.id}</td>
                     <td>{d.supplier}</td>
@@ -216,35 +305,10 @@ export function DeliveryTable({ rows: allRows }: { rows: DeliveryRow[] }) {
 
           <div className={styles.pager}>
             <span className={styles.pagerInfo}>
-              Showing {start + 1}–{Math.min(start + pageSize, filtered.length)} of{" "}
-              {filtered.length}
+              Showing {total === 0 ? 0 : start + 1}–{Math.min(start + pageSize, total)} of{" "}
+              {total}
             </span>
             <div className={styles.pagerControls}>
-              <span className={styles.pageSizeWrap}>
-                <label htmlFor="delivery-page-size">Rows</label>
-                <Select
-                  value={String(pageSize)}
-                  onValueChange={(v) => {
-                    setPageSize(Number(v));
-                    setPage(1);
-                  }}
-                >
-                  <SelectTrigger
-                    id="delivery-page-size"
-                    size="sm"
-                    className="w-[5.5rem]"
-                  >
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {pageSizes.map((size) => (
-                      <SelectItem key={size} value={String(size)}>
-                        {size}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </span>
               <button
                 type="button"
                 className={styles.pageBtn}

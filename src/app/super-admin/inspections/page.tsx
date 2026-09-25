@@ -29,7 +29,7 @@ export default function SuperAdminInspectionsPage() {
   // Same client caching as the personnel inspections page: back-navigation
   // paints instantly from memory / sessionStorage and only revalidates
   // silently when stale (30s, matching the server list cache).
-  const { data, loading } = useCachedAction(
+  const { data, loading, isValidating } = useCachedAction(
     CLIENT_CACHE_KEYS.adminInspections,
     browseInspections,
     { staleTime: 30_000 }
@@ -81,7 +81,7 @@ export default function SuperAdminInspectionsPage() {
         </p>
       </div>
       <Card className={styles.panel}>
-        <BrowseTable rows={rows} columns={columns} searchPlaceholder="Search supplier, PO, inspector, AIR…" pageSizeKey="pgso:admin:inspections" getRowKey={(r) => r.delivery_id} />
+        <BrowseTable rows={rows} columns={columns} searchPlaceholder="Search supplier, PO, inspector, AIR…" pageSizeKey="pgso:admin:inspections" getRowKey={(r) => r.delivery_id} isValidating={isValidating} />
       </Card>
       <InspectionDetailModal row={detailRow} onClose={() => setDetailRow(null)} />
     </section>

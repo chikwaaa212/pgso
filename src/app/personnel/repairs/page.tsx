@@ -9,10 +9,12 @@ import {
   Receipt,
   RotateCcw,
 } from "lucide-react";
+import { toast } from "sonner";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
+import { ActionButton } from "@/components/ui/action-button";
 import {
   Dialog,
   DialogContent,
@@ -29,9 +31,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { DatePicker } from "@/components/ui/date-picker";
-import { TablePager } from "@/components/personnel/TablePager";
+import { TablePager, FIXED_PAGE_SIZE } from "@/components/personnel/TablePager";
 import { ReceiptLoading } from "@/components/personnel/ReceiptLoading";
-import { usePageSize } from "@/hooks/use-page-size";
 import { useCachedAction } from "@/hooks/use-cached-action";
 import { useReceipt } from "@/hooks/use-receipt";
 import { CLIENT_CACHE_KEYS, bustClientCache } from "@/lib/client-cache";
@@ -43,13 +44,14 @@ import {
   createRepair,
   getRepair,
   getRepairFormOptions,
-  getRepairs,
+  getRepairsPage,
   setRepairStatus,
   updateRepair,
   type RepairAssetOption,
   type RepairEmployeeOption,
   type RepairRow,
 } from "./actions";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import styles from "../dashboard/page.module.css";
 import air from "../inspections/air-section.module.css";
 import rep from "./page.module.css";
@@ -114,22 +116,35 @@ const STATUS_TABS = [
 ] as const;
 
 export default function PersonnelRepairsPage() {
-  // Cached list: back-navigation paints instantly from memory /
-  // sessionStorage and only revalidates silently when stale — same SWR
-  // pattern as dashboard / deliveries / requests.
-  const {
-    data: rowsData,
-    loading,
-    refresh: refreshRows,
-  } = useCachedAction(CLIENT_CACHE_KEYS.repairs, getRepairs, {
-    staleTime: 30_000,
-  });
-  const rows = useMemo(() => rowsData ?? [], [rowsData]);
   const [query, setQuery] = useState("");
   const [statusTab, setStatusTab] =
     useState<(typeof STATUS_TABS)[number]["value"]>("all");
-  const [pageSize, setPageSize] = usePageSize("pgso:page-size:repairs", 10);
+  // Fixed 20 rows/page (no selector) — server pages the DB window.
+  const pageSize = FIXED_PAGE_SIZE;
   const [page, setPage] = useState(1);
+  const debouncedQuery = useDebouncedValue(query, 250);
+  // Server-paged list: search/status/page filter in the DB.
+  const cacheKey = `${CLIENT_CACHE_KEYS.repairs}:${page}:${pageSize}:${debouncedQuery}:${statusTab}`;
+  const {
+    data: pageData,
+    loading,
+    isValidating,
+    refresh: refreshRows,
+  } = useCachedAction(
+    cacheKey,
+    () =>
+      getRepairsPage({
+        page,
+        pageSize,
+        q: debouncedQuery,
+        status: statusTab,
+      }),
+    {
+      staleTime: 30_000,
+    }
+  );
+  const rows = useMemo(() => pageData?.rows ?? [], [pageData]);
+  const total = pageData?.total ?? 0;
   const [actingId, setActingId] = useState<string | null>(null);
   const [actionError, setActionError] = useState("");
 
@@ -191,37 +206,11 @@ export default function PersonnelRepairsPage() {
     }
   }, [dialogOpen, editOpen, employees.length]);
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return rows.filter((r) => {
-      if (statusTab !== "all" && (r.status ?? "pending") !== statusTab)
-        return false;
-      if (q) {
-        const hay = [
-          r.asset_label,
-          r.account_code,
-          r.account_title,
-          r.asset_type,
-          r.reporter_name,
-          r.description,
-          r.technician,
-          r.status,
-        ]
-          .filter(Boolean)
-          .join(" ")
-          .toLowerCase();
-        if (!hay.includes(q)) return false;
-      }
-      return true;
-    });
-  }, [rows, query, statusTab]);
-
-  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
+  // Server already filtered + paged.
+  const visible = rows;
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
   const safePage = Math.min(Math.max(1, page), pageCount);
-  const visible = filtered.slice(
-    (safePage - 1) * pageSize,
-    (safePage - 1) * pageSize + pageSize
-  );
+  const searching = query.trim() !== debouncedQuery.trim();
 
   const stats = useMemo(() => {
     let pending = 0;
@@ -232,23 +221,39 @@ export default function PersonnelRepairsPage() {
       else if (r.status === "in_progress") inProgress += 1;
       else pending += 1;
     }
-    return { total: rows.length, pending, inProgress, completed };
-  }, [rows]);
+    return { total, pending, inProgress, completed };
+  }, [rows, total]);
 
-  if (loading) {
+  // Cold start only: background refetches keep stale rows visible with
+  // an "updating…" badge instead of flashing the full skeleton.
+  if (loading && rows.length === 0) {
     return <RepairsLoading />;
   }
 
   async function onProgress(id: string, status: string) {
+    if (actingId) return;
     setActingId(id);
     setActionError("");
-    const res = await setRepairStatus(id, status);
-    setActingId(null);
-    if (!res.success) {
-      setActionError(res.error ?? "Failed to update the repair.");
-      return;
+    try {
+      const res = await setRepairStatus(id, status);
+      if (!res.success) {
+        const msg = res.error ?? "Failed to update the repair.";
+        setActionError(msg);
+        toast.error(msg, { duration: 2000, closeButton: true });
+        return;
+      }
+      reload();
+      toast.success("Repair updated successfully.", {
+        duration: 2000,
+        closeButton: true,
+      });
+    } catch {
+      const msg = "Failed to update the repair. Please try again.";
+      setActionError(msg);
+      toast.error(msg, { duration: 2000, closeButton: true });
+    } finally {
+      setActingId(null);
     }
-    reload();
   }
 
   function resetForm() {
@@ -262,24 +267,38 @@ export default function PersonnelRepairsPage() {
   }
 
   async function onSubmit() {
+    if (saving) return;
     setSaving(true);
     setFormError("");
-    const res = await createRepair({
-      assetId,
-      employeeId,
-      repairDate,
-      description,
-      technician,
-      cost,
-    });
-    setSaving(false);
-    if (!res.success) {
-      setFormError(res.error ?? "Failed to log the repair.");
-      return;
+    try {
+      const res = await createRepair({
+        assetId,
+        employeeId,
+        repairDate,
+        description,
+        technician,
+        cost,
+      });
+      if (!res.success) {
+        const msg = res.error ?? "Failed to log the repair.";
+        setFormError(msg);
+        toast.error(msg, { duration: 2000, closeButton: true });
+        return;
+      }
+      setDialogOpen(false);
+      resetForm();
+      reload();
+      toast.success("Repair logged successfully.", {
+        duration: 2000,
+        closeButton: true,
+      });
+    } catch {
+      const msg = "Failed to log the repair. Please try again.";
+      setFormError(msg);
+      toast.error(msg, { duration: 2000, closeButton: true });
+    } finally {
+      setSaving(false);
     }
-    setDialogOpen(false);
-    resetForm();
-    reload();
   }
 
   function openEdit(row: RepairRow) {
@@ -320,24 +339,40 @@ export default function PersonnelRepairsPage() {
   }
 
   async function onEditSave() {
-    if (!editing) return;
+    if (!editing || editSaving) return;
     setEditSaving(true);
     setEditError("");
-    const res = await updateRepair(editing.id, {
-      repairDate: editDate,
-      description: editDescription,
-      technician: editTechnician,
-      cost: editCost,
-      status: editStatus,
-    });
-    setEditSaving(false);
-    if (!res.success) {
-      setEditError(res.error ?? "Failed to update the repair.");
-      return;
+    try {
+      const res = await updateRepair(editing.id, {
+        repairDate: editDate,
+        description: editDescription,
+        technician: editTechnician,
+        cost: editCost,
+        status: editStatus,
+      });
+      if (!res.success) {
+        const msg = res.error ?? "Failed to update the repair.";
+        setEditError(msg);
+        toast.error(msg, { duration: 2000, closeButton: true });
+        return;
+      }
+      setEditOpen(false);
+      setEditing(null);
+      reload();
+      const doneLabel =
+        editStatus === "completed"
+          ? "Repair completed successfully."
+          : editStatus === "in_progress"
+            ? "Repair started successfully."
+            : "Repair updated successfully.";
+      toast.success(doneLabel, { duration: 2000, closeButton: true });
+    } catch {
+      const msg = "Failed to update the repair. Please try again.";
+      setEditError(msg);
+      toast.error(msg, { duration: 2000, closeButton: true });
+    } finally {
+      setEditSaving(false);
     }
-    setEditOpen(false);
-    setEditing(null);
-    reload();
   }
 
   const pickedAsset = assets.find((a) => a.id === assetId) ?? null;
@@ -369,9 +404,9 @@ export default function PersonnelRepairsPage() {
         <div>
           <h1 className={styles.title}>Repairs</h1>
           <p className={styles.subtitle}>
-            {filtered.length} of {rows.length}{" "}
-            {rows.length === 1 ? "ticket" : "tickets"} shown · only requests sent to you
-            {stats.pending > 0 ? ` · ${stats.pending} pending` : ""}
+            {total} {total === 1 ? "ticket" : "tickets"} found · only your tickets
+            {stats.pending > 0 ? ` · ${stats.pending} pending on this page` : ""}
+            {(isValidating || searching) ? " · updating…" : ""}
           </p>
         </div>
         <div className={styles.actions}>
@@ -479,10 +514,10 @@ export default function PersonnelRepairsPage() {
           </span>
         </div>
 
-        {filtered.length === 0 ? (
+        {visible.length === 0 ? (
           <div className={styles.emptyState}>
             <p className={styles.panelSub}>
-              {rows.length === 0
+              {total === 0
                 ? "No repair tickets recorded yet — log the first one above. Approved repair requests also create tickets here automatically."
                 : "No repairs match your search or filters."}
             </p>
@@ -625,13 +660,11 @@ export default function PersonnelRepairsPage() {
             </table>
           </div>
         )}
-        {filtered.length > 0 ? (
+        {total > 0 ? (
           <TablePager
             id="repairs"
-            total={filtered.length}
-            pageSize={pageSize}
+            total={total}
             page={safePage}
-            onPageSizeChange={setPageSize}
             onPageChange={setPage}
           />
         ) : null}
@@ -783,14 +816,15 @@ export default function PersonnelRepairsPage() {
             >
               Cancel
             </Button>
-            <Button
+            <ActionButton
               type="button"
               disabled={!canSubmit || saving}
-              onClick={() => void onSubmit()}
+              onClick={() => onSubmit()}
+              loadingLabel="Logging…"
               className="h-8 gap-2 rounded-[4px] px-3.5 text-xs font-semibold"
             >
-              {saving ? "Saving…" : "Log repair"}
-            </Button>
+              Log repair
+            </ActionButton>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -938,22 +972,27 @@ export default function PersonnelRepairsPage() {
             >
               Cancel
             </Button>
-            <Button
+            <ActionButton
               type="button"
               disabled={!canEditSave || editSaving}
-              onClick={() => void onEditSave()}
-              className="h-8 gap-2 rounded-[4px] px-3.5 text-xs font-semibold"
-            >
-              {editSaving
-                ? "Saving…"
-                : editStatus === "completed" &&
-                    editing?.status !== "completed"
-                  ? "Complete repair"
+              onClick={() => onEditSave()}
+              loadingLabel={
+                editStatus === "completed" && editing?.status !== "completed"
+                  ? "Completing…"
                   : editing?.status === "pending" &&
                       editStatus === "in_progress"
-                    ? "Start repair"
-                    : "Save changes"}
-            </Button>
+                    ? "Starting…"
+                    : "Saving…"
+              }
+              className="h-8 gap-2 rounded-[4px] px-3.5 text-xs font-semibold"
+            >
+              {editStatus === "completed" && editing?.status !== "completed"
+                ? "Complete repair"
+                : editing?.status === "pending" &&
+                    editStatus === "in_progress"
+                  ? "Start repair"
+                  : "Save changes"}
+            </ActionButton>
           </DialogFooter>
         </DialogContent>
       </Dialog>

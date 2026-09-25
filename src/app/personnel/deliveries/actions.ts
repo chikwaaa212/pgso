@@ -4,10 +4,11 @@ import { revalidatePath as nextRevalidatePath } from 'next/cache'
 
 // Every Next.js revalidation also busts the Upstash personnel cache so
 // Redis never serves stale lists after a write (fire-and-forget).
+// Narrow: delivery writes touch deliveries/inspections/dashboard only.
 function revalidatePath(path: string) {
   nextRevalidatePath(path)
   void import('@/lib/personnel-cache')
-    .then((m) => m.bustPersonnelCache())
+    .then((m) => m.bustPersonnelScopes(['deliveries', 'inspections', 'dashboard', 'documents']))
     .catch(() => {})
 }
 import { notFound } from 'next/navigation'
@@ -170,10 +171,9 @@ export async function logDelivery(
     item.unit = canonicalUnit
   }
 
-  const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
+  const { getPersonnelScope } = await import('@/lib/personnel-scope')
+  const scope = await getPersonnelScope()
+  const user = scope.userId ? ({ id: scope.userId } as { id: string }) : null
 
   if (!user) {
     return { error: 'You must be signed in to log a delivery.' }
@@ -304,8 +304,9 @@ export async function recordInspection(
     return { error: 'Invalid item checks payload.' }
   }
 
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  const { getPersonnelScope: getScopeForInspection } = await import('@/lib/personnel-scope')
+  const inspectionScope = await getScopeForInspection()
+  const user = inspectionScope.userId ? ({ id: inspectionScope.userId } as { id: string }) : null
 
   if (!user) {
     return { error: 'You must be signed in to record an inspection.' }
@@ -533,44 +534,92 @@ export interface CachedDeliveryRow {
   item_count: number;
 }
 
+export interface DeliveriesPageOpts {
+  page?: number
+  pageSize?: number
+  q?: string
+  status?: string
+}
+
 export async function getDeliveriesList(): Promise<CachedDeliveryRow[]> {
+  const { rows } = await getDeliveriesPage({ page: 1, pageSize: 500 })
+  return rows
+}
+
+export async function getDeliveriesPage(
+  opts: DeliveriesPageOpts = {}
+): Promise<{ rows: CachedDeliveryRow[]; total: number }> {
   const { withScopedCache } = await import('@/lib/personnel-cache')
+  const page = Math.floor(Number(opts.page)) >= 1 ? Math.min(Math.floor(Number(opts.page)), 1000) : 1
+  const pageSize = Number.isFinite(Number(opts.pageSize))
+    ? Math.min(Math.max(Math.floor(Number(opts.pageSize)), 1), 100)
+    : 20
+  const q = (opts.q ?? '').trim().slice(0, 120)
+  const status = (opts.status ?? 'all').trim()
   return withScopedCache('personnel:deliveries-list', 30, async () => {
     try {
       const scope = await getPersonnelScope()
-      if (scope.isEmpty || !scope.userId) return []
-      const where = scope.isSuperAdmin ? {} : { received_by: scope.userId }
-      const deliveries = await prisma.delivery.findMany({
-        where,
-        orderBy: { created_at: 'desc' },
-        select: {
-          id: true,
-          supplier: true,
-          po_reference: true,
-          date_delivered: true,
-          expected_arrival_date: true,
-          delivery_kind: true,
-          delivery_status: true,
-          inspection_status: true,
-          _count: { select: { items: true } },
-        },
-      })
-      return deliveries.map((d) => ({
-        id: d.id,
-        supplier: d.supplier,
-        po_reference: d.po_reference,
-        date_delivered: d.date_delivered?.toISOString() ?? null,
-        expected_arrival_date: d.expected_arrival_date?.toISOString() ?? null,
-        delivery_kind: d.delivery_kind,
-        delivery_status: d.delivery_status,
-        inspection_status: d.inspection_status,
-        item_count: d._count.items,
-      }))
+      if (scope.isEmpty || !scope.userId) return { rows: [], total: 0 }
+      const where: Record<string, unknown> = scope.isSuperAdmin ? {} : { received_by: scope.userId }
+      // UI status terms (Complete/Partial/Awaiting arrival) map to delivery_status.
+      if (status !== 'all') {
+        const mapped =
+          status.toLowerCase() === 'complete'
+            ? 'complete'
+            : status.toLowerCase() === 'partial'
+              ? 'partial'
+              : status.toLowerCase().startsWith('awaiting')
+                ? 'awaiting'
+                : status
+        ;(where as Record<string, string>).delivery_status = mapped
+      }
+      if (q) {
+        ;(where as Record<string, unknown>).OR = [
+          { supplier: { contains: q, mode: 'insensitive' } },
+          { po_reference: { contains: q, mode: 'insensitive' } },
+          { delivery_status: { contains: q, mode: 'insensitive' } },
+          { inspection_status: { contains: q, mode: 'insensitive' } },
+        ]
+      }
+      const [total, deliveries] = await Promise.all([
+        prisma.delivery.count({ where: where as never }),
+        prisma.delivery.findMany({
+          where: where as never,
+          orderBy: { created_at: 'desc' },
+          skip: (page - 1) * pageSize,
+          take: pageSize,
+          select: {
+            id: true,
+            supplier: true,
+            po_reference: true,
+            date_delivered: true,
+            expected_arrival_date: true,
+            delivery_kind: true,
+            delivery_status: true,
+            inspection_status: true,
+            _count: { select: { items: true } },
+          },
+        }),
+      ])
+      return {
+        total,
+        rows: deliveries.map((d) => ({
+          id: d.id,
+          supplier: d.supplier,
+          po_reference: d.po_reference,
+          date_delivered: d.date_delivered?.toISOString() ?? null,
+          expected_arrival_date: d.expected_arrival_date?.toISOString() ?? null,
+          delivery_kind: d.delivery_kind,
+          delivery_status: d.delivery_status,
+          inspection_status: d.inspection_status,
+          item_count: d._count.items,
+        })),
+      }
     } catch (e) {
       console.error('[getDeliveriesList]', e)
-      return []
+      return { rows: [], total: 0 }
     }
-  })
+  }, { page, pageSize, q, status })
 }
 
 /**

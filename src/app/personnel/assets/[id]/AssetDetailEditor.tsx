@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -336,7 +335,6 @@ export function AssetDetailEditor({
   /** Assignment + repair timeline; each event opens its receipt. */
   history?: AssetHistory | null;
 }) {
-  const router = useRouter();
   const { toast } = useToast();
   const [isEditing, setIsEditing] = useState(false);
   const [isPending, startTransition] = useTransition();
@@ -357,7 +355,10 @@ export function AssetDetailEditor({
           variant: "success",
         });
         setIsEditing(false);
-        router.refresh();
+        // Targeted client bust (was full router.refresh()).
+        void import('@/lib/client-cache').then((m) =>
+          m.bustClientCache(['pgso:client:assets-snapshot'])
+        );
       }
       if (result.error) {
         toast({

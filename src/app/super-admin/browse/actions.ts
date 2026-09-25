@@ -1,7 +1,7 @@
 'use server'
 
 import prisma from '@/lib/prisma'
-import { requireSuperAdmin } from '@/lib/auth-guard'
+import { getPersonnelScope } from '@/lib/personnel-scope'
 import {
   getInspectionsList,
   getDeliveryForInspection,
@@ -55,9 +55,12 @@ import {
  */
 
 async function allowed(): Promise<boolean> {
+  // Uses the per-request cached personnel scope (same lookup `withScopedCache`
+  // performs for the key) so a single browse call pays for one Auth + profile
+  // lookup instead of two. Fails closed for non-super-admins.
   try {
-    await requireSuperAdmin()
-    return true
+    const scope = await getPersonnelScope()
+    return scope.isSuperAdmin && !scope.isEmpty
   } catch {
     return false
   }

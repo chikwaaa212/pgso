@@ -2,7 +2,9 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { getIssuance, getIssuances, type IssuanceDetail } from "./actions";
+import { getIssuance, getIssuancesPage, type IssuanceDetail } from "./actions";
+import { TablePager, FIXED_PAGE_SIZE } from "@/components/personnel/TablePager";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useCachedAction } from "@/hooks/use-cached-action";
 import { useReceipt } from "@/hooks/use-receipt";
 import { CLIENT_CACHE_KEYS } from "@/lib/client-cache";
@@ -37,14 +39,31 @@ function peso(n: number | null | undefined) {
   }).format(n);
 }
 
+const DOC_TABS = [
+  { value: "all", label: "All" },
+  { value: "PAR", label: "PAR" },
+  { value: "ICS", label: "ICS" },
+] as const;
+
 export default function PersonnelIssuancesPage() {
-  // Cached list: back-navigation paints instantly from memory /
-  // sessionStorage and only revalidates silently when stale — same
-  // SWR pattern as dashboard / deliveries / requests / logs.
-  // getIssuances already fails closed for signed-out callers.
-  const { data: cached, loading } = useCachedAction(
-    CLIENT_CACHE_KEYS.issuances,
-    getIssuances,
+  const [query, setQuery] = useState("");
+  const [docTab, setDocTab] = useState<(typeof DOC_TABS)[number]["value"]>("all");
+  // Fixed 20 rows/page (no selector) — the DB returns only this window.
+  const pageSize = FIXED_PAGE_SIZE;
+  const [page, setPage] = useState(1);
+  // Debounced server search — the DB query fires only after typing pauses.
+  const debouncedQuery = useDebouncedValue(query, 250);
+  const searching = query.trim() !== debouncedQuery.trim();
+  // Server-paged issuances: search/doc-type/page all filter in the DB.
+  const { data: paged, loading, isValidating } = useCachedAction(
+    `${CLIENT_CACHE_KEYS.issuances}:${page}:${debouncedQuery}:${docTab}`,
+    () =>
+      getIssuancesPage({
+        page,
+        pageSize,
+        q: debouncedQuery,
+        docType: docTab,
+      }),
     { staleTime: 30_000 }
   );
   const [view, setView] = useState<"table" | "grid">("table");
@@ -54,11 +73,19 @@ export default function PersonnelIssuancesPage() {
   const openReceipt = (id: string) =>
     viewer.open(id, `issuance:${id}`, () => getIssuance(id));
 
-  if (loading) {
+  // Plain derivation (no hook) so hook count is identical on cold and
+  // warm renders — a useMemo here would change hook order between the
+  // skeleton early-return and the data path.
+  const rows = paged?.rows ?? [];
+  const total = paged?.total ?? 0;
+
+  // Cold start only: background refetches keep stale rows visible with
+  // an "updating…" badge instead of flashing the full skeleton.
+  if (loading && rows.length === 0) {
     return <IssuancesLoading />;
   }
-
-  const rows = cached ?? [];
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
+  const safePage = Math.min(Math.max(1, page), pageCount);
   const doc = viewer.doc ?? null;
   const isIcs = doc?.doc_type === "ICS";
   return (
@@ -68,8 +95,9 @@ export default function PersonnelIssuancesPage() {
         <div>
           <h1 className={styles.title}>PAR / ICS Issuances</h1>
           <p className={styles.subtitle}>
-            {rows.length} {rows.length === 1 ? "record" : "records"} · your issuances only
+            {total} {total === 1 ? "record" : "records"} · your issuances only
             · value over ₱50,000 → PAR, ₱50,000 or less → ICS
+            {(isValidating || searching) ? " · updating…" : ""}
           </p>
         </div>
         <div className={styles.actions}>
@@ -94,7 +122,39 @@ export default function PersonnelIssuancesPage() {
         </div>
       </div>
       <Card className={styles.panel}>
-        {rows.length === 0 ? (
+        <div className={air.controls}>
+          <div className={air.tabs} role="tablist" aria-label="Filter by document type">
+            {DOC_TABS.map((t) => (
+              <button
+                key={t.value}
+                type="button"
+                role="tab"
+                aria-selected={docTab === t.value}
+                className={air.tab}
+                data-active={docTab === t.value}
+                onClick={() => {
+                  setDocTab(t.value);
+                  setPage(1);
+                }}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+          <input
+            type="search"
+            value={query}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              setPage(1);
+            }}
+            placeholder="Search doc no. or type…"
+            aria-label="Search issuances"
+            className={air.search}
+          />
+        </div>
+
+        {total === 0 ? (
           <div className={styles.emptyState}>
             <p className={styles.panelSub}>
               No PAR/ICS records yet — issue an item from Assets or approve a
@@ -117,8 +177,8 @@ export default function PersonnelIssuancesPage() {
                 </tr>
               </thead>
               <tbody>
-                {rows.map((r) => (
-                  <tr key={r.id}>
+                {rows.map((r, i) => (
+                  <tr key={`${r.id}-${i}`}>
                     <td>
                       <span className={styles.status} data-tone={r.doc_type === "PAR" ? "ok" : "info"}>
                         {r.doc_type}
@@ -146,8 +206,8 @@ export default function PersonnelIssuancesPage() {
           </div>
         ) : (
           <div className={air.grid}>
-            {rows.map((r) => (
-              <article key={r.id} className={air.card}>
+            {rows.map((r, i) => (
+              <article key={`${r.id}-${i}`} className={air.card}>
                 <div className={air.cardTop}>
                   <span className={air.ref}>{r.doc_no ?? r.doc_type}</span>
                   <span className={air.chips}>
@@ -194,6 +254,14 @@ export default function PersonnelIssuancesPage() {
             ))}
           </div>
         )}
+        {total > 0 ? (
+          <TablePager
+            id="issuances"
+            total={total}
+            page={safePage}
+            onPageChange={setPage}
+          />
+        ) : null}
       </Card>
 
       <ReceiptOverlay

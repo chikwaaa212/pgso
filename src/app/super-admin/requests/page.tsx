@@ -1,8 +1,10 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { toast } from "sonner";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { ActionButton } from "@/components/ui/action-button";
 import {
   Dialog,
   DialogContent,
@@ -23,6 +25,7 @@ import { setReplenishmentStatus } from "./actions";
 import { RequestQrButton } from "@/components/personnel/RequestQrButton";
 import { label } from "@/lib/labels";
 import { useCachedAction } from "@/hooks/use-cached-action";
+import { useAdminRealtime } from "@/hooks/use-admin-realtime";
 import { CLIENT_CACHE_KEYS } from "@/lib/client-cache";
 import RequestsLoading from "./loading";
 import styles from "./page.module.css";
@@ -33,7 +36,7 @@ export default function SuperAdminRequestsPage() {
   // Same client caching as the personnel requests page: back-navigation
   // paints instantly from memory / sessionStorage and only revalidates
   // silently when stale (30s, matching the server list cache).
-  const { data, loading, refresh } = useCachedAction(
+  const { data, loading, refresh, isValidating } = useCachedAction(
     CLIENT_CACHE_KEYS.adminRequests,
     browseRequests,
     { staleTime: 30_000 }
@@ -54,6 +57,14 @@ export default function SuperAdminRequestsPage() {
     refresh();
   };
 
+  // Another authorized user deciding a replenishment updates this queue
+  // without requiring refresh or navigate-away-and-back.
+  useAdminRealtime({
+    channel: "admin-requests",
+    tables: [{ table: "request" }],
+    onEvent: reload,
+  });
+
   const replenishmentCount = useMemo(
     () =>
       rows.filter(
@@ -73,6 +84,11 @@ export default function SuperAdminRequestsPage() {
     setDialogOpen(true);
   }
 
+  const processingLabel =
+    actionStatus === "approved" ? "Approving…" : actionStatus === "rejected" ? "Rejecting…" : "Completing…";
+  const successTitle =
+    actionStatus === "approved" ? "Request approved" : actionStatus === "rejected" ? "Request rejected" : "Request completed";
+
   async function onConfirm() {
     if (!actionRow) return;
     if (note.trim() === "") {
@@ -82,17 +98,25 @@ export default function SuperAdminRequestsPage() {
     setSaving(true);
     setFormError("");
     setActingId(actionRow.id);
-    const res = await setReplenishmentStatus(actionRow.id, actionStatus, note);
-    setActingId(null);
-    setSaving(false);
-    if (!res.success) {
-      setFormError(res.error ?? "Failed to update the request.");
-      return;
+    try {
+      const res = await setReplenishmentStatus(actionRow.id, actionStatus, note);
+      if (!res.success) {
+        setFormError(res.error ?? "Failed to update the request.");
+        toast.error("Update failed", { description: res.error ?? "Failed to update the request.", duration: 2000, closeButton: true });
+        return;
+      }
+      setDialogOpen(false);
+      setActionRow(null);
+      setNote("");
+      toast.success(successTitle, { duration: 2000, closeButton: true });
+      reload();
+    } catch {
+      setFormError("Failed to update the request. Please try again.");
+      toast.error("Update failed", { description: "Failed to update the request. Please try again.", duration: 2000, closeButton: true });
+    } finally {
+      setActingId(null);
+      setSaving(false);
     }
-    setDialogOpen(false);
-    setActionRow(null);
-    setNote("");
-    reload();
   }
 
   const columns: BrowseColumn<BrowseRequestRow>[] = [
@@ -195,7 +219,7 @@ export default function SuperAdminRequestsPage() {
         </p>
       ) : null}
       <Card className={styles.panel}>
-        <BrowseTable rows={rows} columns={columns} searchPlaceholder="Search requester, filer, type, item…" pageSizeKey="pgso:admin:requests" />
+        <BrowseTable rows={rows} columns={columns} searchPlaceholder="Search requester, filer, type, item…" pageSizeKey="pgso:admin:requests" isValidating={isValidating} />
       </Card>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
@@ -250,19 +274,18 @@ export default function SuperAdminRequestsPage() {
             >
               Cancel
             </Button>
-            <Button
+            <ActionButton
               type="button"
               disabled={note.trim() === "" || saving}
-              onClick={() => void onConfirm()}
+              onClick={onConfirm}
+              loadingLabel={processingLabel}
             >
-              {saving
-                ? "Saving…"
-                : actionStatus === "approved"
-                  ? "Approve"
-                  : actionStatus === "rejected"
-                    ? "Reject"
-                    : "Complete"}
-            </Button>
+              {actionStatus === "approved"
+                ? "Approve"
+                : actionStatus === "rejected"
+                  ? "Reject"
+                  : "Complete"}
+            </ActionButton>
           </DialogFooter>
         </DialogContent>
       </Dialog>

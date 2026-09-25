@@ -2,14 +2,23 @@
 
 import { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import {
-  getDocumentsSnapshot,
+  getDocumentsCounts,
+  getDocumentsTabPage,
+  getViewedDocKeys,
   markDocumentViewed,
+  type DeliveryDocumentRow,
+  type DocumentsTab,
   type IarReportRow,
 } from "./actions";
+import type { UnifiedInspectionRow } from "../inspections/actions";
+import type { InventoryRow } from "../inventory/actions";
+import type { UnifiedAssetRow } from "../assets/actions";
+import type { RepairRow } from "../repairs/actions";
 import {
   getIssuance,
   type IssuanceRecordRow,
@@ -37,9 +46,8 @@ import { ParReportSheet } from "./par-report";
 import { IcsReportSheet } from "./ics-report";
 import { ReceiptOverlay } from "./receipt-overlay";
 import receipt from "../inspections/components/receipt.module.css";
-import { TablePager } from "@/components/personnel/TablePager";
+import { TablePager, FIXED_PAGE_SIZE } from "@/components/personnel/TablePager";
 import { ReceiptLoading } from "@/components/personnel/ReceiptLoading";
-import { usePageSize } from "@/hooks/use-page-size";
 import { useCachedAction } from "@/hooks/use-cached-action";
 import {
   CLIENT_CACHE_KEYS,
@@ -47,6 +55,10 @@ import {
 } from "@/lib/client-cache";
 import { useReceipt } from "@/hooks/use-receipt";
 import DocumentsLoading from "./loading";
+import {
+  DataTableSkeleton,
+  PagerSkeleton,
+} from "@/components/personnel/skeletons";
 import styles from "../dashboard/page.module.css";
 import air from "../inspections/air-section.module.css";
 
@@ -121,22 +133,13 @@ function fmtCost(value: number | null | undefined) {
 
 export default function PersonnelDocumentsPage() {
   return (
-    <Suspense
-      fallback={
-        <section className={styles.section}>
-          <p className={styles.crumb}>Personnel / Documents</p>
-          <div className={styles.emptyState}>
-            <p className={styles.panelSub}>Loading documents…</p>
-          </div>
-        </section>
-      }
-    >
+    <Suspense fallback={<DocumentsLoading />}>
       <PersonnelDocumentsContent />
     </Suspense>
   );
 }
 
-function PersonnelDocumentsContent() {  const router = useRouter();
+function PersonnelDocumentsContent() {
   const searchParams = useSearchParams();
   const initialTab = isTab(searchParams.get("tab"))
     ? (searchParams.get("tab") as Tab)
@@ -144,32 +147,87 @@ function PersonnelDocumentsContent() {  const router = useRouter();
 
   const [tab, setTab] = useState<Tab>(initialTab);
   const [query, setQuery] = useState("");
-  // Cached snapshot (all 8 tabs + viewed keys): back-navigation paints
-  // instantly from memory / sessionStorage and only revalidates silently
-  // when stale — same SWR pattern as dashboard / deliveries / inspections /
-  // stocks / assets.
-  const { data: snapshot, loading } = useCachedAction(
-    CLIENT_CACHE_KEYS.documents,
-    getDocumentsSnapshot,
+  const debouncedQuery = useDebouncedValue(query, 250);
+  const searching = query.trim() !== debouncedQuery.trim();
+  // Fixed 20 rows/page (no selector) — only the ACTIVE tab fetches, and the
+  // DB returns just this window (was: all 8 tabs, unbounded, on every visit).
+  const pageSize = FIXED_PAGE_SIZE;
+  const [page, setPage] = useState(1);
+  const {
+    data: tabPayload,
+    loading,
+    isValidating,
+  } = useCachedAction(
+    `${CLIENT_CACHE_KEYS.documents}:${tab}:${page}:${debouncedQuery}`,
+    () =>
+      getDocumentsTabPage(tab as DocumentsTab, { page, q: debouncedQuery }).then(
+        (res) => ({ ...res, _tab: tab })
+      ),
+    { staleTime: 30_000 }
+  );
+  // The hook keeps the previous key's payload while the new key loads.
+  // Only trust rows/totals stamped for the CURRENT tab — otherwise a
+  // delivery/stock payload would render (and crash, e.g. `r.id.slice`
+  // on a delivery row) inside the repairs table during a tab switch.
+  const tabData =
+    tabPayload && tabPayload._tab === tab ? tabPayload : undefined;
+  // Cheap per-tab totals for the header counts (no row payloads).
+  const { data: countsData } = useCachedAction(
+    `${CLIENT_CACHE_KEYS.documents}-counts`,
+    getDocumentsCounts,
     { staleTime: 60_000 }
   );
-  const deliveries = useMemo(() => snapshot?.deliveries ?? [], [snapshot]);
-  const inspections = useMemo(() => snapshot?.inspections ?? [], [snapshot]);
-  const stocks = useMemo(() => snapshot?.stocks ?? [], [snapshot]);
-  const assets = useMemo(() => snapshot?.assets ?? [], [snapshot]);
-  const repairs = useMemo(() => snapshot?.repairs ?? [], [snapshot]);
-  const iars = useMemo(() => snapshot?.iars ?? [], [snapshot]);
-  const pars = useMemo(() => snapshot?.pars ?? [], [snapshot]);
-  const icss = useMemo(() => snapshot?.icss ?? [], [snapshot]);
+  // Per-tab rows: only the active tab has data; the rest stay empty so
+  // inactive sections (not rendered) cost nothing.
+  const windowRows = useMemo(() => tabData?.rows ?? [], [tabData]);
+  const tabTotal = tabData?.total ?? 0;
+  const deliveries = useMemo(
+    () => (tab === "delivery" ? (windowRows as DeliveryDocumentRow[]) : []),
+    [tab, windowRows]
+  );
+  const inspections = useMemo(
+    () => (tab === "inspection" ? (windowRows as UnifiedInspectionRow[]) : []),
+    [tab, windowRows]
+  );
+  const stocks = useMemo(
+    () => (tab === "stocks" ? (windowRows as InventoryRow[]) : []),
+    [tab, windowRows]
+  );
+  const assets = useMemo(
+    () => (tab === "assets" ? (windowRows as UnifiedAssetRow[]) : []),
+    [tab, windowRows]
+  );
+  const repairs = useMemo(
+    () => (tab === "repairs" ? (windowRows as RepairRow[]) : []),
+    [tab, windowRows]
+  );
+  const iars = useMemo(
+    () => (tab === "iar" ? (windowRows as IarReportRow[]) : []),
+    [tab, windowRows]
+  );
+  const iarRows = iars;
+  const pars = useMemo(
+    () => (tab === "par" ? (windowRows as IssuanceRecordRow[]) : []),
+    [tab, windowRows]
+  );
+  const icss = useMemo(
+    () => (tab === "ics" ? (windowRows as IssuanceRecordRow[]) : []),
+    [tab, windowRows]
+  );
+  const { data: viewedKeysData } = useCachedAction(
+    `${CLIENT_CACHE_KEYS.documents}-viewed`,
+    getViewedDocKeys,
+    { staleTime: 30_000 }
+  );
   const [viewedKeys, setViewedKeys] = useState<Set<string>>(new Set());
-  // Sync viewed keys from the snapshot after hydration (local marks apply
-  // instantly via markViewed below; the server copy wins on refetch).
+  // Sync viewed keys after hydration (local marks apply instantly via
+  // markViewed below; the server copy wins on refetch).
   useEffect(() => {
-    if (snapshot) {
+    if (viewedKeysData) {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional post-hydration sync of cached state
-      setViewedKeys(new Set(snapshot.viewedKeys));
+      setViewedKeys(new Set(viewedKeysData));
     }
-  }, [snapshot]);
+  }, [viewedKeysData]);
   const inspectionR = useReceipt<{
     delivery: DeliveryForInspection;
     history: InspectionHistoryRecord[];
@@ -207,213 +265,44 @@ function PersonnelDocumentsContent() {  const router = useRouter();
     setViewedKeys((prev) => new Set(prev).add(key));
     // Viewing changes the dashboard "Open Documents" count — drop its
     // snapshot so its next visit refetches instead of serving stale counts.
+    // Targeted client bust only (was full router.refresh() reloading the
+    // entire documents snapshot on every receipt open).
     bustClientCache(CLIENT_CACHE_KEYS.dashboard);
-    void markDocumentViewed(type, id).then(() => router.refresh());
+    void markDocumentViewed(type, id).catch(() => {});
   }
 
-  const q = query.trim().toLowerCase();
-  const hay = (parts: (string | null | undefined)[]) =>
-    parts.filter(Boolean).join(" ").toLowerCase().includes(q);
-
-  const deliveryRows = useMemo(
-    () =>
-      q === ""
-        ? deliveries
-        : deliveries.filter((d) =>
-            hay([
-              d.ref,
-              d.supplier,
-              d.po_reference,
-              d.delivery_status,
-              d.inspection_status,
-            ])
-          ),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [deliveries, query]
-  );
-
-  const inspectionRows = useMemo(
-    () =>
-      q === ""
-        ? inspections
-        : inspections.filter((d) =>
-            hay([
-              d.delivery_ref,
-              d.supplier,
-              d.po_reference,
-              d.inspector_name,
-              d.result,
-              d.inspection_status,
-            ])
-          ),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [inspections, query]
-  );
-
-  const stockRows = useMemo(
-    () =>
-      q === ""
-        ? stocks
-        : stocks.filter((r) =>
-            hay([r.item_name, r.account_code, r.location, r.unit])
-          ),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [stocks, query]
-  );
-
-  const assetRows = useMemo(
-    () =>
-      q === ""
-        ? assets
-        : assets.filter((a) =>
-            hay([
-              a.account_code,
-              a.qr_code,
-              a.category,
-              a.article,
-              a.description,
-              a.location,
-              a.status,
-            ])
-          ),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [assets, query]
-  );
-
-  const iarRows = useMemo(
-    () =>
-      q === ""
-        ? iars
-        : iars.filter((r) =>
-            hay([
-              r.iar_no,
-              r.delivery_ref,
-              r.supplier,
-              r.po_reference,
-              r.inspector_name,
-              r.inspection_result,
-              r.kind,
-            ])
-          ),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [iars, query]
-  );
-
-  const completedRepairs = useMemo(
-    () => repairs.filter((r) => r.status === "completed"),
-    [repairs]
-  );
-
-  const issuanceHay = (r: IssuanceRecordRow) =>
-    hay([r.doc_no, r.employee_name, r.item_label, r.doc_type]);
-
-  const parRows = useMemo(
-    () => (q === "" ? pars : pars.filter(issuanceHay)),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [pars, query]
-  );
-
-  const icsRows = useMemo(
-    () => (q === "" ? icss : icss.filter(issuanceHay)),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [icss, query]
-  );
-
-  const repairRows = useMemo(
-    () =>
-      q === ""
-        ? completedRepairs
-        : completedRepairs.filter((r) =>
-            hay([
-              r.asset_label,
-              r.account_code,
-              r.account_title,
-              r.asset_type,
-              r.reporter_name,
-              r.technician,
-              r.description,
-            ])
-          ),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [completedRepairs, query]
-  );
-
-  const [deliveryPageSize, setDeliveryPageSize] = usePageSize(
-    "pgso:page-size:docs-delivery",
-    10
-  );
-  const [deliveryPage, setDeliveryPage] = useState(1);
-  const [inspectionPageSize, setInspectionPageSize] = usePageSize(
-    "pgso:page-size:docs-inspection",
-    10
-  );
-  const [inspectionPage, setInspectionPage] = useState(1);
-  const [stockPageSize, setStockPageSize] = usePageSize(
-    "pgso:page-size:docs-stocks",
-    10
-  );
-  const [stockPage, setStockPage] = useState(1);
-  const [assetPageSize, setAssetPageSize] = usePageSize(
-    "pgso:page-size:docs-assets",
-    10
-  );
-  const [assetPage, setAssetPage] = useState(1);
-  const [repairPageSize, setRepairPageSize] = usePageSize(
-    "pgso:page-size:docs-repairs",
-    10
-  );
-  const [repairPage, setRepairPage] = useState(1);
-  const [iarPageSize, setIarPageSize] = usePageSize("pgso:page-size:docs-iar", 10);
-  const [iarPage, setIarPage] = useState(1);
-  const [parPageSize, setParPageSize] = usePageSize("pgso:page-size:docs-par", 10);
-  const [parPage, setParPage] = useState(1);
-  const [icsPageSize, setIcsPageSize] = usePageSize("pgso:page-size:docs-ics", 10);
-  const [icsPage, setIcsPage] = useState(1);
+  // Server already searched + paged each tab — these are identity aliases
+  // keeping the section render code unchanged. The DB window IS the page.
+  const deliveryRows = deliveries;
+  const inspectionRows = inspections;
+  const stockRows = stocks;
+  const assetRows = assets;
+  // Server returns completed repairs only (same as the old client filter).
+  const completedRepairs = repairs;
+  const parRows = pars;
+  const icsRows = icss;
+  const repairRows = completedRepairs;
 
   function resetDocPages() {
-    setDeliveryPage(1);
-    setInspectionPage(1);
-    setStockPage(1);
-    setAssetPage(1);
-    setRepairPage(1);
-    setIarPage(1);
-    setParPage(1);
-    setIcsPage(1);
+    setPage(1);
   }
 
-  function paginate<T>(rows: T[], page: number, pageSize: number) {
-    const pageCount = Math.max(1, Math.ceil(rows.length / pageSize));
-    const safePage = Math.min(Math.max(1, page), pageCount);
-    return {
-      safePage,
-      visible: rows.slice(
-        (safePage - 1) * pageSize,
-        (safePage - 1) * pageSize + pageSize
-      ),
-    };
-  }
-
+  // Server totals for the header counts (cheap, no row payloads).
   const counts: Record<Tab, number> = {
-    delivery: deliveries.length,
-    inspection: inspections.length,
-    stocks: stocks.length,
-    assets: assets.length,
-    repairs: completedRepairs.length,
-    iar: iars.length,
-    par: pars.length,
-    ics: icss.length,
+    delivery: countsData?.delivery ?? 0,
+    inspection: countsData?.inspection ?? 0,
+    stocks: countsData?.stocks ?? 0,
+    assets: countsData?.assets ?? 0,
+    repairs: countsData?.repairs ?? 0,
+    iar: countsData?.iar ?? 0,
+    par: countsData?.par ?? 0,
+    ics: countsData?.ics ?? 0,
   };
 
-  const shown: Record<Tab, number> = {
-    delivery: deliveryRows.length,
-    inspection: inspectionRows.length,
-    stocks: stockRows.length,
-    assets: assetRows.length,
-    repairs: repairRows.length,
-    iar: iarRows.length,
-    par: parRows.length,
-    ics: icsRows.length,
-  };
+  // Filtered total for the active tab comes from its page query; the pager
+  // clamps to it and the window rows render directly.
+  const pageCount = Math.max(1, Math.ceil(tabTotal / pageSize));
+  const safePage = Math.min(Math.max(1, page), pageCount);
 
   const searchPlaceholder: Record<Tab, string> = {
     delivery: "Search ref, supplier, PO, status…",
@@ -426,24 +315,23 @@ function PersonnelDocumentsContent() {  const router = useRouter();
     ics: "Search ICS no., employee, item…",
   };
 
-  // Only inspected deliveries have a history receipt to show.
+  // Only inspected deliveries have a history receipt to show (the server
+  // already excludes pending for this tab — belt and suspenders).
   const inspectedRows = useMemo(
     () => inspectionRows.filter((d) => d.inspection_status !== "pending"),
     [inspectionRows]
   );
 
-  const deliveryPaging = paginate(deliveryRows, deliveryPage, deliveryPageSize);
-  const inspectionPaging = paginate(
-    inspectedRows,
-    inspectionPage,
-    inspectionPageSize
-  );
-  const stockPaging = paginate(stockRows, stockPage, stockPageSize);
-  const assetPaging = paginate(assetRows, assetPage, assetPageSize);
-  const repairPaging = paginate(repairRows, repairPage, repairPageSize);
-  const iarPaging = paginate(iarRows, iarPage, iarPageSize);
-  const parPaging = paginate(parRows, parPage, parPageSize);
-  const icsPaging = paginate(icsRows, icsPage, icsPageSize);
+  // One shared server pager: the DB window IS the visible page. Aliases
+  // keep each tab's render code typed and unchanged.
+  const deliveryPaging = { safePage, visible: deliveryRows };
+  const inspectionPaging = { safePage, visible: inspectedRows };
+  const stockPaging = { safePage, visible: stockRows };
+  const assetPaging = { safePage, visible: assetRows };
+  const repairPaging = { safePage, visible: repairRows };
+  const iarPaging = { safePage, visible: iarRows };
+  const parPaging = { safePage, visible: parRows };
+  const icsPaging = { safePage, visible: icsRows };
 
   function openDeliveryReceipt(deliveryId: string) {
     markViewed("delivery", deliveryId);
@@ -506,9 +394,10 @@ function PersonnelDocumentsContent() {  const router = useRouter();
   const selectedRepair =
     completedRepairs.find((r) => r.id === selectedRepairId) ?? null;
 
-  if (loading) {
-    return <DocumentsLoading />;
-  }
+  // Cold for THIS tab (no rows stamped for it yet): the table region
+  // below shows a table skeleton while header/tabs/search stay put.
+  // Warm refetches keep stale rows visible with an "updating…" badge.
+  const cold = loading && windowRows.length === 0;
 
   return (
     <section className={styles.section}>
@@ -517,8 +406,18 @@ function PersonnelDocumentsContent() {  const router = useRouter();
         <div>
           <h1 className={styles.title}>Documents</h1>
           <p className={styles.subtitle}>
-            {shown[tab]} of {counts[tab]}{" "}
-            {counts[tab] === 1 ? "record" : "records"} shown
+            {cold ? (
+              <span
+                className="mt-1 block h-4 w-48 animate-pulse rounded bg-navy-100"
+                aria-hidden="true"
+              />
+            ) : (
+              <>
+                {tabTotal} of {counts[tab]}{" "}
+                {counts[tab] === 1 ? "record" : "records"} shown
+                {(isValidating || searching || loading) ? " · updating…" : ""}
+              </>
+            )}
           </p>
         </div>
         <div className={styles.actions}>
@@ -557,7 +456,16 @@ function PersonnelDocumentsContent() {  const router = useRouter();
 
         <>
           {tab === "delivery" &&
-              (deliveryRows.length === 0 ? (
+              (cold ? (
+                <>
+                  <DataTableSkeleton
+                    headers={["Ref", "Supplier", "PO ref", "Date delivered", "Items", "Delivery", "Inspection", "Receipt"]}
+                    cols={8}
+                    label="Loading delivery documents"
+                  />
+                  <PagerSkeleton />
+                </>
+              ) : deliveryRows.length === 0 ? (
                 <div className={styles.emptyState}>
                   <p className={styles.panelSub}>
                     No delivery receipts match your search.
@@ -579,8 +487,8 @@ function PersonnelDocumentsContent() {  const router = useRouter();
                       </tr>
                     </thead>
                     <tbody>
-                      {deliveryPaging.visible.map((d) => (
-                        <tr key={d.delivery_id}>
+                      {deliveryPaging.visible.map((d, i) => (
+                        <tr key={`${d.delivery_id}-${i}`}>
                           <td>{d.ref}</td>
                           <td>{d.supplier ?? "—"}</td>
                           <td>{d.po_reference ?? "—"}</td>
@@ -625,11 +533,9 @@ function PersonnelDocumentsContent() {  const router = useRouter();
             {tab === "delivery" && deliveryRows.length > 0 ? (
               <TablePager
                 id="docs-delivery"
-                total={deliveryRows.length}
-                pageSize={deliveryPageSize}
-                page={deliveryPaging.safePage}
-                onPageSizeChange={setDeliveryPageSize}
-                onPageChange={setDeliveryPage}
+                total={tabTotal}
+                page={safePage}
+                onPageChange={setPage}
               />
             ) : null}
 
@@ -654,7 +560,16 @@ function PersonnelDocumentsContent() {  const router = useRouter();
             </ReceiptOverlay>
 
             {tab === "inspection" &&
-              (inspectedRows.length === 0 ? (
+              (cold ? (
+                <>
+                  <DataTableSkeleton
+                    headers={["Delivery ref", "Supplier", "PO ref", "Inspector", "Date inspected", "Result", "History receipt"]}
+                    cols={7}
+                    label="Loading inspection documents"
+                  />
+                  <PagerSkeleton />
+                </>
+              ) : inspectedRows.length === 0 ? (
                 <div className={styles.emptyState}>
                   <p className={styles.panelSub}>
                     No inspection history receipts match your search.
@@ -675,8 +590,8 @@ function PersonnelDocumentsContent() {  const router = useRouter();
                       </tr>
                     </thead>
                     <tbody>
-                      {inspectionPaging.visible.map((d) => (
-                        <tr key={d.delivery_id}>
+                      {inspectionPaging.visible.map((d, i) => (
+                        <tr key={`${d.delivery_id}-${i}`}>
                           <td>{d.delivery_ref}</td>
                           <td>{d.supplier ?? "—"}</td>
                           <td>{d.po_reference ?? "—"}</td>
@@ -715,11 +630,9 @@ function PersonnelDocumentsContent() {  const router = useRouter();
             {tab === "inspection" && inspectedRows.length > 0 ? (
               <TablePager
                 id="docs-inspection"
-                total={inspectedRows.length}
-                pageSize={inspectionPageSize}
-                page={inspectionPaging.safePage}
-                onPageSizeChange={setInspectionPageSize}
-                onPageChange={setInspectionPage}
+                total={tabTotal}
+                page={safePage}
+                onPageChange={setPage}
               />
             ) : null}
 
@@ -756,7 +669,16 @@ function PersonnelDocumentsContent() {  const router = useRouter();
             </ReceiptOverlay>
 
             {tab === "stocks" &&
-              (stockRows.length === 0 ? (
+              (cold ? (
+                <>
+                  <DataTableSkeleton
+                    headers={["Item", "Account code", "Quantity", "Unit", "Location", "Receipt"]}
+                    cols={6}
+                    label="Loading stock documents"
+                  />
+                  <PagerSkeleton />
+                </>
+              ) : stockRows.length === 0 ? (
                 <div className={styles.emptyState}>
                   <p className={styles.panelSub}>
                     No stock records match your search.
@@ -776,8 +698,8 @@ function PersonnelDocumentsContent() {  const router = useRouter();
                       </tr>
                     </thead>
                     <tbody>
-                      {stockPaging.visible.map((r) => (
-                        <tr key={r.id}>
+                      {stockPaging.visible.map((r, i) => (
+                        <tr key={`${r.id}-${i}`}>
                           <td>{r.item_name}</td>
                           <td>{r.account_code ?? "—"}</td>
                           <td>{r.quantity}</td>
@@ -803,14 +725,12 @@ function PersonnelDocumentsContent() {  const router = useRouter();
                   </table>
                 </div>
               ))}
-            {tab === "stocks" && stockRows.length > 0 ? (
+            {tab === "stocks" && tabTotal > 0 ? (
               <TablePager
                 id="docs-stocks"
-                total={stockRows.length}
-                pageSize={stockPageSize}
-                page={stockPaging.safePage}
-                onPageSizeChange={setStockPageSize}
-                onPageChange={setStockPage}
+                total={tabTotal}
+                page={safePage}
+                onPageChange={setPage}
               />
             ) : null}
 
@@ -827,7 +747,16 @@ function PersonnelDocumentsContent() {  const router = useRouter();
             </ReceiptOverlay>
 
             {tab === "assets" &&
-              (assetRows.length === 0 ? (
+              (cold ? (
+                <>
+                  <DataTableSkeleton
+                    headers={["Property no.", "Account code", "Article", "Description", "Qty.", "Location", "Status", "Receipt", "Details"]}
+                    cols={9}
+                    label="Loading asset documents"
+                  />
+                  <PagerSkeleton />
+                </>
+              ) : assetRows.length === 0 ? (
                 <div className={styles.emptyState}>
                   <p className={styles.panelSub}>
                     No asset records match your search.
@@ -850,8 +779,8 @@ function PersonnelDocumentsContent() {  const router = useRouter();
                       </tr>
                     </thead>
                     <tbody>
-                      {assetPaging.visible.map((a) => (
-                        <tr key={a.id}>
+                      {assetPaging.visible.map((a, i) => (
+                        <tr key={`${a.id}-${i}`}>
                           <td>{a.qr_code ?? "—"}</td>
                           <td>{a.account_code ?? "—"}</td>
                           <td>{label(a.article)}</td>
@@ -894,14 +823,12 @@ function PersonnelDocumentsContent() {  const router = useRouter();
                   </table>
                 </div>
               ))}
-            {tab === "assets" && assetRows.length > 0 ? (
+            {tab === "assets" && tabTotal > 0 ? (
               <TablePager
                 id="docs-assets"
-                total={assetRows.length}
-                pageSize={assetPageSize}
-                page={assetPaging.safePage}
-                onPageSizeChange={setAssetPageSize}
-                onPageChange={setAssetPage}
+                total={tabTotal}
+                page={safePage}
+                onPageChange={setPage}
               />
             ) : null}
 
@@ -918,10 +845,19 @@ function PersonnelDocumentsContent() {  const router = useRouter();
             </ReceiptOverlay>
 
             {tab === "repairs" &&
-              (repairRows.length === 0 ? (
+              (cold ? (
+                <>
+                  <DataTableSkeleton
+                    headers={["Ticket", "Asset", "Reported by", "Technician", "Repair date", "Cost", "Status", "Receipt"]}
+                    cols={8}
+                    label="Loading repair documents"
+                  />
+                  <PagerSkeleton />
+                </>
+              ) : repairRows.length === 0 ? (
                 <div className={styles.emptyState}>
                   <p className={styles.panelSub}>
-                    {completedRepairs.length === 0
+                    {tabTotal === 0
                       ? "No completed repairs yet — receipts appear here once a repair is completed."
                       : "No repair receipts match your search."}
                   </p>
@@ -942,9 +878,9 @@ function PersonnelDocumentsContent() {  const router = useRouter();
                       </tr>
                     </thead>
                     <tbody>
-                      {repairPaging.visible.map((r) => (
-                        <tr key={r.id}>
-                          <td>{r.id.slice(0, 8).toUpperCase()}</td>
+                      {repairPaging.visible.map((r, i) => (
+                        <tr key={`${r.id}-${i}`}>
+                          <td>{r.id ? r.id.slice(0, 8).toUpperCase() : "—"}</td>
                           <td>{r.asset_label ?? "—"}</td>
                           <td>{r.reporter_name}</td>
                           <td>{r.technician ?? "Unassigned"}</td>
@@ -978,14 +914,12 @@ function PersonnelDocumentsContent() {  const router = useRouter();
                   </table>
                 </div>
               ))}
-            {tab === "repairs" && repairRows.length > 0 ? (
+            {tab === "repairs" && tabTotal > 0 ? (
               <TablePager
                 id="docs-repairs"
-                total={repairRows.length}
-                pageSize={repairPageSize}
-                page={repairPaging.safePage}
-                onPageSizeChange={setRepairPageSize}
-                onPageChange={setRepairPage}
+                total={tabTotal}
+                page={safePage}
+                onPageChange={setPage}
               />
             ) : null}
 
@@ -1002,7 +936,16 @@ function PersonnelDocumentsContent() {  const router = useRouter();
             </ReceiptOverlay>
 
             {tab === "iar" &&
-              (iarRows.length === 0 ? (
+              (cold ? (
+                <>
+                  <DataTableSkeleton
+                    headers={["IAR no.", "Type", "Delivery ref", "Supplier", "Inspector", "Result", "Date inspected", "Generated", "Report"]}
+                    cols={9}
+                    label="Loading IAR documents"
+                  />
+                  <PagerSkeleton />
+                </>
+              ) : iarRows.length === 0 ? (
                 <div className={styles.emptyState}>
                   <p className={styles.panelSub}>
                     No IAR reports generated yet.
@@ -1025,8 +968,8 @@ function PersonnelDocumentsContent() {  const router = useRouter();
                       </tr>
                     </thead>
                     <tbody>
-                      {iarPaging.visible.map((r) => (
-                        <tr key={r.id}>
+                      {iarPaging.visible.map((r, i) => (
+                        <tr key={`${r.id}-${i}`}>
                           <td>{r.iar_no ?? "Attached scan"}</td>
                           <td>
                             <span
@@ -1071,14 +1014,12 @@ function PersonnelDocumentsContent() {  const router = useRouter();
                   </table>
                 </div>
               ))}
-            {tab === "iar" && iarRows.length > 0 ? (
+            {tab === "iar" && tabTotal > 0 ? (
               <TablePager
                 id="docs-iar"
-                total={iarRows.length}
-                pageSize={iarPageSize}
-                page={iarPaging.safePage}
-                onPageSizeChange={setIarPageSize}
-                onPageChange={setIarPage}
+                total={tabTotal}
+                page={safePage}
+                onPageChange={setPage}
               />
             ) : null}
 
@@ -1112,7 +1053,16 @@ function PersonnelDocumentsContent() {  const router = useRouter();
             </ReceiptOverlay>
 
             {tab === "par" &&
-              (parRows.length === 0 ? (
+              (cold ? (
+                <>
+                  <DataTableSkeleton
+                    headers={["PAR no.", "Employee", "Item", "Qty", "Total", "Date", "Generated", "Report", "Details"]}
+                    cols={9}
+                    label="Loading PAR documents"
+                  />
+                  <PagerSkeleton />
+                </>
+              ) : parRows.length === 0 ? (
                 <div className={styles.emptyState}>
                   <p className={styles.panelSub}>
                     No PAR records yet — items valued over ₱50,000 appear here
@@ -1136,8 +1086,8 @@ function PersonnelDocumentsContent() {  const router = useRouter();
                       </tr>
                     </thead>
                     <tbody>
-                      {parPaging.visible.map((r) => (
-                        <tr key={r.id}>
+                      {parPaging.visible.map((r, i) => (
+                        <tr key={`${r.id}-${i}`}>
                           <td>{r.doc_no ?? "Signed scan"}</td>
                           <td>{r.employee_name}</td>
                           <td>{r.item_label}</td>
@@ -1168,14 +1118,12 @@ function PersonnelDocumentsContent() {  const router = useRouter();
                   </table>
                 </div>
               ))}
-            {tab === "par" && parRows.length > 0 ? (
+            {tab === "par" && tabTotal > 0 ? (
               <TablePager
                 id="docs-par"
-                total={parRows.length}
-                pageSize={parPageSize}
-                page={parPaging.safePage}
-                onPageSizeChange={setParPageSize}
-                onPageChange={setParPage}
+                total={tabTotal}
+                page={safePage}
+                onPageChange={setPage}
               />
             ) : null}
 
@@ -1215,7 +1163,16 @@ function PersonnelDocumentsContent() {  const router = useRouter();
             </ReceiptOverlay>
 
             {tab === "ics" &&
-              (icsRows.length === 0 ? (
+              (cold ? (
+                <>
+                  <DataTableSkeleton
+                    headers={["ICS no.", "Employee", "Item", "Qty", "Total", "Date", "Generated", "Report", "Details"]}
+                    cols={9}
+                    label="Loading ICS documents"
+                  />
+                  <PagerSkeleton />
+                </>
+              ) : icsRows.length === 0 ? (
                 <div className={styles.emptyState}>
                   <p className={styles.panelSub}>
                     No ICS records yet — items valued at ₱50,000 or less appear
@@ -1239,8 +1196,8 @@ function PersonnelDocumentsContent() {  const router = useRouter();
                       </tr>
                     </thead>
                     <tbody>
-                      {icsPaging.visible.map((r) => (
-                        <tr key={r.id}>
+                      {icsPaging.visible.map((r, i) => (
+                        <tr key={`${r.id}-${i}`}>
                           <td>{r.doc_no ?? "Signed scan"}</td>
                           <td>{r.employee_name}</td>
                           <td>{r.item_label}</td>
@@ -1271,14 +1228,12 @@ function PersonnelDocumentsContent() {  const router = useRouter();
                   </table>
                 </div>
               ))}
-            {tab === "ics" && icsRows.length > 0 ? (
+            {tab === "ics" && tabTotal > 0 ? (
               <TablePager
                 id="docs-ics"
-                total={icsRows.length}
-                pageSize={icsPageSize}
-                page={icsPaging.safePage}
-                onPageSizeChange={setIcsPageSize}
-                onPageChange={setIcsPage}
+                total={tabTotal}
+                page={safePage}
+                onPageChange={setPage}
               />
             ) : null}
 

@@ -117,8 +117,8 @@ export async function addPersonnelEmployee(
   // Personnel stat stays stale for 60s, which looks like the submit failed
   // and invites a double-submit (which then waits on the idempotency poll).
   try {
-    const { bustPersonnelCache } = await import('@/lib/personnel-cache')
-    await bustPersonnelCache()
+    const { bustSuperAdminScopes } = await import('@/lib/personnel-cache')
+    await bustSuperAdminScopes(['dashboard'])
   } catch {
     // best-effort: a stale cache must not fail an already-created account
   }

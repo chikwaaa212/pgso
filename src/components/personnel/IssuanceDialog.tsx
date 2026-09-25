@@ -1,8 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Loader2 } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { ActionButton } from "@/components/ui/action-button";
 import {
   Dialog,
   DialogContent,
@@ -376,104 +377,124 @@ export function IssuanceEvaluateDialog({
     if (!canSubmit || saving) return;
     setSaving(true);
     setError("");
+    try {
+      // Optionally persist a hand-typed posting back to the employee profile
+      // so the next evaluation auto-fills it. "Position, Office" round-trips
+      // through the same join used for the guess above.
+      if (savePosting && displayedToPosition.trim() !== "" && employeeId !== "") {
+        const [pos, ...rest] = displayedToPosition.split(",");
+        const res = await updateEmployeePosting(
+          employeeId,
+          (pos ?? "").trim(),
+          rest.join(",").trim()
+        );
+        if (!res.success) {
+          const msg = res.error ?? "Failed to save the employee posting.";
+          setError(msg);
+          toast.error(msg, { duration: 2000, closeButton: true });
+          return;
+        }
+        setSavePosting(false);
+      }
 
-    // Optionally persist a hand-typed posting back to the employee profile
-    // so the next evaluation auto-fills it. "Position, Office" round-trips
-    // through the same join used for the guess above.
-    if (savePosting && displayedToPosition.trim() !== "" && employeeId !== "") {
-      const [pos, ...rest] = displayedToPosition.split(",");
-      const res = await updateEmployeePosting(
-        employeeId,
-        (pos ?? "").trim(),
-        rest.join(",").trim()
-      );
-      if (!res.success) {
-        setSaving(false);
-        setError(res.error ?? "Failed to save the employee posting.");
+      if (mode === "approve-request" && request) {
+        const lines: EvaluateLineInput[] = rows.map((row, i) => ({
+          assetId:
+            calcs[i].kind === "asset" ? row.itemId || undefined : undefined,
+          inventoryId:
+            calcs[i].kind === "stock" ? row.itemId || undefined : undefined,
+          quantity: calcs[i].qty,
+          unitCostOverride:
+            row.override.trim() === ""
+              ? (row.snapshotUnitCost ?? null)
+              : Number(row.override),
+          lineDescription: row.lineDesc.trim() || undefined,
+        }));
+        const res = await approveRequestWithIssuance(
+          request.id,
+          {
+            employeeId,
+            quantity: qty,
+            lines,
+            isForIssuance,
+            entity: entity.trim(),
+            fundCluster: fundCluster.trim(),
+            docNo: docNo.trim(),
+            docDate,
+            description: description.trim(),
+            propertyNo: propertyNo.trim(),
+            inventoryItemNo: inventoryItemNo.trim(),
+            estUsefulLife: estUsefulLife.trim(),
+            fromName: fromName.trim(),
+            fromPosition: fromPosition.trim(),
+            toName: employeeName,
+            toPosition: displayedToPosition.trim(),
+          },
+          remarks
+        );
+        if (!res.success) {
+          const msg = res.error ?? "Failed to save the issuance.";
+          setError(msg);
+          toast.error(msg, { duration: 2000, closeButton: true });
+          return;
+        }
+        onOpenChange(false);
+        onSuccess?.();
+        toast.success(
+          isForIssuance
+            ? "Item assigned successfully."
+            : "Request processed successfully.",
+          { duration: 2000, closeButton: true }
+        );
         return;
       }
-      setSavePosting(false);
-    }
 
-    if (mode === "approve-request" && request) {
-      const lines: EvaluateLineInput[] = rows.map((row, i) => ({
-        assetId:
-          calcs[i].kind === "asset" ? row.itemId || undefined : undefined,
-        inventoryId:
-          calcs[i].kind === "stock" ? row.itemId || undefined : undefined,
-        quantity: calcs[i].qty,
-        unitCostOverride:
-          row.override.trim() === ""
-            ? (row.snapshotUnitCost ?? null)
-            : Number(row.override),
-        lineDescription: row.lineDesc.trim() || undefined,
-      }));
-      const res = await approveRequestWithIssuance(
-        request.id,
-        {
-          employeeId,
-          quantity: qty,
-          lines,
-          isForIssuance,
-          entity: entity.trim(),
-          fundCluster: fundCluster.trim(),
-          docNo: docNo.trim(),
-          docDate,
-          description: description.trim(),
-          propertyNo: propertyNo.trim(),
-          inventoryItemNo: inventoryItemNo.trim(),
-          estUsefulLife: estUsefulLife.trim(),
-          fromName: fromName.trim(),
-          fromPosition: fromPosition.trim(),
-          toName: employeeName,
-          toPosition: displayedToPosition.trim(),
-        },
-        remarks
-      );
-      setSaving(false);
+      // Direct (single-item) path.
+      const [assetId, inventoryId] =
+        picked?.kind === "asset"
+          ? [rows[0]?.itemId, undefined]
+          : picked?.kind === "stock"
+            ? [undefined, rows[0]?.itemId]
+            : [undefined, undefined];
+      const input = {
+        employeeId,
+        assetId,
+        inventoryId,
+        quantity: qty,
+        isForIssuance,
+        entity: entity.trim(),
+        fundCluster: fundCluster.trim(),
+        docNo: docNo.trim(),
+        docDate,
+        description: description.trim() || picked?.label || "",
+        propertyNo: propertyNo.trim(),
+        inventoryItemNo: inventoryItemNo.trim(),
+        estUsefulLife: estUsefulLife.trim(),
+        fromName: fromName.trim(),
+        fromPosition: fromPosition.trim(),
+        toName: employeeName,
+        toPosition: displayedToPosition.trim(),
+      };
+      const res = await createDirectIssuance(input);
       if (!res.success) {
-        setError(res.error ?? "Failed to save the issuance.");
+        const msg = res.error ?? "Failed to save the issuance.";
+        setError(msg);
+        toast.error(msg, { duration: 2000, closeButton: true });
         return;
       }
       onOpenChange(false);
       onSuccess?.();
-      return;
+      toast.success(
+        isForIssuance ? "Item assigned successfully." : "Item saved to stock.",
+        { duration: 2000, closeButton: true }
+      );
+    } catch {
+      const msg = "Failed to save the issuance. Please try again.";
+      setError(msg);
+      toast.error(msg, { duration: 2000, closeButton: true });
+    } finally {
+      setSaving(false);
     }
-
-    // Direct (single-item) path.
-    const [assetId, inventoryId] =
-      picked?.kind === "asset"
-        ? [rows[0]?.itemId, undefined]
-        : picked?.kind === "stock"
-          ? [undefined, rows[0]?.itemId]
-          : [undefined, undefined];
-    const input = {
-      employeeId,
-      assetId,
-      inventoryId,
-      quantity: qty,
-      isForIssuance,
-      entity: entity.trim(),
-      fundCluster: fundCluster.trim(),
-      docNo: docNo.trim(),
-      docDate,
-      description: description.trim() || picked?.label || "",
-      propertyNo: propertyNo.trim(),
-      inventoryItemNo: inventoryItemNo.trim(),
-      estUsefulLife: estUsefulLife.trim(),
-      fromName: fromName.trim(),
-      fromPosition: fromPosition.trim(),
-      toName: employeeName,
-      toPosition: displayedToPosition.trim(),
-    };
-    const res = await createDirectIssuance(input);
-    setSaving(false);
-    if (!res.success) {
-      setError(res.error ?? "Failed to save the issuance.");
-      return;
-    }
-    onOpenChange(false);
-    onSuccess?.();
   }
 
   return (
@@ -849,23 +870,15 @@ export function IssuanceEvaluateDialog({
           >
             Cancel
           </Button>
-          <Button
+          <ActionButton
             type="button"
             disabled={!canSubmit || saving}
-            onClick={() => void submit()}
+            onClick={() => submit()}
+            loadingLabel={isForIssuance ? "Assigning…" : "Saving…"}
             className="h-8 gap-2 rounded-[4px] px-3.5 text-xs font-semibold"
           >
-            {saving ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Saving…
-              </>
-            ) : isForIssuance ? (
-              `Prepare ${docType} & assign`
-            ) : (
-              "Keep in stock"
-            )}
-          </Button>
+            {isForIssuance ? `Prepare ${docType} & assign` : "Keep in stock"}
+          </ActionButton>
         </DialogFooter>
       </DialogContent>
     </Dialog>

@@ -44,7 +44,7 @@ export interface CatalogRow {
 function revalidatePath(path: string) {
   nextRevalidatePath(path)
   void import('@/lib/personnel-cache')
-    .then((m) => m.bustPersonnelCache())
+    .then((m) => m.bustSuperAdminScopes(['master-data']))
     .catch(() => {})
 }
 

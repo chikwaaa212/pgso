@@ -58,10 +58,10 @@ export async function setReorderThreshold(
       },
     })
 
-    // Thresholds feed stock alerts everywhere — bust the server caches so
-    // personnel + admin lists and dashboards pick it up immediately.
-    const { bustPersonnelCache } = await import('@/lib/personnel-cache')
-    await bustPersonnelCache()
+    // Thresholds feed stock alerts — narrow bust so one cell edit doesn't
+    // wipe unrelated dashboards, pick-lists and snapshots.
+    const { bustSuperAdminScopes } = await import('@/lib/personnel-cache')
+    await bustSuperAdminScopes(['inventory'])
 
     revalidatePath('/super-admin/inventory')
     revalidatePath('/personnel/inventory')

@@ -56,7 +56,7 @@ export default function SuperAdminTransactionsPage() {
   // instantly from memory / sessionStorage and only revalidates silently
   // when stale (60s, matching the server caches) — same SWR pattern as
   // the other admin pages.
-  const { data: snapshot, loading } = useCachedAction(
+  const { data: snapshot, loading, isValidating } = useCachedAction(
     CLIENT_CACHE_KEYS.adminTransactions,
     () =>
       Promise.all([
@@ -118,6 +118,9 @@ export default function SuperAdminTransactionsPage() {
           inspection · {stats?.pendingRequests ?? 0} pending requests ·{' '}
           {(stats?.pendingRepairs ?? 0) + (stats?.inProgressRepairs ?? 0)} active repairs ·{' '}
           {stats?.totalIssuances ?? 0} PAR/ICS issued · view-only oversight
+          {isValidating ? (
+            <span role="status" aria-live="polite"> · Updating…</span>
+          ) : null}
         </p>
       </div>
 

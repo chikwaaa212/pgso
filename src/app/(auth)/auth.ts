@@ -192,8 +192,9 @@ export async function login(
 
     // Skip the audit row when this was a duplicate-key replay of an
     // already-logged sign-in — the first attempt already wrote it.
+    // Fire-and-forget: audit must never block the login redirect.
     if (!outcome.duplicate) {
-      await writeAuditLog({
+      void writeAuditLog({
         userId: outcome.result.userId,
         action: 'auth:login',
         module: 'auth',
@@ -201,7 +202,7 @@ export async function login(
           purpose: 'User sign-in',
           summary: `Signed in as ${email}`,
         },
-      })
+      }).catch(() => {})
     }
 
     // Guests bounced by middleware carry ?next=<protected path>.

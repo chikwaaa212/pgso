@@ -95,8 +95,8 @@ export async function createCustomField(input: {
     await prisma.$executeRaw`
       INSERT INTO asset_custom_fields (id, field_key, label, field_type, created_by)
       VALUES (${randomUUID()}::uuid, ${key}, ${label}, ${input.field_type}, ${me}::uuid)`
-    const { bustPersonnelCache } = await import('@/lib/personnel-cache')
-    await bustPersonnelCache()
+    const { bustPersonnelScopes } = await import('@/lib/personnel-cache')
+    await bustPersonnelScopes(['assets'])
     return { success: true }
   } catch (e) {
     console.error('[createCustomField]', e)
@@ -115,8 +115,8 @@ export async function deleteCustomField(
     // Prune orphaned values so dead keys don't linger in the bags.
     await prisma.$executeRaw`UPDATE assets SET custom_fields = custom_fields - ${key}`
     await prisma.$executeRaw`UPDATE inventory SET custom_fields = custom_fields - ${key}`
-    const { bustPersonnelCache } = await import('@/lib/personnel-cache')
-    await bustPersonnelCache()
+    const { bustPersonnelScopes } = await import('@/lib/personnel-cache')
+    await bustPersonnelScopes(['assets'])
     return { success: true }
   } catch (e) {
     console.error('[deleteCustomField]', e)
@@ -182,8 +182,8 @@ export async function setCustomValue(input: {
         await prisma.$executeRaw`UPDATE inventory SET custom_fields = jsonb_set(COALESCE(custom_fields, '{}'), ARRAY[${input.key}], to_jsonb(${clean}::text)) WHERE id = ${input.id}::uuid`
       }
     }
-    const { bustPersonnelCache } = await import('@/lib/personnel-cache')
-    await bustPersonnelCache()
+    const { bustPersonnelScopes } = await import('@/lib/personnel-cache')
+    await bustPersonnelScopes(['assets'])
     return { success: true }
   } catch (e) {
     console.error('[setCustomValue]', e)

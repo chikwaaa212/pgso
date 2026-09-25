@@ -3,10 +3,10 @@ import styles from "./page.module.css";
 
 /**
  * Super-admin master-data skeleton — mirrors SuperAdminMasterDataPage 1:1
- * (crumb, header with counts, Units panel with add form + 5-col table
- * with toggle buttons, catalog panel with import button + add form +
- * 7-col table with Edit/Toggle buttons) so content swaps in without
- * layout shift.
+ * (crumb, header with counts, Departments panel, Units panel with add form
+ * + 5-col table with toggle buttons, catalog panel with import button +
+ * add form + 7-col table with Edit/Toggle buttons) so content swaps in
+ * without layout shift.
  *
  * Static chrome renders as real text with the real classes; only live
  * values are pulse placeholders sized to the real cells.
@@ -62,6 +62,50 @@ export default function MasterDataLoading() {
           value is in use.
         </p>
       </div>
+
+      <Card className={styles.panel}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "1rem", flexWrap: "nowrap" }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <h2 className={styles.panelTitle}>Departments</h2>
+            <p className={styles.panelSub}>
+              Office / department names personnel pick during registration.
+            </p>
+          </div>
+          <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", alignItems: "center", flexShrink: 0 }} aria-hidden="true">
+            <span className={dashboardBtn}>Add department</span>
+          </div>
+        </div>
+        <div className={styles.tableWrap}>
+          <table className={styles.table} aria-hidden="true">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Used in</th>
+                <th>Status</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {Array.from({ length: 4 }).map((_, r) => (
+                <tr key={r} style={{ opacity: 1 - r * 0.08 }}>
+                  <td>
+                    <TextPulse className="h-3.5 w-32" />
+                  </td>
+                  <td>
+                    <TextPulse className="h-3.5 w-8" />
+                  </td>
+                  <td>
+                    <PillPulse />
+                  </td>
+                  <td>
+                    <span style={smallBtnNavy}>Deactivate</span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Card>
 
       <Card className={styles.panel}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "1rem", flexWrap: "nowrap" }}>

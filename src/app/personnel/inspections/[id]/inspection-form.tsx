@@ -26,6 +26,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/components/ui/toaster";
+import { toast as toastSonner } from "sonner";
 import { CLIENT_CACHE_KEYS, bustClientCache } from "@/lib/client-cache";
 import { recordInspection, type InspectionState } from "../../deliveries/actions";
 import type { DeliveryForInspection } from "../actions";
@@ -148,8 +149,16 @@ export function InspectionForm({
   const alreadyInspected = delivery.inspection_status !== 'pending'
   // Updates stay open for partial inspections (and legacy failed ones so
   // they can move to Partial/Passed). Only Passed and Partial are issued now.
-  const isPartial = delivery.inspection_status === 'partial'
-  const isLegacyFailed = delivery.inspection_status === 'failed'
+  // Mirror the list predicate (`canEditInspection` in inspections/page.tsx):
+  // either the delivery-level status OR the latest inspection result being
+  // Partial/Failed keeps the form editable, so the two can never disagree.
+  const statusOf = (v: string | null | undefined) => (v ?? '').toLowerCase()
+  const isPartial =
+    statusOf(delivery.inspection_status) === 'partial' ||
+    statusOf(delivery.inspection_data?.result) === 'partial'
+  const isLegacyFailed =
+    statusOf(delivery.inspection_status) === 'failed' ||
+    statusOf(delivery.inspection_data?.result) === 'failed'
   const isEditable = isPartial || isLegacyFailed
 
 // Item-level checks — the input collects THIS ROUND's received quantity
@@ -290,6 +299,8 @@ export function InspectionForm({
       });
       // Statuses changed — drop the cached lists + dashboard + stocks so
       // the next visit refetches instead of serving pre-inspection data.
+      // Targeted bust + navigation only (was bust + push + full refresh,
+      // double-refetching every list).
       bustClientCache([
         CLIENT_CACHE_KEYS.inspections,
         CLIENT_CACHE_KEYS.deliveries,
@@ -297,7 +308,6 @@ export function InspectionForm({
         CLIENT_CACHE_KEYS.inventory,
       ]);
       router.push("/personnel/inspections");
-      router.refresh();
     }
     if (actionState.error) {
       toast({
@@ -336,6 +346,31 @@ export function InspectionForm({
   const canPass = isPassedAllowed(cumulativeChecks, delivery.items);
 
   // ── Handlers ──────────────────────────────────────────────────────────────
+
+  // Incomplete submissions surface as top-center sonner toasts (not the
+  // global top-right stack) so the guidance lands where the inspector is
+  // looking. The submit button stays enabled so an attempt is always
+  // possible; this guard blocks the server action until all gates pass.
+  function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
+    if (canSubmit) return;
+    e.preventDefault();
+    const topCenter = {
+      position: "top-center" as const,
+      duration: 2500,
+      closeButton: true,
+    };
+    if (!allItemsChecked)
+      toastSonner.error("All items must have a status set.", topCenter);
+    if (!allSupplierChecked)
+      toastSonner.error(
+        "All supplier verification questions must be answered.",
+        topCenter
+      );
+    if (inspectorName.trim() === "")
+      toastSonner.error("Inspector name is required.", topCenter);
+    if (verdict === "")
+      toastSonner.error("Select an inspection verdict.", topCenter);
+  }
 
   function updateItem(
     itemId: string,
@@ -385,7 +420,11 @@ const deliveryRef = delivery.id.slice(0, 8).toUpperCase();
   if (alreadyInspected && !isEditable) {
     const tone = delivery.inspection_status === "passed" ? "ok" : "warn";
     const label =
-      delivery.inspection_status === "passed" ? "Passed" : "Partial";
+      delivery.inspection_status === "passed"
+        ? "Passed"
+        : delivery.inspection_status === "failed"
+          ? "Failed"
+          : "Partial";
 
     return (
       <section className={styles.section}>
@@ -470,7 +509,7 @@ const deliveryRef = delivery.id.slice(0, 8).toUpperCase();
 
       {/* Hidden fields are injected into the form via a wrapper so the
           server action receives them without cluttering JSX */}
-      <form action={formAction} className={styles.form} noValidate>
+      <form action={formAction} onSubmit={handleSubmit} className={styles.form} noValidate>
         {/* Hidden action inputs */}
         <input type="hidden" name="deliveryId" value={delivery.id} />
         <input type="hidden" name="result" value={verdict} />
@@ -816,19 +855,9 @@ const deliveryRef = delivery.id.slice(0, 8).toUpperCase();
         </Card>
 
         {/* ── Submit row ────────────────────────────────────────────── */}
+        {/* Incomplete-form guidance fires as top-center sonner toasts via
+            handleSubmit (the button stays clickable) — see above. */}
         <div className={styles.submitRow}>
-          {!allItemsChecked && (
-            <p className={styles.hint}>
-              <AlertCircle className="inline h-4 w-4 mr-1" />
-              All items must have a status set.
-            </p>
-          )}
-          {!allSupplierChecked && (
-            <p className={styles.hint}>
-              <AlertCircle className="inline h-4 w-4 mr-1" />
-              All supplier verification questions must be answered.
-            </p>
-          )}
           {actionState.error && (
             <p className={styles.hint} style={{ color: "#991b1b", background: "#fee2e2", borderColor: "#fca5a5" }}>
               <AlertCircle className="inline h-4 w-4 mr-1" />
@@ -848,7 +877,6 @@ const deliveryRef = delivery.id.slice(0, 8).toUpperCase();
             <SubmitButton
               size="sm"
               className="h-8 rounded-[4px] px-3.5 text-xs font-semibold"
-              disabled={!canSubmit}
               pendingLabel={isEditable ? "Updating…" : "Recording…"}
             >
               {isEditable ? 'Update Inspection' : 'Record Inspection'}

@@ -7,6 +7,7 @@ import { RepairReceipt } from "../../repairs/repair-receipt";
 import { ParReportSheet } from "../../documents/par-report";
 import { IcsReportSheet } from "../../documents/ics-report";
 import { ReceiptOverlay } from "../../documents/receipt-overlay";
+import { ReceiptLoading } from "@/components/personnel/ReceiptLoading";
 import receipt from "../../inspections/components/receipt.module.css";
 import styles from "../../dashboard/page.module.css";
 import type { AssetHistory, UnifiedAssetRow } from "../actions";
@@ -270,12 +271,12 @@ export function AssetHistorySection({
           setIssuanceDoc(null);
         }}
       >
-        {issuanceLoading || !issuanceDoc ? (
+        {issuanceLoading ? (
+          <ReceiptLoading label="Loading receipt…" />
+        ) : !issuanceDoc ? (
           <div className={styles.emptyState}>
             <p className={styles.panelSub}>
-              {issuanceLoading
-                ? "Loading receipt…"
-                : "This record is no longer available."}
+              This record is no longer available.
             </p>
           </div>
         ) : (

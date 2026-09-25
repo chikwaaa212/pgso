@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Calendar,
   Check,
@@ -27,6 +27,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import type { PublicIssueLine } from "./actions";
 import styles from "../dashboard/page.module.css";
 import airStyles from "../inspections/air-section.module.css";
@@ -64,18 +65,33 @@ function initials(name: string) {
 export function IssuesTable({
   rows,
   showLoggedBy = false,
+  serverTypeOptions,
+  onFiltersChange,
 }: {
   rows: PublicIssueLine[];
   /** Shows the "Logged By" (issuing user) column — used by Super Admin oversight. */
   showLoggedBy?: boolean;
+  /** Full-registry type options (server) — used when rows are a page window. */
+  serverTypeOptions?: string[];
+  /** Reports debounced filter state up for server-paged fetching. */
+  onFiltersChange?: (filters: { q: string; docType: string; assetType: string }) => void;
 }) {
   const [query, setQuery] = useState("");
   const [docFilter, setDocFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
   const [active, setActive] = useState<PublicIssueLine | null>(null);
   const [copied, setCopied] = useState(false);
+  // Debounced search — large registries no longer re-filter per keystroke.
+  const debouncedQuery = useDebouncedValue(query, 250);
+  const serverDriven = onFiltersChange !== undefined;
+  useEffect(() => {
+    if (serverDriven) onFiltersChange({ q: debouncedQuery, docType: docFilter, assetType: typeFilter });
+  }, [debouncedQuery, docFilter, typeFilter, serverDriven, onFiltersChange]);
 
   const typeOptions = useMemo(() => {
+    if (serverTypeOptions) {
+      return serverTypeOptions.map((raw) => [raw.toLowerCase(), raw] as [string, string]);
+    }
     const map = new Map<string, string>();
     for (const r of rows) {
       const raw = (r.asset_type ?? "").trim();
@@ -84,10 +100,12 @@ export function IssuesTable({
       if (!map.has(key)) map.set(key, raw);
     }
     return [...map.entries()].sort((a, b) => a[1].localeCompare(b[1]));
-  }, [rows]);
+  }, [rows, serverTypeOptions]);
 
   const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
+    // Server-driven: the DB already applied q/doc/type — render the window.
+    if (serverDriven) return rows;
+    const q = debouncedQuery.trim().toLowerCase();
     return rows.filter((r) => {
       if (docFilter !== "all" && r.doc_type !== docFilter) return false;
       if (typeFilter !== "all" && (r.asset_type ?? "").trim().toLowerCase() !== typeFilter)

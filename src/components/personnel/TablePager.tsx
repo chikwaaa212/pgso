@@ -1,14 +1,9 @@
 "use client";
 
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { PAGE_SIZE_OPTIONS } from "@/hooks/use-page-size";
 import styles from "@/app/personnel/dashboard/page.module.css";
+
+/** Fixed rows-per-page across all Personnel tables (selector removed). */
+export const FIXED_PAGE_SIZE = 20;
 
 export function pageWindow(current: number, total: number) {
   const start = Math.max(1, Math.min(current - 2, total - 4));
@@ -19,62 +14,39 @@ export function pageWindow(current: number, total: number) {
 }
 
 interface TablePagerProps {
-  /** Unique id prefix for the rows-per-page label (e.g. "inspections"). */
+  /** Unique id prefix (kept for aria-labels). */
   id: string;
   /** Number of rows after filtering. */
   total: number;
-  pageSize: number;
+  /** Rows per page — always FIXED_PAGE_SIZE (20); prop kept for compat. */
+  pageSize?: number;
   /** Current page (1-indexed); clamped internally. */
   page: number;
-  onPageSizeChange: (size: number) => void;
+  /** Optional back-compat; ignored (page size is fixed at 20). */
+  onPageSizeChange?: (size: number) => void;
   onPageChange: (page: number) => void;
 }
 
-/** Shared "Showing X–Y of Z" + Rows select + page buttons, matching Assets/Deliveries. */
+/** Shared "Showing X–Y of Z" (fixed 20 rows/page) + page buttons. */
 export function TablePager({
   id,
   total,
-  pageSize,
   page,
-  onPageSizeChange,
   onPageChange,
 }: TablePagerProps) {
+  const pageSize = FIXED_PAGE_SIZE;
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
   const safePage = Math.min(Math.max(1, page), pageCount);
   const start = (safePage - 1) * pageSize;
   const { pages } = pageWindow(safePage, pageCount);
+  void id;
 
   return (
     <div className={styles.pager}>
       <span className={styles.pagerInfo}>
-        Showing {start + 1}–{Math.min(start + pageSize, total)} of {total}
+        Showing {total === 0 ? 0 : start + 1}–{Math.min(start + pageSize, total)} of {total}
       </span>
       <div className={styles.pagerControls}>
-        <span className={styles.pageSizeWrap}>
-          <label htmlFor={`${id}-page-size`}>Rows</label>
-          <Select
-            value={String(pageSize)}
-            onValueChange={(v) => {
-              onPageSizeChange(Number(v));
-              onPageChange(1);
-            }}
-          >
-            <SelectTrigger
-              id={`${id}-page-size`}
-              size="sm"
-              className="w-[5.5rem]"
-            >
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {PAGE_SIZE_OPTIONS.map((size) => (
-                <SelectItem key={size} value={String(size)}>
-                  {size}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </span>
         <button
           type="button"
           className={styles.pageBtn}

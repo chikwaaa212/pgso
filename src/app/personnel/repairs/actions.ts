@@ -4,17 +4,17 @@ import { revalidatePath as nextRevalidatePath } from 'next/cache'
 
 // Every Next.js revalidation also busts the Upstash personnel cache so
 // Redis never serves stale lists after a write (fire-and-forget).
+// Narrow: repair writes touch repairs/dashboard/documents only.
 function revalidatePath(path: string) {
   nextRevalidatePath(path)
   void import('@/lib/personnel-cache')
-    .then((m) => m.bustPersonnelCache())
+    .then((m) => m.bustPersonnelScopes(['repairs', 'dashboard', 'documents']))
     .catch(() => {})
 }
 import { createClient } from '@/lib/supabase/server'
 import prisma from '@/lib/prisma'
 import { writeAuditLog } from '@/lib/audit'
 import { getPersonnelScope } from '@/lib/personnel-scope'
-import { getAllUnifiedAssets } from '../assets/actions'
 import { REPAIR_STATUSES, type RepairStatus } from './repair-types'
 
 export interface RepairRow {
@@ -62,8 +62,64 @@ function assetLabel(a: {
   return bits.length > 0 ? bits.join(' — ').slice(0, 80) : 'Asset'
 }
 
+/** Slim asset labels for repairs (no QR / custom-bag cost of getAllUnifiedAssets). */
+async function getRepairLabelMap(): Promise<
+  Map<string, { label: string; account_code: string | null; account_title: string | null; category: string | null }>
+> {
+  const [assetRows, stockRows] = await Promise.all([
+    prisma.asset
+      .findMany({
+        select: { id: true, qr_code: true, account_code: true, article: true, description: true, account_title: true, account_name: true, category: true },
+      })
+      .catch(() => [] as { id: string; qr_code: string | null; account_code: string | null; article: string | null; description: string | null; account_title: string | null; account_name: string | null; category: string | null }[]),
+    prisma.inventoryItem
+      .findMany({ select: { id: true, item_name: true, account_code: true, category: true } })
+      .catch(() => [] as { id: string; item_name: string; account_code: string | null; category: string | null }[]),
+  ])
+  const map = new Map<string, { label: string; account_code: string | null; account_title: string | null; category: string | null }>()
+  for (const a of assetRows) {
+    map.set(a.id, {
+      label: assetLabel(a),
+      account_code: a.account_code,
+      account_title: a.account_title ?? a.account_name,
+      category: a.category,
+    })
+  }
+  for (const s of stockRows) {
+    if (!map.has(s.id)) {
+      map.set(s.id, {
+        label: assetLabel({ qr_code: null, account_code: s.account_code, article: s.item_name, description: null }),
+        account_code: s.account_code,
+        account_title: null,
+        category: s.category,
+      })
+    }
+  }
+  return map
+}
+
+export interface RepairsPageOpts {
+  page?: number
+  pageSize?: number
+  q?: string
+  status?: string
+}
+
 export async function getRepairs(): Promise<RepairRow[]> {
+  const { rows } = await getRepairsPage({ page: 1, pageSize: 500 })
+  return rows
+}
+
+export async function getRepairsPage(
+  opts: RepairsPageOpts = {}
+): Promise<{ rows: RepairRow[]; total: number }> {
   const { withScopedCache } = await import('@/lib/personnel-cache')
+  const page = Math.floor(Number(opts.page)) >= 1 ? Math.min(Math.floor(Number(opts.page)), 1000) : 1
+  const pageSize = Number.isFinite(Number(opts.pageSize))
+    ? Math.min(Math.max(Math.floor(Number(opts.pageSize)), 1), 100)
+    : 20
+  const q = (opts.q ?? '').trim().slice(0, 120)
+  const status = (opts.status ?? 'all').trim()
   // v2 = strict owner filter (created_by = me). Bumps the cache key so the
   // pre-fix payload (which included legacy NULL rows for everyone) is
   // never served after deploy.
@@ -74,7 +130,10 @@ export async function getRepairs(): Promise<RepairRow[]> {
     // recipient (see setRequestStatus). No legacy-NULL fallback — a NULL
     // owner must never leak another user's ticket. Super_admin sees all.
     const scope = await getPersonnelScope()
-    if (scope.isEmpty || !scope.userId) return []
+    if (scope.isEmpty || !scope.userId) return { rows: [], total: 0 }
+    const me = scope.userId
+    const offset = (page - 1) * pageSize
+    const like = q ? `%${q}%` : null
     interface RepairDbRow {
       id: string
       asset_id: string
@@ -87,56 +146,77 @@ export async function getRepairs(): Promise<RepairRow[]> {
       created_at: Date | string | null
       created_by: string | null
     }
+    const statusFilter = status !== 'all' ? status : null
+    // Composed filter: owner + status + text search across the ticket,
+    // reporter name, and linked asset/stock labels (single query shape for
+    // page + count, instead of 8 branch queries).
+    const { Prisma } = await import('@prisma/client')
+    const repairConds: InstanceType<typeof Prisma.Sql>[] = []
+    if (!scope.isSuperAdmin) repairConds.push(Prisma.sql`r.created_by = ${me}::uuid`)
+    if (statusFilter) repairConds.push(Prisma.sql`r.status = ${statusFilter}`)
+    if (like) {
+      repairConds.push(Prisma.sql`(
+        r.description ILIKE ${like} OR r.technician ILIKE ${like} OR r.status ILIKE ${like}
+        OR p.full_name ILIKE ${like}
+        OR a.article ILIKE ${like} OR a.account_code ILIKE ${like} OR a.account_title ILIKE ${like}
+        OR s.item_name ILIKE ${like} OR s.account_code ILIKE ${like}
+      )`)
+    }
+    const repairWhere =
+      repairConds.length > 0 ? Prisma.sql`WHERE ${Prisma.join(repairConds, ' AND ')}` : Prisma.empty
+    const repairJoins = Prisma.sql`
+      FROM repairs r
+      LEFT JOIN profiles p ON p.id = r.reported_by
+      LEFT JOIN assets a ON a.id = r.asset_id
+      LEFT JOIN inventory s ON s.id = r.asset_id AND a.id IS NULL`
+    async function queryPage(): Promise<RepairDbRow[]> {
+      return prisma.$queryRaw<RepairDbRow[]>`
+        SELECT r.id::text AS id, r.asset_id::text AS asset_id,
+               r.reported_by::text AS reported_by, r.repair_date, r.description,
+               r.status, r.cost, r.technician, r.created_at,
+               r.created_by::text AS created_by
+        ${repairJoins} ${repairWhere}
+        ORDER BY r.created_at DESC LIMIT ${pageSize} OFFSET ${offset}`
+    }
+    async function queryCount(): Promise<number> {
+      try {
+        const r = await prisma.$queryRaw<Array<{ count: bigint }>>`
+          SELECT COUNT(*)::bigint AS count ${repairJoins} ${repairWhere}`
+        return Number(r[0]?.count ?? 0)
+      } catch {
+        return 0
+      }
+    }
     let repairRows: RepairDbRow[]
+    let total = 0
     try {
-      repairRows = scope.isSuperAdmin
-        ? await prisma.$queryRaw<RepairDbRow[]>`
-        SELECT id::text AS id, asset_id::text AS asset_id,
-               reported_by::text AS reported_by, repair_date, description,
-               status, cost, technician, created_at,
-               created_by::text AS created_by
-        FROM repairs
-        ORDER BY created_at DESC`
-        : await prisma.$queryRaw<RepairDbRow[]>`
-        SELECT id::text AS id, asset_id::text AS asset_id,
-               reported_by::text AS reported_by, repair_date, description,
-               status, cost, technician, created_at,
-               created_by::text AS created_by
-        FROM repairs
-        WHERE created_by = ${scope.userId}::uuid
-        ORDER BY created_at DESC`
+      ;[repairRows, total] = await Promise.all([queryPage(), queryCount()])
     } catch {
       // Column missing (migration not applied yet) → fail closed for
       // personnel: returning everything would leak other users' tickets.
-      // Super_admin keeps the unfiltered fallback; personnel gets nothing
-      // rather than the whole table.
-      if (!scope.isSuperAdmin) return []
+      if (!scope.isSuperAdmin) return { rows: [], total: 0 }
       const fallback = await prisma.repair.findMany({
         orderBy: { created_at: 'desc' },
+        take: pageSize,
+        skip: offset,
+        select: { id: true, asset_id: true, reported_by: true, repair_date: true, description: true, status: true, cost: true, technician: true, created_at: true },
       })
-      repairRows = fallback.map((r) => ({
-        id: r.id,
-        asset_id: r.asset_id,
-        reported_by: r.reported_by,
-        repair_date: r.repair_date,
-        description: r.description,
-        status: r.status,
-        cost: r.cost,
-        technician: r.technician,
-        created_at: r.created_at,
-        created_by: null,
-      }))
+      repairRows = fallback.map((r) => ({ ...r, created_by: null }))
+      total = await prisma.repair.count().catch(() => fallback.length)
     }
-    const [profiles, assets] = await Promise.all([
-      prisma.profile.findMany({ select: { id: true, full_name: true } }),
-      getAllUnifiedAssets(),
+    if (repairRows.length === 0) return { rows: [], total }
+    const reporterIds = [...new Set(repairRows.map((r) => r.reported_by).filter(Boolean))]
+    const [profiles, labelMap] = await Promise.all([
+      reporterIds.length > 0
+        ? prisma.profile.findMany({ where: { id: { in: reporterIds } }, select: { id: true, full_name: true } })
+        : Promise.resolve([] as { id: string; full_name: string | null }[]),
+      getRepairLabelMap(),
     ])
 
     const names = new Map(profiles.map((p) => [p.id, p.full_name ?? '—']))
-    const byId = new Map(assets.map((a) => [a.id, a]))
 
-    return repairRows.map((r) => {
-      const a = byId.get(r.asset_id)
+    const rows = repairRows.map((r) => {
+      const a = labelMap.get(r.asset_id)
       const repairDate =
         r.repair_date instanceof Date
           ? r.repair_date.toISOString().slice(0, 10)
@@ -149,9 +229,9 @@ export async function getRepairs(): Promise<RepairRow[]> {
       return {
         id: r.id,
         asset_id: r.asset_id,
-        asset_label: a ? assetLabel(a) : null,
+        asset_label: a?.label ?? null,
         account_code: a?.account_code ?? null,
-        account_title: a?.account_title ?? a?.account_name ?? null,
+        account_title: a?.account_title ?? null,
         asset_type: a?.category ?? null,
         reported_by: r.reported_by,
         reporter_name: names.get(r.reported_by) ?? 'Unknown employee',
@@ -164,17 +244,83 @@ export async function getRepairs(): Promise<RepairRow[]> {
         created_by: r.created_by,
       }
     })
+    return { rows, total }
   } catch (e) {
     console.error('[getRepairs]', e)
-    return []
+    return { rows: [], total: 0 }
   }
-  }, { v: 2 })
+  }, { v: 2, page, pageSize, q, status })
 }
 
 export async function getRepair(id: string): Promise<RepairRow | null> {
   try {
-    const rows = await getRepairs()
-    return rows.find((r) => r.id === id) ?? null
+    if (!id?.trim()) return null
+    const scope = await getPersonnelScope()
+    if (scope.isEmpty || !scope.userId) return null
+    interface RepairDbRow {
+      id: string
+      asset_id: string
+      reported_by: string
+      repair_date: Date | string
+      description: string
+      status: string | null
+      cost: unknown
+      technician: string | null
+      created_at: Date | string | null
+      created_by: string | null
+    }
+    let found: RepairDbRow | null = null
+    try {
+      const rows = scope.isSuperAdmin
+        ? await prisma.$queryRaw<RepairDbRow[]>`
+          SELECT id::text AS id, asset_id::text AS asset_id,
+                 reported_by::text AS reported_by, repair_date, description,
+                 status, cost, technician, created_at,
+                 created_by::text AS created_by
+          FROM repairs WHERE id = ${id}::uuid LIMIT 1`
+        : await prisma.$queryRaw<RepairDbRow[]>`
+          SELECT id::text AS id, asset_id::text AS asset_id,
+                 reported_by::text AS reported_by, repair_date, description,
+                 status, cost, technician, created_at,
+                 created_by::text AS created_by
+          FROM repairs WHERE id = ${id}::uuid AND created_by = ${scope.userId}::uuid LIMIT 1`
+      found = rows[0] ?? null
+    } catch {
+      return null
+    }
+    if (!found) return null
+    const [profiles, labelMap] = await Promise.all([
+      prisma.profile.findMany({ where: { id: { in: [found.reported_by] } }, select: { id: true, full_name: true } }).catch(() => []),
+      getRepairLabelMap(),
+    ])
+    const a = labelMap.get(found.asset_id)
+    const name = profiles[0]?.full_name ?? 'Unknown employee'
+    const repairDate =
+      found.repair_date instanceof Date
+        ? found.repair_date.toISOString().slice(0, 10)
+        : new Date(found.repair_date).toISOString().slice(0, 10)
+    const createdAt = !found.created_at
+      ? null
+      : found.created_at instanceof Date
+        ? found.created_at.toISOString()
+        : new Date(found.created_at).toISOString()
+    return {
+      id: found.id,
+      asset_id: found.asset_id,
+      asset_label: a?.label ?? null,
+      account_code: a?.account_code ?? null,
+      account_title: a?.account_title ?? null,
+      asset_type: a?.category ?? null,
+      reported_by: found.reported_by,
+      reporter_name: name,
+      repair_date: repairDate,
+      description: found.description,
+      status: found.status,
+      cost: found.cost != null ? Number(found.cost) : null,
+      technician: found.technician,
+      created_at: createdAt,
+      created_by: found.created_by,
+    }
   } catch (e) {
     console.error('[getRepair]', e)
     return null
@@ -188,13 +334,31 @@ export async function getRepairFormOptions(): Promise<{
   const { withCache, cacheKey } = await import('@/lib/personnel-cache')
   return withCache(cacheKey('personnel:repair-form-options'), 60, async () => {
   try {
-    const [profiles, assets] = await Promise.all([
+    const [profiles, assetRows] = await Promise.all([
       prisma.profile.findMany({
         where: { status: 'active', role: 'employee' },
         orderBy: { full_name: 'asc' },
         select: { id: true, full_name: true },
       }),
-      getAllUnifiedAssets(),
+      // Slim pick-list: labels only, no QR / custom-bag fan-out.
+      prisma.asset
+        .findMany({
+          orderBy: { created_at: 'desc' },
+          take: 500,
+          select: {
+            id: true,
+            qr_code: true,
+            account_code: true,
+            article: true,
+            description: true,
+            account_title: true,
+            account_name: true,
+            category: true,
+            location: true,
+            status: true,
+          },
+        })
+        .catch(() => []),
     ])
 
     return {
@@ -202,17 +366,15 @@ export async function getRepairFormOptions(): Promise<{
         id: p.id,
         full_name: p.full_name ?? 'Unnamed',
       })),
-      assets: assets
-        .filter((a) => a.source === 'asset')
-        .map((a) => ({
-          id: a.id,
-          label: assetLabel(a),
-          account_code: a.account_code,
-          account_title: a.account_title ?? a.account_name,
-          asset_type: a.category,
-          location: a.location,
-          status: a.status,
-        })),
+      assets: assetRows.map((a) => ({
+        id: a.id,
+        label: assetLabel(a),
+        account_code: a.account_code,
+        account_title: a.account_title ?? a.account_name,
+        asset_type: a.category,
+        location: a.location,
+        status: a.status,
+      })),
     }
   } catch (e) {
     console.error('[getRepairFormOptions]', e)
@@ -325,8 +487,8 @@ export async function createRepair(
   // Await the Redis bust BEFORE reporting success: otherwise the client's
   // immediate refetch wins the race, serves pre-write rows, and re-caches
   // them as fresh (same pattern as requests / deliveries writes).
-  const { bustPersonnelCache } = await import('@/lib/personnel-cache')
-  await bustPersonnelCache()
+  const { bustPersonnelScopes } = await import('@/lib/personnel-cache')
+  await bustPersonnelScopes(['repairs', 'dashboard', 'documents'])
   revalidatePath('/personnel/repairs')
   revalidatePath('/personnel/dashboard')
   return { success: true }

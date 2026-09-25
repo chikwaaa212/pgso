@@ -6,6 +6,7 @@ import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
+import { ActionButton } from '@/components/ui/action-button'
 import { Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import {
@@ -24,13 +25,15 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import {
-  getInventoryItems,
+  getInventoryFilterOptions,
+  getInventoryPage,
+  getInventoryStats,
   saveInventoryItem,
   syncUnstockedInspections,
   type InventoryRow,
 } from './actions'
-import { TablePager } from '@/components/personnel/TablePager'
-import { usePageSize } from '@/hooks/use-page-size'
+import { TablePager, FIXED_PAGE_SIZE } from '@/components/personnel/TablePager'
+import { useDebouncedValue } from '@/hooks/use-debounced-value'
 import { useCachedAction } from '@/hooks/use-cached-action'
 import { CLIENT_CACHE_KEYS, bustClientCache } from '@/lib/client-cache'
 import { useMasterData } from '@/hooks/use-master-data'
@@ -90,23 +93,48 @@ const EMPTY_DRAFT: Draft = {
 }
 
 export default function PersonnelInventoryPage() {
-  // Cached rows: back-navigation paints instantly from memory /
-  // sessionStorage and only revalidates silently when stale — no skeleton
-  // flash over data the user already saw.
-  const {
-    data: cachedRows,
-    loading,
-    refresh: refreshRows,
-  } = useCachedAction(CLIENT_CACHE_KEYS.inventory, getInventoryItems, {
-    staleTime: 60_000,
-  })
-  const rows = useMemo(() => cachedRows ?? [], [cachedRows])
   const [query, setQuery] = useState('')
   const [kind, setKind] = useState<'all' | 'stock' | 'asset'>('all')
   const [accountCode, setAccountCode] = useState('all')
   const [level, setLevel] = useState('all')
-  const [pageSize, setPageSize] = usePageSize('pgso:page-size:inventory', 10)
+  // Fixed 20 rows/page (no selector) — the DB returns only this window.
+  const pageSize = FIXED_PAGE_SIZE
   const [page, setPage] = useState(1)
+  // Debounced server search — the DB query fires only after typing pauses.
+  const debouncedQuery = useDebouncedValue(query, 250)
+  const searching = query.trim() !== debouncedQuery.trim()
+  // Server-paged stocks: search/kind/code/level/page all filter in the DB.
+  const {
+    data: pageData,
+    loading,
+    isValidating,
+    refresh: refreshRows,
+  } = useCachedAction(
+    `${CLIENT_CACHE_KEYS.inventory}:${page}:${debouncedQuery}:${kind}:${accountCode}:${level}`,
+    () =>
+      getInventoryPage({
+        page,
+        pageSize,
+        q: debouncedQuery,
+        kind,
+        accountCode,
+        level,
+      }),
+    { staleTime: 60_000 }
+  )
+  const rows = useMemo(() => pageData?.rows ?? [], [pageData])
+  const total = pageData?.total ?? 0
+  // Cheap global stats + bounded filter options (no row payload).
+  const { data: statsData } = useCachedAction(
+    `${CLIENT_CACHE_KEYS.inventory}-stats`,
+    getInventoryStats,
+    { staleTime: 60_000 }
+  )
+  const { data: filterOptions } = useCachedAction(
+    `${CLIENT_CACHE_KEYS.inventory}-filters`,
+    getInventoryFilterOptions,
+    { staleTime: 300_000 }
+  )
   const [dialogOpen, setDialogOpen] = useState(false)
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT)
   const [saving, setSaving] = useState(false)
@@ -122,56 +150,24 @@ export default function PersonnelInventoryPage() {
     refreshRows()
   }
 
-  const accountCodes = useMemo(() => {
-    const set = new Set<string>()
-    for (const r of rows) {
-      if (r.account_code?.trim()) set.add(r.account_code.trim())
-    }
-    return [...set].sort((a, b) => a.localeCompare(b))
-  }, [rows])
-
-  const stats = useMemo(() => {
-    let low = 0
-    let critical = 0
-    let out = 0
-    let units = 0
-    for (const r of rows) {
-      units += r.quantity
-      const lv = levelOf(r)
-      if (lv === 'low') low += 1
-      if (lv === 'critical') critical += 1
-      if (lv === 'out') out += 1
-    }
-    return { skus: rows.length, units, low, critical, out }
-  }, [rows])
-
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase()
-    return rows.filter((r) => {
-      if (kind !== 'all' && (r.delivery_kind ?? '') !== kind) return false
-      if (accountCode !== 'all' && (r.account_code ?? '') !== accountCode)
-        return false
-      if (level !== 'all') {
-        const lv = levelOf(r)
-        if (level === 'none' ? lv !== null : lv !== level) return false
-      }
-      if (q) {
-        const hay = [r.item_name, r.account_code, r.location, r.unit]
-          .filter(Boolean)
-          .join(' ')
-          .toLowerCase()
-        if (!hay.includes(q)) return false
-      }
-      return true
-    })
-  }, [rows, query, kind, accountCode, level])
-
-  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize))
-  const safePage = Math.min(Math.max(1, page), pageCount)
-  const visible = filtered.slice(
-    (safePage - 1) * pageSize,
-    (safePage - 1) * pageSize + pageSize
+  const accountCodes = useMemo(
+    () => filterOptions?.accountCodes ?? [],
+    [filterOptions]
   )
+
+  // Server already filtered + paged — visible is the page window; stats
+  // come from the global counts endpoint.
+  const stats = {
+    skus: statsData?.skus ?? 0,
+    units: statsData?.units ?? 0,
+    low: statsData?.low ?? 0,
+    critical: statsData?.critical ?? 0,
+    out: statsData?.out ?? 0,
+  }
+  const visible = rows
+
+  const pageCount = Math.max(1, Math.ceil(total / pageSize))
+  const safePage = Math.min(Math.max(1, page), pageCount)
 
   function openAdd() {
     setDraft(EMPTY_DRAFT)
@@ -180,38 +176,53 @@ export default function PersonnelInventoryPage() {
   }
 
   async function onSave() {
+    if (saving) return
     setSaving(true)
     setError('')
-    const res = await saveInventoryItem({
-      id: draft.id,
-      item_name: draft.item_name,
-      account_code: draft.account_code,
-      quantity: Number(draft.quantity),
-      unit: draft.unit,
-      unit_cost:
-        draft.unit_cost.trim() === '' ? null : Number(draft.unit_cost),
-      location: draft.location,
-    })
-    setSaving(false)
-    if (!res.success) {
-      setError(res.error ?? 'Failed to save the stock item.')
-      return
-    }
-    setDialogOpen(false)
-    reload()
-  }
-
-  async function onSync() {
-    setSyncing(true)
-    const res = await syncUnstockedInspections()
-    setSyncing(false)
-    if (!res.success) {
-      toast.error(res.error ?? 'Sync failed. Please try again.', {
+    try {
+      const res = await saveInventoryItem({
+        id: draft.id,
+        item_name: draft.item_name,
+        account_code: draft.account_code,
+        quantity: Number(draft.quantity),
+        unit: draft.unit,
+        unit_cost:
+          draft.unit_cost.trim() === '' ? null : Number(draft.unit_cost),
+        location: draft.location,
+      })
+      if (!res.success) {
+        const msg = res.error ?? 'Failed to save the stock item.'
+        setError(msg)
+        toast.error(msg, { duration: 2000, closeButton: true })
+        return
+      }
+      setDialogOpen(false)
+      reload()
+      toast.success('Stock item saved successfully.', {
         duration: 2000,
         closeButton: true,
       })
-      return
+    } catch {
+      const msg = 'Failed to save the stock item. Please try again.'
+      setError(msg)
+      toast.error(msg, { duration: 2000, closeButton: true })
+    } finally {
+      setSaving(false)
     }
+  }
+
+  async function onSync() {
+    if (syncing) return
+    setSyncing(true)
+    try {
+      const res = await syncUnstockedInspections()
+      if (!res.success) {
+        toast.error(res.error ?? 'Sync failed. Please try again.', {
+          duration: 2000,
+          closeButton: true,
+        })
+        return
+      }
     if (res.stocked === 0 && (res.costsFixed ?? 0) === 0) {
       toast.info('Everything is already in stocks — nothing to sync.', {
         duration: 2000,
@@ -233,6 +244,14 @@ export default function PersonnelInventoryPage() {
       )
     }
     reload()
+    } catch {
+      toast.error('Sync failed. Please try again.', {
+        duration: 2000,
+        closeButton: true,
+      })
+    } finally {
+      setSyncing(false)
+    }
   }
 
   const canSave =
@@ -251,29 +270,30 @@ export default function PersonnelInventoryPage() {
         <div>
           <h1 className={styles.title}>Stocks</h1>
           <p className={styles.subtitle}>
-            {loading ? (
+            {loading && rows.length === 0 ? (
               <span
                 className="mt-1 block h-4 w-48 animate-pulse rounded bg-navy-100"
                 aria-hidden="true"
               />
             ) : (
               <>
-                {filtered.length} of {rows.length} stock item
-                {rows.length !== 1 ? 's' : ''} shown
+                {total} stock item{total !== 1 ? 's' : ''} found
+                {(isValidating || searching || loading) ? ' · updating…' : ''}
               </>
             )}
           </p>
         </div>
         <div className={styles.actions}>
-          <Button
+          <ActionButton
             type="button"
             variant="outline"
-            onClick={() => void onSync()}
+            onClick={() => onSync()}
             disabled={syncing}
+            loadingLabel="Syncing…"
             className="h-8 gap-2 rounded-[4px] px-3.5 text-xs font-semibold"
           >
-            {syncing ? 'Syncing…' : 'Sync from inspections'}
-          </Button>
+            Sync from inspections
+          </ActionButton>
           <Button
             type="button"
             onClick={openAdd}
@@ -287,14 +307,14 @@ export default function PersonnelInventoryPage() {
       <div className={air.stats}>
         {(
           [
-            { label: 'Items tracked', value: loading ? null : String(stats.skus) },
+            { label: 'Items tracked', value: statsData ? String(stats.skus) : null },
             {
               label: 'Total units on hand',
-              value: loading ? null : stats.units.toLocaleString(),
+              value: statsData ? stats.units.toLocaleString() : null,
             },
             {
               label: 'Low / critical items',
-              value: loading ? null : String(stats.low + stats.critical),
+              value: statsData ? String(stats.low + stats.critical) : null,
             },
           ] as const
         ).map((s) => (
@@ -312,7 +332,7 @@ export default function PersonnelInventoryPage() {
         ))}
       </div>
 
-      {!loading && stats.out + stats.low + stats.critical > 0 ? (
+      {statsData && stats.out + stats.low + stats.critical > 0 ? (
         <div
           role="alert"
           className="rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900"
@@ -364,7 +384,7 @@ export default function PersonnelInventoryPage() {
             </button>
           ))}
         </div>
-        {loading ? (
+        {loading && rows.length === 0 ? (
           <>
             <div className={air.controls} aria-hidden="true">
               <div className={`${air.search} h-9 animate-pulse rounded-md bg-navy-100`} />
@@ -491,10 +511,10 @@ export default function PersonnelInventoryPage() {
           </Select>
         </div>
 
-        {filtered.length === 0 ? (
+        {visible.length === 0 ? (
           <div className={styles.emptyState}>
             <p className={styles.panelSub}>
-              {rows.length === 0
+              {total === 0
                 ? 'No inventory items recorded yet. Passed inspections with an AIR add items here automatically, or add stock manually.'
                 : 'No stock items match your search or filters.'}
             </p>
@@ -563,13 +583,11 @@ export default function PersonnelInventoryPage() {
             </table>
           </div>
         )}
-        {filtered.length > 0 ? (
+        {total > 0 ? (
           <TablePager
             id="inventory"
-            total={filtered.length}
-            pageSize={pageSize}
+            total={total}
             page={safePage}
-            onPageSizeChange={setPageSize}
             onPageChange={setPage}
           />
         ) : null}
@@ -827,14 +845,15 @@ export default function PersonnelInventoryPage() {
             >
               Cancel
             </Button>
-            <Button
+            <ActionButton
               type="button"
               disabled={!canSave || saving}
-              onClick={() => void onSave()}
+              onClick={() => onSave()}
+              loadingLabel="Saving…"
               className="h-8 rounded-[4px] px-3.5 text-xs font-semibold"
             >
-              {saving ? 'Saving…' : draft.id ? 'Save changes' : 'Add stock'}
-            </Button>
+              {draft.id ? 'Save changes' : 'Add stock'}
+            </ActionButton>
           </DialogFooter>
         </DialogContent>
       </Dialog>

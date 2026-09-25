@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { useState } from "react";
+import { toast } from "sonner";
 import { Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { ActionButton } from "@/components/ui/action-button";
 import {
   Dialog,
   DialogContent,
@@ -56,6 +57,12 @@ export function useCustomFields() {
   return { fields: fields ?? [], loadingFields: loading, refreshFields: refresh };
 }
 
+function bustAssetCaches() {
+  void import('@/lib/client-cache').then((m) =>
+    m.bustClientCache([CLIENT_CACHE_KEYS.assets, CLIENT_CACHE_KEYS.assetCustomFields])
+  );
+}
+
 export function formatCustomValue(def: CustomFieldDef, raw: string): string {
   if (!raw) return "—";
   if (def.type === "date") {
@@ -92,9 +99,11 @@ export function AddColumnDialog({
   const [label, setLabel] = useState("");
   const [fieldType, setFieldType] = useState<CustomFieldType>("text");
   const [error, setError] = useState("");
-  const [pending, startTransition] = useTransition();
+  const [adding, setAdding] = useState(false);
+  const [deletingKey, setDeletingKey] = useState<string | null>(null);
   const [confirmKey, setConfirmKey] = useState<string | null>(null);
   const { fields, refreshFields } = useCustomFields();
+  const busy = adding || deletingKey !== null;
 
   function reset() {
     setLabel("");
@@ -103,37 +112,65 @@ export function AddColumnDialog({
     setConfirmKey(null);
   }
 
-  function submit() {
+  async function submit() {
+    if (adding || !label.trim()) return;
+    setAdding(true);
     setError("");
-    startTransition(async () => {
+    try {
       const res = await createCustomField({ label, field_type: fieldType });
       if (res.success) {
         reset();
         setOpen(false);
         refreshFields();
         onSuccess?.();
+        toast.success("Column added successfully.", {
+          duration: 2000,
+          closeButton: true,
+        });
       } else {
-        setError(res.error ?? "Failed to add the column.");
+        const msg = res.error ?? "Failed to add the column.";
+        setError(msg);
+        toast.error(msg, { duration: 2000, closeButton: true });
       }
-    });
+    } catch {
+      const msg = "Failed to add the column. Please try again.";
+      setError(msg);
+      toast.error(msg, { duration: 2000, closeButton: true });
+    } finally {
+      setAdding(false);
+    }
   }
 
-  function remove(key: string) {
+  async function remove(key: string) {
     if (confirmKey !== key) {
       setConfirmKey(key);
       return;
     }
-    setConfirmKey(null);
+    if (deletingKey) return;
+    setDeletingKey(key);
     setError("");
-    startTransition(async () => {
+    try {
       const res = await deleteCustomField(key);
       if (res.success) {
+        setConfirmKey(null);
         refreshFields();
         onSuccess?.();
+        toast.success("Column deleted successfully.", {
+          duration: 2000,
+          closeButton: true,
+        });
       } else {
-        setError(res.error ?? "Failed to delete the column.");
+        const msg = res.error ?? "Failed to delete the column.";
+        setError(msg);
+        toast.error(msg, { duration: 2000, closeButton: true });
       }
-    });
+    } catch {
+      const msg = "Failed to delete the column. Please try again.";
+      setError(msg);
+      toast.error(msg, { duration: 2000, closeButton: true });
+    } finally {
+      setDeletingKey(null);
+    }
   }
 
   return (
@@ -199,14 +236,15 @@ export function AddColumnDialog({
             {error ? (
               <p className="text-sm font-medium text-red-700">{error}</p>
             ) : null}
-            <Button
+            <ActionButton
               type="button"
-              disabled={pending || !label.trim()}
-              onClick={submit}
+              disabled={busy || !label.trim()}
+              onClick={() => submit()}
+              loadingLabel="Adding…"
               className="h-8 rounded-[4px] px-3.5 text-xs font-semibold"
             >
-              {pending ? "Adding…" : "Add column"}
-            </Button>
+              Add column
+            </ActionButton>
           </div>
           {fields.length > 0 ? (
             <div className="grid gap-1.5">
@@ -225,24 +263,33 @@ export function AddColumnDialog({
                         {f.type}
                       </span>
                     </span>
-                    <button
+                    <ActionButton
                       type="button"
-                      disabled={pending}
+                      variant={confirmKey === f.key ? "primary" : "outline"}
+                      size="sm"
+                      disabled={busy && deletingKey !== f.key}
                       onClick={() => remove(f.key)}
-                      className={`inline-flex h-7 items-center gap-1 rounded-md border px-2 text-xs font-semibold ${
-                        confirmKey === f.key
-                          ? "border-red-300 bg-red-50 text-red-700"
-                          : "border-navy-200 text-navy-700 hover:bg-navy-100"
-                      }`}
+                      loadingLabel="Deleting…"
                       aria-label={
-                        confirmKey === f.key
-                          ? `Confirm delete of ${f.label}`
-                          : `Delete ${f.label}`
+                        deletingKey === f.key
+                          ? `Deleting ${f.label}`
+                          : confirmKey === f.key
+                            ? `Confirm delete of ${f.label}`
+                            : `Delete ${f.label}`
                       }
+                      className={`h-7 gap-1 rounded-md px-2 text-xs font-semibold ${
+                        confirmKey === f.key && deletingKey !== f.key
+                          ? "border-red-300 bg-red-50 text-red-700"
+                          : ""
+                      }`}
                     >
                       <Trash2 size={13} aria-hidden="true" />
-                      {confirmKey === f.key ? "Sure?" : "Delete"}
-                    </button>
+                      {deletingKey === f.key
+                        ? "Deleting…"
+                        : confirmKey === f.key
+                          ? "Sure?"
+                          : "Delete"}
+                    </ActionButton>
                   </li>
                 ))}
               </ul>
@@ -420,8 +467,7 @@ export function CustomDetailSection({
   /** Renders every field as a direct input (used in Edit mode). */
   editMode?: boolean;
 }) {
-  const { fields } = useCustomFields();
-  const router = useRouter();
+  const { fields, refreshFields } = useCustomFields();
   if (fields.length === 0) return null;
   return (
     <div className="mb-6 last:mb-0">
@@ -437,7 +483,10 @@ export function CustomDetailSection({
                 <CustomCell
                   row={row}
                   field={f}
-                  onSaved={() => router.refresh()}
+                  onSaved={() => {
+                    bustAssetCaches();
+                    refreshFields();
+                  }}
                   startEditing={editMode}
                 />
               )}

@@ -4,13 +4,13 @@ import { revalidatePath as nextRevalidatePath } from 'next/cache'
 
 // Every Next.js revalidation also busts the Upstash personnel cache so
 // Redis never serves stale lists after a write (fire-and-forget).
+// Narrow: stock writes touch inventory/dashboard only.
 function revalidatePath(path: string) {
   nextRevalidatePath(path)
   void import('@/lib/personnel-cache')
-    .then((m) => m.bustPersonnelCache())
+    .then((m) => m.bustPersonnelScopes(['inventory', 'dashboard', 'documents']))
     .catch(() => {})
 }
-import { createClient } from '@/lib/supabase/server'
 import { writeAuditLog } from '@/lib/audit'
 import { stockInspectionItems } from '@/lib/stock'
 import { findCatalogEntry, resolveUnitName } from '@/lib/master-data'
@@ -48,26 +48,142 @@ export async function getStockPermissions(): Promise<{ canManage: boolean }> {
   return { canManage: scope.isSuperAdmin }
 }
 
-export async function getInventoryItems(): Promise<InventoryRow[]> {
+export interface InventoryPageOpts {
+  page?: number
+  pageSize?: number
+  q?: string
+  kind?: string
+  accountCode?: string
+  level?: string
+}
+
+const LEVEL_SQL: Record<string, string> = {
+  out: `quantity <= 0`,
+  critical: `quantity > 0 AND reorder_threshold IS NOT NULL AND quantity <= FLOOR(reorder_threshold / 2)`,
+  low: `quantity > 0 AND reorder_threshold IS NOT NULL AND quantity <= reorder_threshold`,
+  ok: `reorder_threshold IS NOT NULL AND quantity > reorder_threshold`,
+  none: `quantity > 0 AND reorder_threshold IS NULL`,
+}
+
+/** Global stock stats for the header cards (no row payload). */
+export async function getInventoryStats(): Promise<{
+  skus: number
+  units: number
+  low: number
+  critical: number
+  out: number
+}> {
   const { withCache, cacheKey } = await import('@/lib/personnel-cache')
+  return withCache(cacheKey('personnel:inventory-stats'), 60, async () => {
+    const zeros = { skus: 0, units: 0, low: 0, critical: 0, out: 0 }
+    try {
+      const [skus, units, low, critical, out] = await Promise.all([
+        prisma.inventoryItem.count().catch(() => 0),
+        prisma.inventoryItem
+          .aggregate({ _sum: { quantity: true } })
+          .then((r) => r._sum.quantity ?? 0)
+          .catch(() => 0),
+        prisma.$queryRaw<Array<{ count: bigint }>>`
+          SELECT COUNT(*)::bigint AS count FROM inventory
+          WHERE quantity > 0 AND reorder_threshold IS NOT NULL AND quantity <= reorder_threshold`
+          .then((r) => Number(r[0]?.count ?? 0))
+          .catch(() => 0),
+        prisma.$queryRaw<Array<{ count: bigint }>>`
+          SELECT COUNT(*)::bigint AS count FROM inventory
+          WHERE quantity > 0 AND reorder_threshold IS NOT NULL AND quantity <= FLOOR(reorder_threshold / 2)`
+          .then((r) => Number(r[0]?.count ?? 0))
+          .catch(() => 0),
+        prisma.inventoryItem.count({ where: { quantity: { lte: 0 } } }).catch(() => 0),
+      ])
+      return { skus, units, low, critical, out }
+    } catch (e) {
+      console.error('[getInventoryStats]', e)
+      return zeros
+    }
+  })
+}
+
+/** Distinct filter options for kind + account code dropdowns (bounded). */
+export async function getInventoryFilterOptions(): Promise<{ kinds: string[]; accountCodes: string[] }> {
+  const { withCache, cacheKey } = await import('@/lib/personnel-cache')
+  return withCache(cacheKey('personnel:inventory-filter-options'), 300, async () => {
+    try {
+      const [kinds, codes] = await Promise.all([
+        prisma.$queryRaw<Array<{ delivery_kind: string | null }>>`
+          SELECT DISTINCT delivery_kind FROM inventory WHERE delivery_kind IS NOT NULL ORDER BY 1 LIMIT 50`
+          .catch(() => []),
+        prisma.$queryRaw<Array<{ account_code: string | null }>>`
+          SELECT DISTINCT account_code FROM inventory WHERE account_code IS NOT NULL ORDER BY 1 LIMIT 500`
+          .catch(() => []),
+      ])
+      return {
+        kinds: kinds.map((r) => r.delivery_kind).filter((v): v is string => !!v),
+        accountCodes: codes.map((r) => r.account_code).filter((v): v is string => !!v),
+      }
+    } catch (e) {
+      console.error('[getInventoryFilterOptions]', e)
+      return { kinds: [], accountCodes: [] }
+    }
+  })
+}
+
+export async function getInventoryItems(): Promise<InventoryRow[]> {
+  const { rows } = await getInventoryPage({ page: 1, pageSize: 500 })
+  return rows
+}
+
+export async function getInventoryPage(
+  opts: InventoryPageOpts = {}
+): Promise<{ rows: InventoryRow[]; total: number }> {
+  const { withCache, cacheKey } = await import('@/lib/personnel-cache')
+  const page = Math.floor(Number(opts.page)) >= 1 ? Math.min(Math.floor(Number(opts.page)), 1000) : 1
+  const pageSize = Number.isFinite(Number(opts.pageSize))
+    ? Math.min(Math.max(Math.floor(Number(opts.pageSize)), 1), 100)
+    : 20
+  const q = (opts.q ?? '').trim().slice(0, 120)
+  const kind = (opts.kind ?? 'all').trim()
+  const accountCode = (opts.accountCode ?? 'all').trim()
+  const level = (opts.level ?? 'all').trim()
   // Shared stock pool — global key.
-  return withCache(cacheKey('personnel:inventory-items'), 60, async () => {
+  return withCache(cacheKey('personnel:inventory-items', { page, pageSize, q, kind, accountCode, level }), 60, async () => {
   try {
-    const rows = await prisma.inventoryItem.findMany({
-      orderBy: { item_name: 'asc' },
-      select: {
-        id: true,
-        item_name: true,
-        account_code: true,
-        delivery_kind: true,
-        category: true,
-        quantity: true,
-        unit: true,
-        unit_cost: true,
-        reorder_threshold: true,
-        location: true,
-      },
-    })
+    const { Prisma } = await import('@prisma/client')
+    const like = q ? `%${q}%` : null
+    const conds: InstanceType<typeof Prisma.Sql>[] = []
+    if (kind !== 'all') conds.push(Prisma.sql`delivery_kind = ${kind}`)
+    if (accountCode !== 'all') conds.push(Prisma.sql`account_code = ${accountCode}`)
+    if (like) {
+      conds.push(
+        Prisma.sql`(item_name ILIKE ${like} OR account_code ILIKE ${like} OR category ILIKE ${like} OR location ILIKE ${like} OR unit ILIKE ${like})`
+      )
+    }
+    const levelFrag = LEVEL_SQL[level]
+    if (levelFrag) conds.push(Prisma.sql([levelFrag]))
+    const whereClause = conds.length > 0 ? Prisma.sql`WHERE ${Prisma.join(conds, ' AND ')}` : Prisma.empty
+    const offset = (page - 1) * pageSize
+    interface StockDb {
+      id: string
+      item_name: string
+      account_code: string | null
+      delivery_kind: string | null
+      category: string | null
+      quantity: number
+      unit: string | null
+      unit_cost: unknown
+      reorder_threshold: number | null
+      location: string | null
+    }
+    const [countRows, rows] = await Promise.all([
+      prisma.$queryRaw<Array<{ count: bigint }>>`
+        SELECT COUNT(*)::bigint AS count FROM inventory ${whereClause}`,
+      prisma.$queryRaw<StockDb[]>`
+        SELECT id::text AS id, item_name, account_code, delivery_kind, category,
+               quantity, unit, unit_cost, reorder_threshold, location
+        FROM inventory ${whereClause}
+        ORDER BY item_name ASC LIMIT ${pageSize} OFFSET ${offset}`,
+    ])
+    const total = Number(countRows[0]?.count ?? 0)
+    if (rows.length === 0) return { rows: [], total }
     // Account title is display-only (no inventory column) — resolve it from
     // the active catalog so the UI can show it next to the code.
     let titleByCode = new Map<string, string>()
@@ -78,16 +194,19 @@ export async function getInventoryItems(): Promise<InventoryRow[]> {
     } catch {
       titleByCode = new Map()
     }
-    return rows.map((r) => ({
-      ...r,
-      account_title: r.account_code
-        ? (titleByCode.get(r.account_code) ?? null)
-        : null,
-      unit_cost: r.unit_cost != null ? Number(r.unit_cost) : null,
-    }))
+    return {
+      total,
+      rows: rows.map((r) => ({
+        ...r,
+        account_title: r.account_code
+          ? (titleByCode.get(r.account_code) ?? null)
+          : null,
+        unit_cost: r.unit_cost != null ? Number(r.unit_cost) : null,
+      })),
+    }
   } catch (e) {
     console.error('[getInventoryItems]', e)
-    return []
+    return { rows: [], total: 0 }
   }
   })
 }
@@ -103,11 +222,9 @@ export interface SaveItemInput {
 }
 
 async function requireUser() {
-  const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-  return user
+  const { getPersonnelScope } = await import('@/lib/personnel-scope')
+  const scope = await getPersonnelScope()
+  return scope.userId ? ({ id: scope.userId } as { id: string }) : null
 }
 
 /** Creates a new stock item or updates an existing one. */
@@ -272,15 +389,26 @@ export async function syncUnstockedInspections(): Promise<SyncState> {
       select: { id: true },
     })
 
+    // Bounded + concurrent (was unbounded serial for...of): cap the batch
+    // and run with limited concurrency so one sync can't stall the pooler.
+    const batch = pending.slice(0, 50)
     let stocked = 0
     let costsFixed = 0
-    for (const p of pending) {
-      try {
-        const res = await stockInspectionItems(p.id)
+    const CONCURRENCY = 5
+    for (let i = 0; i < batch.length; i += CONCURRENCY) {
+      const chunk = batch.slice(i, i + CONCURRENCY)
+      const results = await Promise.all(
+        chunk.map((p) =>
+          stockInspectionItems(p.id).catch((e) => {
+            console.error('[syncUnstockedInspections]', p.id, e)
+            return null
+          })
+        )
+      )
+      for (const res of results) {
+        if (!res) continue
         if (res.stocked) stocked += 1
         costsFixed += res.costsFixed ?? 0
-      } catch (e) {
-        console.error('[syncUnstockedInspections]', p.id, e)
       }
     }
 
