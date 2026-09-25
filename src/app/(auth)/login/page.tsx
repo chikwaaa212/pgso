@@ -161,9 +161,9 @@ export default function LoginPage() {
               <span className={styles.checkmark}>&#10003;</span>
               <span className={styles.rememberLabel}>Remember me</span>
             </label>
-            <Link href="/forgot-password" className={styles.forgotLink}>
+            <span className={styles.forgotLink} title="Contact your administrator to reset your password">
               Forgot your password?
-            </Link>
+            </span>
           </div>
 
           <SubmitButton variant="primary" className={styles.submitButton} pendingLabel="Signing in…">
