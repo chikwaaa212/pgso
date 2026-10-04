@@ -115,13 +115,19 @@ Consequences: large TTFB + large Server Action payload + main-thread filter (`as
 
 Fresh client cache → **skip network entirely** (`:91-93`). Stale → silent background revalidate. `layout.tsx:8 force-dynamic` does not bypass either layer.
 
-### B2. Realtime wired on 3 pages only, fails silently [HIGH]
+### B2. Realtime wired on 3 pages only — with wrong table names, so 0 pages actually update [CRITICAL]
 
 `src/hooks/use-admin-realtime.ts:31-93`: one channel per page, `postgres_changes` per table, events coalesced to min 2s (`:53-66`), `catch { return }` (`:79-82`) silently no-ops if RLS/publication blocks. Inline comment claims "SWR polling remains the fallback" — **no poller exists**.
 
-Wired:
+Worse, the 3 wired subscriptions filter on table names that do not exist. Supabase `postgres_changes` matches the **physical Postgres table name**, but the subscriptions use the singular Prisma model names while `prisma/schema.prisma` maps every model to a **plural** table via `@@map`:
 
-- `users/page.tsx:62-66` (`profile`), `requests/page.tsx:62-66` (`request`), `repairs/page.tsx:40-44` (`repair`)
+| Subscription (as-found) | Actual table (`@@map`) | Events received |
+|---|---|---|
+| `users/page.tsx:64` (`profile`) | `profiles` (`schema.prisma:31`) | **none** |
+| `requests/page.tsx:64` (`request`) | `requests` (`schema.prisma:248`) | **none** |
+| `repairs/page.tsx:42` (`repair`) | `repairs` (`schema.prisma:208`) | **none** |
+
+So realtime is not "partial" — it is **100% dead**: no page receives any event, the 2s coalescer never fires, and the silent `catch` hides the misconfiguration. Fix is 3 one-line edits (see §7 Fix 0). Correct plural names for all tables: `profiles`, `assets`, `deliveries`, `delivery_items`, `inspections`, `iar_records`, `inventory` (model `InventoryItem`, `schema.prisma:182`), `repairs`, `documents`, `requests`, `request_items`, `audit_logs`, `issuance_records`, `units`, `departments`, `account_catalog`.
 
 Missing (require manual refresh / TTL expiry):
 
@@ -232,17 +238,247 @@ Acceptance criteria:
 
 ---
 
-## 7. Appendix — Evidence Index
+## 7. Solution — Realtime Updates + Fast Mutations (implementation guide)
+
+Apply in order. Fix 0 alone restores live updates on the 3 already-wired pages; Fixes 1–2 deliver the "instant UI, no refresh" feel; Fixes 3–5 remove the actual server latency underneath.
+
+### Fix 0 — Correct the 3 table names (5 minutes, unblocks everything) [P0]
+
+One-line change per file — pluralize to the physical table name:
+
+```tsx
+// users/page.tsx:64 — tables: [{ table: "profile" }] → [{ table: "profiles" }]
+// requests/page.tsx:64 — tables: [{ table: "request" }] → [{ table: "requests" }]
+// repairs/page.tsx:42 — tables: [{ table: "repair" }] → [{ table: "repairs" }]
+```
+
+Verify: open the page in two browsers, act in one (approve a request / toggle a user) — the other tab's list updates within ~2s with no refresh and no skeleton flash.
+
+### Fix 1 — Realtime on every list page + Supabase setup + poll fallback [P0]
+
+**1a. Wire the hook per page** with the verified plural table names (`@@map` in `prisma/schema.prisma`):
+
+| Page | Channel | `tables` |
+|---|---|---|
+| users | `admin-users` | `profiles` (fix name) |
+| requests | `admin-requests` | `requests` (fix name) |
+| repairs | `admin-repairs` | `repairs` (fix name) |
+| deliveries | `admin-deliveries` | `deliveries`, `inspections` |
+| assets | `admin-assets` | `assets`, `inventory` |
+| inventory | `admin-inventory` | `inventory` |
+| inspections | `admin-inspections` | `inspections`, `deliveries` |
+| issuances | `admin-issuances` | `issuance_records` |
+| documents | `admin-documents` | `documents` |
+| logs | `admin-logs` | `audit_logs` |
+| records | `admin-records` | `issuance_records`, `iar_records` |
+| transactions | `admin-transactions` | `deliveries`, `requests`, `repairs`, `issuance_records` |
+| master-data | `admin-master-data` | `units`, `departments`, `account_catalog` |
+| issues | `admin-issues` | `requests`, `repairs` (no dedicated model exists — confirm source in `personnel/issues/actions.ts`) |
+| dashboard | Server Component — convert stat cards to client islands with `useAdminRealtime` on `profiles`, or accept 30–60s TTL there |
+
+**1b. Deliveries page must expose `refresh`** — it currently destructures only `{ data, loading, isValidating }` (`deliveries/page.tsx:23-27`) with no `refresh` to pass as `onEvent`. Change to `{ data, loading, refresh, isValidating }` and pass `onEvent: refresh`. Audit every page in the table above for the same omission.
+
+**1c. Supabase setup** (run once in the Supabase SQL editor):
+
+```sql
+-- Publish the tables to Realtime:
+alter publication supabase_realtime add table
+  profiles, requests, repairs, deliveries, inspections, assets,
+  inventory, issuance_records, iar_records, documents, audit_logs,
+  units, departments, account_catalog;
+
+-- Confirm:
+select tablename from pg_publication_tables where pubname = 'supabase_realtime';
+
+-- Allow authenticated super-admins to read each table (template — adjust the
+-- id mapping to match getPersonnelScope, repeat per table):
+create policy "super_admin_read" on profiles for select to authenticated
+  using (exists (
+    select 1 from profiles me where me.id = auth.uid() and me.role = 'super_admin'
+  ));
+```
+
+**1d. Add the poll fallback the hook promises** (`src/hooks/use-admin-realtime.ts`, around `:79`):
+
+```ts
+let poller: ReturnType<typeof setInterval> | undefined;
+void realtimeChannel.subscribe((status) => {
+  // RLS/publication misconfig (or Fix 0-type typos) must degrade to
+  // polling, never to silence.
+  if (status !== "SUBSCRIBED" && !poller) {
+    poller = setInterval(() => onEventRef.current(), 15_000);
+  }
+});
+// in cleanup: if (poller) clearInterval(poller);
+```
+
+**1e. Tune coalescing** `2000ms → 700ms` (`use-admin-realtime.ts:53-66`) for snappier convergence without thundering herd.
+
+### Fix 2 — Optimistic mutations (UI updates in <100ms) [P0]
+
+**Requests** (`requests/page.tsx:92-119`) — overlay map, instant patch, rollback on error:
+
+```tsx
+const [pendingStatus, setPendingStatus] = useState<Record<string, AdminStatus>>({});
+const rows = useMemo(
+  () => (data ?? []).map((r) => (pendingStatus[r.id] ? { ...r, status: pendingStatus[r.id] } : r)),
+  [data, pendingStatus]
+);
+
+async function onConfirm() {
+  if (!actionRow) return;
+  if (note.trim() === "") { setFormError("Enter remarks for this action."); return; }
+  const id = actionRow.id;
+  setPendingStatus((p) => ({ ...p, [id]: actionStatus })); // ← instant, before network
+  setDialogOpen(false);
+  setSaving(true);
+  setActingId(id);
+  try {
+    const res = await setReplenishmentStatus(id, actionStatus, note);
+    if (!res.success) {
+      setPendingStatus((p) => { const n = { ...p }; delete n[id]; return n; }); // rollback
+      setFormError(res.error ?? "Failed to update the request.");
+      toast.error("Update failed", { description: res.error });
+      return;
+    }
+    toast.success(successTitle, { duration: 2000, closeButton: true });
+  } catch {
+    setPendingStatus((p) => { const n = { ...p }; delete n[id]; return n; }); // rollback
+    toast.error("Update failed", { description: "Please try again." });
+  } finally {
+    setActingId(null);
+    setSaving(false);
+    refresh(); // silent background confirm — rows stay visible, isValidating only
+  }
+}
+```
+
+**Users toggle** — status values are `active`/`inactive` (`users/actions.ts:294`):
+
+```tsx
+// users/page.tsx — add override, merge into memo:
+const [statusOverride, setStatusOverride] = useState<Record<string, string>>({});
+const users = useMemo(
+  () => (snapshot?.users ?? []).map((u) =>
+    statusOverride[u.id] ? { ...u, status: statusOverride[u.id] } : u
+  ),
+  [snapshot, statusOverride]
+);
+// wire per row:
+<ActiveToggle
+  ...
+  onOptimistic={(active) =>
+    setStatusOverride((p) => ({ ...p, [u.id]: active ? "active" : "inactive" }))
+  }
+  onSuccess={() => {
+    setStatusOverride((p) => { const n = { ...p }; delete n[u.id]; return n; });
+    refresh();
+  }}
+/>
+
+// user-actions.tsx — add prop, fire before await, clear on error:
+export function ActiveToggle({ userId, name, isActive, onOptimistic, onSuccess }) {
+  const runToggle = async (active: boolean) => {
+    setBusy(true);
+    onOptimistic?.(active); // ← instant
+    try {
+      const r = await setUserActive(userId, active);
+      if (r.ok) { /* toast + onSuccess?.() as today */ }
+      else { onOptimistic?.(!active); /* rollback */ toast.error(...); }
+    } catch { onOptimistic?.(!active); /* rollback */ }
+    finally { setBusy(false); }
+  };
+}
+```
+
+Replicate the overlay-map pattern on deliveries record-modals, inventory `ThresholdCell`, and `master-forms` dialogs.
+
+### Fix 3 — Slim the write path to ONE critical DB round-trip [P1]
+
+`requests/actions.ts:55-84` rewrite — `writeAuditLog` is contractually best-effort ("never throws", `audit.ts:21-24`), so it and the Redis SCAN/DEL bust do not belong on the critical path:
+
+```ts
+import { after } from "next/server";
+
+// ... auth + validate current as today ...
+await prisma.request.update({
+  where: { id },
+  data: { status, date_resolved: new Date(), description: `${current.description}\nNote (${status} by admin): ${remarks}` },
+});
+
+revalidatePath("/super-admin/requests");
+revalidatePath("/personnel/requests");
+
+after(async () => {
+  await writeAuditLog({ userId: adminId, action: `request:${status}`, module: "requests",
+    details: { purpose: remarks, summary: `Stock replenishment ${id.slice(0, 8).toUpperCase()} → ${status}`, reference_id: id, status, request_type: "stock_replenishment" } });
+  const { bustSuperAdminScopes } = await import("@/lib/personnel-cache");
+  await bustSuperAdminScopes(["requests"]);
+});
+return { success: true };
+```
+
+Critical path drops from auth → read → write → audit → SCAN/DEL → revalidate to auth → read → write. Apply the same shape to `users/actions.ts` (`setUserActive`) and `dashboard/actions.ts` (also collapse its `auth.admin.createUser` + `profile.upsert` + idempotency trips where possible).
+
+### Fix 4 — Server pagination, starting with deliveries [P1]
+
+```ts
+// browse/actions.ts — add alongside browseDeliveries:
+export async function browseDeliveriesPage({ page = 1, pageSize = 25 }: { page?: number; pageSize?: number }) {
+  if (!(await allowed())) return { rows: [], total: 0 };
+  const { withScopedCache } = await import("@/lib/personnel-cache");
+  return withScopedCache(`super-admin:deliveries-page:${page}:${pageSize}`, 30, async () => {
+    const [rows, total] = await Promise.all([
+      prisma.delivery.findMany({
+        orderBy: { created_at: "desc" },
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+        include: { _count: { select: { items: true } } },
+      }),
+      prisma.delivery.count(),
+    ]);
+    // ... same profile-name mapping, scoped to this page's ids only ...
+    return { rows: mapped, total };
+  });
+}
+```
+
+Then: same for `browseRequests` (and drop the `take:5000` audit scan — resolve `logged_by` for the page's IDs only) and `getAllUnifiedAssets` (page over assets/stocks separately, generate QR lazily on dialog open, never in the list query). Drive `BrowseTable`/`TablePager` from `{ rows, total }` instead of client `slice`.
+
+### Fix 5 — Indexes for the hottest filters [P2]
+
+Field names verified against `prisma/schema.prisma` — append inside each model, then `prisma migrate dev --name add-list-indexes`:
+
+```prisma
+model Profile { ... @@index([role])  @@index([status]) }
+model Request { ... @@index([status, date_requested])  @@index([request_type]) }
+model Delivery { ... @@index([created_at(sort: Desc)])  @@index([inspection_status])  @@index([received_by]) }
+model AuditLog { ... @@index([action, created_at])  @@index([module]) }
+```
+
+(For `Inspection.delivery_id` / inventory thresholds, confirm field names in schema before indexing.) Prefer exact/prefix filters over `contains(mode: insensitive)` full scans on the paginated endpoints from Fix 4.
+
+### Verify it worked
+
+- Two-tab test on every row of the Fix 1a table: act in tab A → tab B converges with no refresh (realtime), or within 15s (poll fallback — temporarily break the table name to prove the fallback fires).
+- Network tab on Approve/Deactivate: response returns after ~3 DB round-trips, audit + bust land after via `after()`.
+- `select tablename from pg_publication_tables where pubname = 'supabase_realtime'` lists all 14 tables.
+- Acceptance criteria in §6 check out, especially realtime-without-refresh and no `take:500` without pagination.
+
+---
+
+## 8. Appendix — Evidence Index
 
 - Pessimistic mutation: `src/app/super-admin/requests/page.tsx:92-119`, `src/app/super-admin/users/user-actions.tsx:30-47`
 - Serial write path: `src/app/super-admin/requests/actions.ts:34-84`, `src/lib/personnel-cache.ts:12-46,204-223`
 - Full-table reads: `src/app/super-admin/browse/actions.ts:89-93,328-341`, `src/app/personnel/assets/actions.ts:114-118,165-206,350-356,673-696`
 - Client pagination: `src/components/super-admin/BrowseTable.tsx:69-71`, `src/app/super-admin/assets/page.tsx:185-188`
 - Double TTL: `src/hooks/use-cached-action.ts:54,85-99`, `src/lib/client-cache.ts:21-59`, `src/app/super-admin/browse/actions.ts:87`, `src/app/super-admin/dashboard/stats.ts:64`, `analytics.ts:87`
-- Realtime hook + wiring gap: `src/hooks/use-admin-realtime.ts:31-93`, `src/app/super-admin/requests/page.tsx:62-66`, `users/page.tsx:62-66`, `repairs/page.tsx:40-44` vs missing on assets/deliveries/inventory/inspections/issuances/documents/issues/logs/records/transactions/master-data/dashboard
+- Realtime hook + wrong-table-name bug: `src/hooks/use-admin-realtime.ts:31-93`, `src/app/super-admin/requests/page.tsx:62-66`, `users/page.tsx:62-66`, `repairs/page.tsx:40-44` vs `prisma/schema.prisma:31,208,248` (`@@map` plural); missing entirely on assets/deliveries/inventory/inspections/issuances/documents/issues/logs/records/transactions/master-data/dashboard; deliveries page lacks `refresh` (`deliveries/page.tsx:23-27`)
 - Cross-role bust gap: `src/lib/personnel-cache.ts:242-330`, `src/app/personnel/assets/actions.ts:578-579`, `src/app/personnel/inventory/actions.ts:313,346`, `src/app/super-admin/requests/actions.ts:79-83`
 - Fire-and-forget bust: `src/app/super-admin/master-data/actions.ts:44-54`
 - Heavy dashboard: `src/app/super-admin/dashboard/page.tsx:50-56`, `stats.ts:69-145`, `analytics.ts:98-126`
 - Transactions page with no refresh: `src/app/super-admin/transactions/page.tsx:59-76`
+- Status values for optimistic user toggle: `src/app/super-admin/users/actions.ts:294` (`active`/`inactive`); audit writer contract: `src/lib/audit.ts:21-45`
 
-*Report generated from read-only audit of `main` at `d0298a0`. No code changes made in this report commit.*
+*Revision 2: added §7 Solution (realtime + fast-mutation implementation guide) and corrected §4 B2 with the singular/plural table-name bug verified against `prisma/schema.prisma` and all three `useAdminRealtime` call sites. Audit of `main` at `d0298a0` plus verification reads; no app code changed.*
