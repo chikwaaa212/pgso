@@ -215,6 +215,8 @@ function IarReportContent() {
             src={scanUrl}
             alt={`Attached IAR scan for delivery ${deliveryRef}`}
             className={iar.scanImg}
+            loading="lazy"
+            decoding="async"
           />
           <figcaption className={iar.scanCap}>
             Attached IAR scan{header.iarNo ? ` — ${header.iarNo}` : ""} ·{" "}

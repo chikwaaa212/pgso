@@ -5,20 +5,24 @@ import Link from "next/link";
 import { X } from "lucide-react";
 import { toast } from "sonner";
 import { Card } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { TablePager } from "@/components/personnel/TablePager";
 import { ActionButton } from "@/components/ui/action-button";
 import {
-  BrowseTable,
   StatusPill,
   type BrowseColumn,
 } from "@/components/super-admin/BrowseTable";
-import { browseInventory } from "../browse/actions";
+import { getInventoryPage, getInventoryStats } from "@/app/personnel/inventory/actions";
 import { setReorderThreshold } from "./actions";
 import type { InventoryRow } from "@/app/personnel/inventory/actions";
 import { useCachedAction } from "@/hooks/use-cached-action";
-import { CLIENT_CACHE_KEYS, patchClientCache } from "@/lib/client-cache";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
+import { buildQueryKey, resourcePrefix } from "@/lib/query-keys";
+import { patchClientCache } from "@/lib/client-cache";
 import { patchRowInPage } from "@/lib/list-patch";
 import { PAGE_SIZE } from "@/lib/constants";
 import InventoryLoading from "./loading";
+import browseStyles from "../users/page.module.css";
 import styles from "./page.module.css";
 
 function fmtCost(v: number | null) {
@@ -193,20 +197,36 @@ function ThresholdCell({
 }
 
 export default function SuperAdminInventoryPage() {
-  // Same client caching as the personnel inventory page: back-navigation
-  // paints instantly from memory / sessionStorage and only revalidates
-  // silently when stale (60s, matching the server list cache).
+  // Server-paged window (PAGE_SIZE = 15) via the shared inventory reader:
+  // the DB returns only the window + exact total per filter set (60s,
+  // busted by stock/threshold writes). Header alerts read the global stats
+  // snapshot (not the window) so counts stay exact while paging.
+  const [query, setQuery] = useState("");
+  const debouncedQuery = useDebouncedValue(query, 300);
+  const [page, setPage] = useState(1);
   const {
-    data,
+    data: paged,
     loading,
     isValidating,
     mutate: mutateRows,
   } = useCachedAction(
-    CLIENT_CACHE_KEYS.adminInventory,
-    browseInventory,
+    buildQueryKey({ module: 'super-admin', resource: 'inventory', page, filters: { q: debouncedQuery } }),
+    () => getInventoryPage({ page, pageSize: PAGE_SIZE, q: debouncedQuery }),
     { staleTime: 60_000 }
   );
-  const rows = useMemo(() => data ?? [], [data]);
+  const rows = useMemo(() => paged?.rows ?? [], [paged]);
+  const total = paged?.total ?? 0;
+  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const safePage = Math.min(Math.max(1, page), pageCount);
+  const { data: statsData } = useCachedAction(
+    buildQueryKey({ module: 'super-admin', resource: 'inventory-stats' }),
+    getInventoryStats,
+    { staleTime: 60_000 }
+  );
+  const stats = useMemo(
+    () => ({ skus: 0, units: 0, low: 0, critical: 0, out: 0, none: 0, ...statsData }),
+    [statsData]
+  );
 
   // Optimistic threshold saves (no refetch): patch this list + the
   // personnel inventory windows (same row shape); roll back on failure.
@@ -215,7 +235,10 @@ export default function SuperAdminInventoryPage() {
     (id: string, threshold: number | null) => {
       const patch = { reorder_threshold: threshold };
       mutateRows((prev) => (prev ? patchRowInPage(prev, id, patch) : prev));
-      patchClientCache("pgso:client:inventory-items", (d) => patchRowInPage(d, id, patch));
+      patchClientCache(
+        ["pgso:client:inventory-items", resourcePrefix("personnel", "inventory"), resourcePrefix("personnel", "inventory-stats")],
+        (d) => patchRowInPage(d, id, patch)
+      );
     },
     [mutateRows]
   );
@@ -224,22 +247,8 @@ export default function SuperAdminInventoryPage() {
   // but a changed count (e.g. after saving a threshold) toasts again.
   const [dismissedFor, setDismissedFor] = useState<number | null>(null);
 
-  const alert = useMemo(() => {
-    let out = 0;
-    let critical = 0;
-    let low = 0;
-    let none = 0;
-    for (const r of rows) {
-      const lv = levelOf(r);
-      if (lv === "out") out += 1;
-      else if (lv === "critical") critical += 1;
-      else if (lv === "low") low += 1;
-      else if (lv === "none") none += 1;
-    }
-    return { out, critical, low, none, attention: out + critical + low };
-  }, [rows]);
-
-  const showAlert = alert.attention > 0 && dismissedFor !== alert.attention;
+  const attention = stats.out + stats.critical + stats.low;
+  const showAlert = attention > 0 && dismissedFor !== attention;
 
   // Per-row recommendation toast — stored as an id so it always reflects
   // the freshest row data after threshold saves.
@@ -299,7 +308,7 @@ export default function SuperAdminInventoryPage() {
     [patchThreshold]
   );
 
-  if (loading) {
+  if (loading && rows.length === 0) {
     return <InventoryLoading />;
   }
 
@@ -309,7 +318,8 @@ export default function SuperAdminInventoryPage() {
       <div>
         <h1 className={styles.title}>Stocks</h1>
         <p className={styles.subtitle}>
-          {`${rows.length} stock ${rows.length === 1 ? "line" : "lines"}`} · thresholds are set by Super Admin
+          {`${total} stock ${total === 1 ? "line" : "lines"}`} · thresholds are set by Super Admin
+          {isValidating ? " · updating…" : ""}
         </p>
       </div>
 
@@ -343,11 +353,11 @@ export default function SuperAdminInventoryPage() {
         <div role="alert" className={styles.toast}>
           <div className={styles.toastBody}>
             <p className={styles.toastTitle}>
-              Stock alert: {alert.attention} item{alert.attention !== 1 ? "s" : ""}{" "}
+              Stock alert: {attention} item{attention !== 1 ? "s" : ""}{" "}
               at or below threshold
-              {alert.out > 0 ? ` — ${alert.out} out of stock` : ""}
-              {alert.critical > 0 ? `, ${alert.critical} critical` : ""}
-              {alert.low > 0 ? `, ${alert.low} low` : ""}.
+              {stats.out > 0 ? ` — ${stats.out} out of stock` : ""}
+              {stats.critical > 0 ? `, ${stats.critical} critical` : ""}
+              {stats.low > 0 ? `, ${stats.low} low` : ""}.
             </p>
             <p>
               Recommendation: tell personnel to file supply requests for these items
@@ -362,22 +372,74 @@ export default function SuperAdminInventoryPage() {
             type="button"
             className={styles.toastClose}
             aria-label="Dismiss stock alert"
-            onClick={() => setDismissedFor(alert.attention)}
+            onClick={() => setDismissedFor(attention)}
           >
             <X size={16} aria-hidden="true" />
           </button>
         </div>
       ) : null}
 
-      {alert.attention === 0 && alert.none > 0 ? (
+      {attention === 0 && stats.none > 0 ? (
         <p className={styles.panelSub} role="status">
-          All stocked items are above threshold. {alert.none} item{alert.none !== 1 ? "s have" : " has"} no
+          All stocked items are above threshold. {stats.none} item{stats.none !== 1 ? "s have" : " has"} no
           threshold yet — set one below so the system can alert personnel.
         </p>
       ) : null}
 
       <Card className={styles.panel}>
-        <BrowseTable rows={rows} columns={columns} searchPlaceholder="Search item, code, location…" pageSizeKey="pgso:admin:inventory" isValidating={isValidating} fixedPageSize={PAGE_SIZE} />
+        <div className={browseStyles.searchRow}>
+          <Input
+            type="search"
+            aria-label="Search stocks"
+            placeholder="Search item, code, location…"
+            value={query}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              setPage(1);
+            }}
+          />
+          {isValidating ? (
+            <span role="status" aria-live="polite" style={{ fontSize: "0.75rem", color: "var(--color-navy-500)", whiteSpace: "nowrap" }}>
+              Updating…
+            </span>
+          ) : null}
+        </div>
+        <div className={browseStyles.tableWrap}>
+          <table className={browseStyles.table}>
+            <thead>
+              <tr>
+                {columns.map((c) => (
+                  <th key={c.key}>{c.label}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.id}>
+                  {columns.map((c) => (
+                    <td key={c.key}>{c.value(r)}</td>
+                  ))}
+                </tr>
+              ))}
+              {rows.length === 0 && (
+                <tr>
+                  <td colSpan={columns.length} className={browseStyles.empty}>
+                    No records found.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+        {total > 0 ? (
+          <TablePager
+            id="admin-inventory"
+            total={total}
+            pageSize={PAGE_SIZE}
+            page={safePage}
+            onPageChange={setPage}
+          />
+        ) : null}
       </Card>
     </section>
   );

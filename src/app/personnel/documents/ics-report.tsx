@@ -38,6 +38,8 @@ export function IcsReportSheet({ issuance: r }: { issuance: IssuanceDetail }) {
           src={r.image_url}
           alt={`Signed ICS scan ${r.doc_no ?? ""}`}
           className={acc.scanImg}
+          loading="lazy"
+          decoding="async"
         />
         <figcaption className={acc.scanCap}>
           Signed ICS scan{r.doc_no ? ` — ${r.doc_no}` : ""} ·{" "}

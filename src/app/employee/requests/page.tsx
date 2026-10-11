@@ -9,7 +9,7 @@ import { getMyRequests, getMyRequestOptions } from "../actions";
 import { NewRequestForm } from "./request-form";
 import { RequestQrButton } from "@/components/personnel/RequestQrButton";
 import { useCachedAction } from "@/hooks/use-cached-action";
-import { CLIENT_CACHE_KEYS } from "@/lib/client-cache";
+import { buildQueryKey } from "@/lib/query-keys";
 import RequestsLoading from "./loading";
 import styles from "./page.module.css";
 
@@ -35,7 +35,7 @@ export default function EmployeeRequestsPage() {
   // the page: stale data stays visible and only cold starts surface the
   // error with a Retry.
   const { data: snapshot, loading, error, refresh } = useCachedAction(
-    CLIENT_CACHE_KEYS.employeeRequests,
+    buildQueryKey({ module: 'employee', resource: 'requests' }),
     () =>
       Promise.all([getMyRequests(), getMyRequestOptions()]).then(
         ([requests, options]) => ({ requests, options })

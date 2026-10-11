@@ -323,6 +323,8 @@ export function RequestQrButton({ requestId }: { requestId: string }) {
                       <img
                         src={dataUrl}
                         alt={`QR record for completed ${meta.request_type} ${meta.ref}`}
+                        loading="lazy"
+                        decoding="async"
                       />
                     ) : null}
                   </div>

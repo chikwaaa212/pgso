@@ -165,6 +165,10 @@ function QrCard({ asset }: { asset: UnifiedAssetRow }) {
           src={asset.qr_data_url}
           alt={`QR code for ${asset.account_code}`}
           className={assetStyles.qrImgLarge}
+          width={96}
+          height={96}
+          loading="lazy"
+          decoding="async"
         />
       ) : (
         <span className={assetStyles.qrPlaceholder}>No QR code</span>
@@ -380,8 +384,16 @@ export function AssetDetailEditor({
         // admin lists) — no refetch. Next revalidation converges any
         // server-side normalization (catalog title snap, unit canonicalization).
         void import("@/lib/client-cache").then((m) =>
-          m.patchClientCache(["pgso:assets:unified", "pgso:admin-assets:unified"], (data) =>
-            patchRowInPage(data, asset.id, overrides)
+          import("@/lib/query-keys").then(({ resourcePrefix }) =>
+            m.patchClientCache(
+              [
+                "pgso:assets:unified",
+                "pgso:admin-assets:unified",
+                resourcePrefix("personnel", "assets"),
+                resourcePrefix("super-admin", "assets"),
+              ],
+              (data) => patchRowInPage(data, asset.id, overrides)
+            )
           )
         );
       }

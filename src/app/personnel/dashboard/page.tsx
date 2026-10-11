@@ -4,7 +4,7 @@ import Link from "next/link";
 import { Card } from "@/components/ui/card";
 import { getDashboardSnapshot } from "./actions";
 import { useCachedAction } from "@/hooks/use-cached-action";
-import { CLIENT_CACHE_KEYS } from "@/lib/client-cache";
+import { buildQueryKey } from "@/lib/query-keys";
 import DashboardLoading from "./loading";
 import { OverviewChart } from "./overview-chart";
 import styles from "./page.module.css";
@@ -70,7 +70,7 @@ export default function PersonnelDashboard() {
     error,
     refresh,
   } = useCachedAction(
-    CLIENT_CACHE_KEYS.dashboard,
+    buildQueryKey({ module: 'personnel', resource: 'dashboard' }),
     getDashboardSnapshot,
     { staleTime: 60_000 }
   );

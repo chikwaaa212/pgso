@@ -136,7 +136,7 @@ describe("detail editors: optimistic overlay + rollback + list patch", () => {
       const file = src(p);
       assert.match(file, /setOptimistic\(overrides\)/);
       assert.match(file, /setOptimistic\(null\)/);
-      assert.match(file, /patchClientCache\(\[/);
+      assert.match(file, /patchClientCache\(\s*\[/);
       assert.ok(!/pgso:client:assets-snapshot/.test(file), "stale bust key removed");
       assert.match(file, /disabled=\{isPending\}/);
     });
@@ -171,7 +171,8 @@ describe("threshold cells: optimistic patch + revert + record", () => {
   it("threshold applies instantly with rollback on failure", () => {
     assert.match(page, /onOptimistic=\{\(id, threshold\) => patchThreshold/);
     assert.match(page, /onRevert=\{\(id, prev\) => patchThreshold/);
-    assert.match(page, /patchClientCache\("pgso:client:inventory-items"/);
+    assert.match(page, /patchClientCache\(\s*\[\s*"pgso:client:inventory-items"/);
+    assert.match(page, /resourcePrefix\("personnel", "inventory"\)/);
     assert.match(page, /res\.record\?\.reorder_threshold/);
     assert.match(page, /disabled=\{!dirty \|\| saving\}/);
   });

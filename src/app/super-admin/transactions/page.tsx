@@ -18,8 +18,8 @@ import type { DeliveryDetails } from "@/app/personnel/deliveries/actions";
 import type { RepairRow } from "@/app/personnel/repairs/actions";
 import type { IssuanceDetail } from "@/app/personnel/issuances/actions";
 import { useCachedAction } from "@/hooks/use-cached-action";
+import { buildQueryKey } from "@/lib/query-keys";
 import { useReceipt } from "@/hooks/use-receipt";
-import { CLIENT_CACHE_KEYS } from "@/lib/client-cache";
 import { ReceiptLoading } from "@/components/personnel/ReceiptLoading";
 import {
   Dialog,
@@ -57,7 +57,7 @@ export default function SuperAdminTransactionsPage() {
   // when stale (60s, matching the server caches) — same SWR pattern as
   // the other admin pages.
   const { data: snapshot, loading, isValidating } = useCachedAction(
-    CLIENT_CACHE_KEYS.adminTransactions,
+    buildQueryKey({ module: 'super-admin', resource: 'transactions' }),
     () =>
       Promise.all([
         getOperationsStats(),

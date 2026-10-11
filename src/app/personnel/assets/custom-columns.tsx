@@ -24,6 +24,7 @@ import {
 } from "@/components/ui/select";
 import { useCachedAction } from "@/hooks/use-cached-action";
 import { CLIENT_CACHE_KEYS } from "@/lib/client-cache";
+import { resourcePrefix } from "@/lib/query-keys";
 import {
   createCustomField,
   deleteCustomField,
@@ -60,7 +61,7 @@ export function useCustomFields() {
 
 function bustAssetCaches() {
   void import('@/lib/client-cache').then((m) =>
-    m.bustClientCache([CLIENT_CACHE_KEYS.assets, CLIENT_CACHE_KEYS.assetCustomFields])
+    m.bustClientCache([CLIENT_CACHE_KEYS.assets, CLIENT_CACHE_KEYS.assetCustomFields, resourcePrefix("personnel", "assets")])
   );
 }
 

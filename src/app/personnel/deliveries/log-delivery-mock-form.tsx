@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { SubmitButton } from "@/components/ui/submit-button";
 import { useToast } from "@/components/ui/toaster";
 import { CLIENT_CACHE_KEYS, bustClientCache } from "@/lib/client-cache";
+import { resourcePrefix } from "@/lib/query-keys";
 import { cn } from "@/lib/utils";
 import { logDelivery, getDeliveryFormOptions, type DeliveryFormOptions } from "./actions";
 import { useMasterData } from "@/hooks/use-master-data";
@@ -290,6 +291,11 @@ export function LogDeliveryMockForm({
         CLIENT_CACHE_KEYS.deliveries,
         CLIENT_CACHE_KEYS.inspections,
         CLIENT_CACHE_KEYS.dashboard,
+        resourcePrefix("personnel", "deliveries"),
+        resourcePrefix("personnel", "inspections"),
+        resourcePrefix("personnel", "inspections-air"),
+        resourcePrefix("personnel", "inspections-counts"),
+        resourcePrefix("personnel", "dashboard"),
       ]);
       toast({
         title: "Delivery saved",

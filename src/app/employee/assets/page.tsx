@@ -10,7 +10,7 @@ import { requestTypeLabel } from "@/app/personnel/requests/request-types";
 import { RequestQrButton } from "@/components/personnel/RequestQrButton";
 import { useCachedAction } from "@/hooks/use-cached-action";
 import { useReceipt } from "@/hooks/use-receipt";
-import { CLIENT_CACHE_KEYS } from "@/lib/client-cache";
+import { buildQueryKey } from "@/lib/query-keys";
 import type { IssuanceDetail } from "@/app/personnel/issuances/actions";
 import { ParReportSheet } from "@/app/personnel/documents/par-report";
 import { IcsReportSheet } from "@/app/personnel/documents/ics-report";
@@ -49,7 +49,7 @@ export default function EmployeeAssetsPage() {
   // when stale (30s, matching the personnel lists) — same SWR pattern as
   // the personnel dashboard / deliveries pages.
   const { data: snapshot, loading } = useCachedAction(
-    CLIENT_CACHE_KEYS.employeeAssets,
+    buildQueryKey({ module: 'employee', resource: 'assets' }),
     () =>
       Promise.all([getMyAssets(), getMyDocs(), getMyAssetRequests()]).then(
         ([assets, docs, requests]) => ({ assets, docs, requests })

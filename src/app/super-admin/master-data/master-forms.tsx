@@ -9,7 +9,9 @@ import { SubmitButton } from "@/components/ui/submit-button";
 import {
   CLIENT_CACHE_KEYS,
   bustClientCache,
-} from "@/lib/client-cache";import {
+} from "@/lib/client-cache";
+import { resourcePrefix } from "@/lib/query-keys";
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -51,7 +53,7 @@ export function AddUnitForm({ triggerClassName }: { triggerClassName?: string })
   // Close + refresh the list on success (same pattern as the toggles).
   useEffect(() => {
     if (state?.ok) {
-      bustClientCache(CLIENT_CACHE_KEYS.adminMasterData);
+      bustClientCache([CLIENT_CACHE_KEYS.adminMasterData, resourcePrefix("super-admin", "master-data"), "pgso:master-data:active"]);
       toast.success("Unit added", { duration: 2000, closeButton: true });
       formRef.current?.reset();
       // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional one-shot close after successful submit
@@ -113,7 +115,7 @@ export function UnitToggle({ id, name, isActive }: { id: string; name: string; i
         const r = await setUnitStatus(id, isActive ? "inactive" : "active");
         if (r.ok) {
           toast.success(isActive ? "Deactivated" : "Reactivated", { duration: 2000, closeButton: true });
-          bustClientCache(CLIENT_CACHE_KEYS.adminMasterData);
+          bustClientCache([CLIENT_CACHE_KEYS.adminMasterData, resourcePrefix("super-admin", "master-data"), "pgso:master-data:active"]);
           router.refresh();
         } else {
           toast.error("Failed", { description: r.error ?? "Try again.", duration: 2000, closeButton: true });
@@ -134,7 +136,7 @@ export function AddCatalogForm({ triggerClassName }: { triggerClassName?: string
 
   useEffect(() => {
     if (state?.ok) {
-      bustClientCache(CLIENT_CACHE_KEYS.adminMasterData);
+      bustClientCache([CLIENT_CACHE_KEYS.adminMasterData, resourcePrefix("super-admin", "master-data"), "pgso:master-data:active"]);
       toast.success("Catalog entry added", { duration: 2000, closeButton: true });
       formRef.current?.reset();
       // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional one-shot close after successful submit
@@ -208,7 +210,7 @@ export function CatalogToggle({ id, code, isActive }: { id: string; code: string
         const r = await setCatalogStatus(id, isActive ? "inactive" : "active");
         if (r.ok) {
           toast.success(isActive ? "Deactivated" : "Reactivated", { duration: 2000, closeButton: true });
-          bustClientCache(CLIENT_CACHE_KEYS.adminMasterData);
+          bustClientCache([CLIENT_CACHE_KEYS.adminMasterData, resourcePrefix("super-admin", "master-data"), "pgso:master-data:active"]);
           router.refresh();
         } else {
           toast.error("Failed", { description: r.error ?? "Try again.", duration: 2000, closeButton: true });
@@ -306,7 +308,7 @@ export function CatalogEdit({
                 if (r.ok) {
                   toast.success("Saved", { duration: 2000, closeButton: true });
                   setOpen(false);
-                  bustClientCache(CLIENT_CACHE_KEYS.adminMasterData);
+                  bustClientCache([CLIENT_CACHE_KEYS.adminMasterData, resourcePrefix("super-admin", "master-data"), "pgso:master-data:active"]);
                   router.refresh();
                 } else {
                   toast.error("Save failed", { description: r.error ?? "Try again.", duration: 2000, closeButton: true });
@@ -348,7 +350,7 @@ export function ImportCatalogDialog() {
         duration: 2000,
         closeButton: true,
       });
-      bustClientCache(CLIENT_CACHE_KEYS.adminMasterData);
+      bustClientCache([CLIENT_CACHE_KEYS.adminMasterData, resourcePrefix("super-admin", "master-data"), "pgso:master-data:active"]);
       router.refresh();
     } else if (result.error) {
       toast.error("Import failed", {
@@ -518,7 +520,7 @@ export function AddDepartmentForm({ triggerClassName }: { triggerClassName?: str
   // Close + refresh the list on success (same pattern as units).
   useEffect(() => {
     if (state?.ok) {
-      bustClientCache(CLIENT_CACHE_KEYS.adminMasterData);
+      bustClientCache([CLIENT_CACHE_KEYS.adminMasterData, resourcePrefix("super-admin", "master-data"), "pgso:master-data:active"]);
       toast.success("Department added", { duration: 2000, closeButton: true });
       formRef.current?.reset();
       // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional one-shot close after successful submit
@@ -578,7 +580,7 @@ export function DepartmentToggle({ id, name, isActive }: { id: string; name: str
         const r = await setDepartmentStatus(id, isActive ? "inactive" : "active");
         if (r.ok) {
           toast.success(isActive ? "Deactivated" : "Reactivated", { duration: 2000, closeButton: true });
-          bustClientCache(CLIENT_CACHE_KEYS.adminMasterData);
+          bustClientCache([CLIENT_CACHE_KEYS.adminMasterData, resourcePrefix("super-admin", "master-data"), "pgso:master-data:active"]);
           router.refresh();
         } else {
           toast.error("Failed", { description: r.error ?? "Try again.", duration: 2000, closeButton: true });

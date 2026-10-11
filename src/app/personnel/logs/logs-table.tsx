@@ -16,7 +16,7 @@ import {
 } from "@/components/personnel/skeletons";
 import { useCachedAction } from "@/hooks/use-cached-action";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
-import { CLIENT_CACHE_KEYS } from "@/lib/client-cache";
+import { buildQueryKey } from "@/lib/query-keys";
 import { getLogModules, getMyLogsPage } from "./actions";
 import styles from "../dashboard/page.module.css";
 import air from "../inspections/air-section.module.css";
@@ -54,7 +54,13 @@ export function LogsTable({ onTotalChange }: { onTotalChange?: (total: number) =
   const searching = query.trim() !== debouncedQuery.trim();
 
   const { data, loading, isValidating } = useCachedAction(
-    `${CLIENT_CACHE_KEYS.logs}:${page}:${debouncedQuery}:${moduleFilter}`,
+    buildQueryKey({
+      module: 'personnel',
+      resource: 'logs',
+      page,
+      pageSize,
+      filters: { q: debouncedQuery, module: moduleFilter },
+    }),
     () =>
       getMyLogsPage({
         page,
@@ -68,7 +74,7 @@ export function LogsTable({ onTotalChange }: { onTotalChange?: (total: number) =
   const total = data?.total ?? 0;
 
   const { data: modulesData } = useCachedAction(
-    `${CLIENT_CACHE_KEYS.logs}-modules`,
+    buildQueryKey({ module: 'personnel', resource: 'logs-modules' }),
     getLogModules,
     { staleTime: 300_000 }
   );

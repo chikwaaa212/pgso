@@ -8,7 +8,7 @@ import { RequestQrButton } from "@/components/personnel/RequestQrButton";
 import { TablePager, FIXED_PAGE_SIZE } from "@/components/personnel/TablePager";
 import { requestTypeLabel } from "@/app/personnel/requests/request-types";
 import { useCachedAction } from "@/hooks/use-cached-action";
-import { CLIENT_CACHE_KEYS } from "@/lib/client-cache";
+import { buildQueryKey } from "@/lib/query-keys";
 import IssuesLoading from "./loading";
 import styles from "../dashboard/page.module.css";
 
@@ -49,7 +49,13 @@ export default function PersonnelIssuesPage() {
   // Server-paged issued lines: 20 documents per fetch, QR generated only
   // for this window instead of the whole registry.
   const { data: paged, loading, isValidating } = useCachedAction(
-    `${CLIENT_CACHE_KEYS.issues}:${page}:${filters.q}:${filters.docType}:${filters.assetType}`,
+    buildQueryKey({
+      module: 'personnel',
+      resource: 'issues',
+      page,
+      pageSize: 20,
+      filters: { q: filters.q, docType: filters.docType, assetType: filters.assetType },
+    }),
     () =>
       getPublicIssuesPage({
         page,
@@ -63,13 +69,13 @@ export default function PersonnelIssuesPage() {
   const totalDocs = paged?.total ?? 0;
 
   const { data: typeOptions } = useCachedAction(
-    `${CLIENT_CACHE_KEYS.issues}-type-options`,
+    buildQueryKey({ module: 'personnel', resource: 'issues-type-options' }),
     getIssueFilterOptions,
     { staleTime: 300_000 }
   );
 
   const { data: completedData } = useCachedAction(
-    `${CLIENT_CACHE_KEYS.issues}-completed`,
+    buildQueryKey({ module: 'personnel', resource: 'issues-completed' }),
     getCompletedRequestIssues,
     { staleTime: 60_000 }
   );

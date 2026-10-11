@@ -5,7 +5,7 @@ import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { useCachedAction } from "@/hooks/use-cached-action";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
-import { CLIENT_CACHE_KEYS } from "@/lib/client-cache";
+import { buildQueryKey } from "@/lib/query-keys";
 import { FIXED_PAGE_SIZE } from "@/components/personnel/TablePager";
 import {
   DataTableSkeleton,
@@ -78,7 +78,13 @@ export function DeliveryTable({
   // Debounced search — the DB query fires only after typing pauses.
   const debouncedQuery = useDebouncedValue(query, 250);
 
-  const cacheKey = `${CLIENT_CACHE_KEYS.deliveries}:${page}:${debouncedQuery}:${statusFilter}`;
+  const cacheKey = buildQueryKey({
+    module: 'personnel',
+    resource: 'deliveries',
+    page,
+    pageSize,
+    filters: { q: debouncedQuery, status: statusFilter === 'All' ? 'all' : statusFilter },
+  });
   const { data, loading, isValidating } = useCachedAction(
     cacheKey,
     () =>

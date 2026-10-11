@@ -50,6 +50,7 @@ import receipt from "../inspections/components/receipt.module.css";
 import { TablePager } from "@/components/personnel/TablePager";
 import { ReceiptLoading } from "@/components/personnel/ReceiptLoading";
 import { useCachedAction } from "@/hooks/use-cached-action";
+import { buildQueryKey, resourcePrefix } from "@/lib/query-keys";
 import {
   CLIENT_CACHE_KEYS,
   bustClientCache,
@@ -188,7 +189,13 @@ function PersonnelDocumentsContent() {
     isValidating,
     error,
   } = useCachedAction(
-    `pgso:documents:${tab}:${page}:${pageSize}:${debouncedQuery}`,
+    buildQueryKey({
+      module: 'personnel',
+      resource: 'documents',
+      page,
+      pageSize,
+      filters: { tab, q: debouncedQuery },
+    }),
     () =>
       getDocumentsTabPage(tab as DocumentsTab, { page, q: debouncedQuery }).then(
         (res) => ({ ...res, _tab: tab })
@@ -203,7 +210,7 @@ function PersonnelDocumentsContent() {
     tabPayload && tabPayload._tab === tab ? tabPayload : undefined;
   // Cheap per-tab totals for the header counts (no row payloads).
   const { data: countsData } = useCachedAction(
-    `${CLIENT_CACHE_KEYS.documents}-counts`,
+    buildQueryKey({ module: 'personnel', resource: 'documents-counts' }),
     getDocumentsCounts,
     { staleTime: 60_000 }
   );
@@ -245,7 +252,7 @@ function PersonnelDocumentsContent() {
     [tab, windowRows]
   );
   const { data: viewedKeysData } = useCachedAction(
-    `${CLIENT_CACHE_KEYS.documents}-viewed`,
+    buildQueryKey({ module: 'personnel', resource: 'documents-viewed' }),
     getViewedDocKeys,
     { staleTime: 30_000 }
   );
@@ -297,7 +304,7 @@ function PersonnelDocumentsContent() {
     // snapshot so its next visit refetches instead of serving stale counts.
     // Targeted client bust only (was full router.refresh() reloading the
     // entire documents snapshot on every receipt open).
-    bustClientCache(CLIENT_CACHE_KEYS.dashboard);
+    bustClientCache([CLIENT_CACHE_KEYS.dashboard, resourcePrefix("personnel", "dashboard")]);
     void markDocumentViewed(type, id).catch(() => {});
   }
 
@@ -432,7 +439,7 @@ function PersonnelDocumentsContent() {
   // Prefetch next page while user views current one (no flicker on Next).
   useEffect(() => {
     if (!tabData || tabTotal <= page * pageSize) return;
-    const nextKey = `pgso:documents:${tab}:${page + 1}:${pageSize}:${debouncedQuery}`;
+    const nextKey = buildQueryKey({ module: 'personnel', resource: 'documents', page: page + 1, pageSize, filters: { tab, q: debouncedQuery } });
     if (getClientCache(nextKey)) return;
     const t = setTimeout(() => {
       void getDocumentsTabPage(tab as DocumentsTab, { page: page + 1, q: debouncedQuery })

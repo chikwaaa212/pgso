@@ -28,6 +28,7 @@ import {
 import { useToast } from "@/components/ui/toaster";
 import { toast as toastSonner } from "sonner";
 import { CLIENT_CACHE_KEYS, bustClientCache } from "@/lib/client-cache";
+import { resourcePrefix } from "@/lib/query-keys";
 import { recordInspection, type InspectionState } from "../../deliveries/actions";
 import type { DeliveryForInspection } from "../actions";
 import { isPassedAllowed, remainingOf, toCumulative } from "@/lib/inspection-rules";
@@ -306,6 +307,13 @@ export function InspectionForm({
         CLIENT_CACHE_KEYS.deliveries,
         CLIENT_CACHE_KEYS.dashboard,
         CLIENT_CACHE_KEYS.inventory,
+        resourcePrefix("personnel", "inspections"),
+        resourcePrefix("personnel", "inspections-air"),
+        resourcePrefix("personnel", "inspections-counts"),
+        resourcePrefix("personnel", "deliveries"),
+        resourcePrefix("personnel", "dashboard"),
+        resourcePrefix("personnel", "inventory"),
+        resourcePrefix("personnel", "inventory-stats"),
       ]);
       router.push("/personnel/inspections");
     }

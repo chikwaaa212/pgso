@@ -367,13 +367,13 @@ export async function bustPersonnelScopes(
 ): Promise<void> {
   const map: Record<string, string[]> = {
     dashboard: ['personnel:dashboard', 'personnel:ops-stats', 'personnel:monthly'],
-    deliveries: ['personnel:deliveries', 'personnel:delivery-'],
-    inspections: ['personnel:inspection', 'personnel:iar-', 'personnel:monthly'],
+    deliveries: ['personnel:deliveries', 'personnel:delivery-', 'super-admin:deliveries-page'],
+    inspections: ['personnel:inspection', 'personnel:iar-', 'personnel:monthly', 'super-admin:inspections-page'],
     inventory: ['inventory:', 'personnel:inventory', 'personnel:low-stock'],
     assets: ['assets:', 'personnel:asset', 'personnel:unified'],
     documents: ['personnel:delivery-documents', 'personnel:iar-reports', 'personnel:viewed-doc'],
-    issuances: ['personnel:issuance', 'personnel:public-issues'],
-    requests: ['personnel:request'],
+    issuances: ['personnel:issuance', 'personnel:public-issues', 'super-admin:issuances-page'],
+    requests: ['personnel:request', 'super-admin:requests-page'],
     repairs: ['personnel:repair'],
     issues: ['personnel:public-issues', 'personnel:completed-request'],
     logs: ['personnel:my-logs', 'personnel:logs'],
@@ -398,6 +398,7 @@ export async function bustSuperAdminScopes(
     users: [
       'super-admin:pending-employees',
       'super-admin:all-users',
+      'super-admin:users-page',
       'super-admin:user-counts',
       'super-admin:overview',
       'personnel:dashboard-stats',

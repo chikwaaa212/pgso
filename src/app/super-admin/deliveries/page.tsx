@@ -2,30 +2,41 @@
 
 import { useMemo, useState } from "react";
 import { Card } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { TablePager } from "@/components/personnel/TablePager";
 import {
-  BrowseTable,
   StatusPill,
   fmtDate,
   type BrowseColumn,
 } from "@/components/super-admin/BrowseTable";
-import { browseDeliveries, type BrowseDeliveryRow } from "../browse/actions";
+import { browseDeliveriesPage, type BrowseDeliveryRow } from "../browse/actions";
 import { useCachedAction } from "@/hooks/use-cached-action";
-import { CLIENT_CACHE_KEYS } from "@/lib/client-cache";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
+import { buildQueryKey } from "@/lib/query-keys";
+import { PAGE_SIZE } from "@/lib/constants";
 import DeliveriesLoading from "./loading";
 import { DeliveryDetailModal, InspectionDetailModal } from "./record-modals";
 import styles from "./page.module.css";
+import browseStyles from "../users/page.module.css";
 import actionStyles from "@/app/personnel/dashboard/page.module.css";
 
 export default function SuperAdminDeliveriesPage() {
-  // Same client caching as the personnel deliveries page: back-navigation
-  // paints instantly from memory / sessionStorage and only revalidates
-  // silently when stale (30s, matching the server list cache).
-  const { data, loading, isValidating } = useCachedAction(
-    CLIENT_CACHE_KEYS.adminDeliveries,
-    browseDeliveries,
+  // Server-paged window (PAGE_SIZE = 15): the DB returns only the window +
+  // exact total per filter set (30s, busted by delivery/inspection writes).
+  // Back-navigation paints instantly from the client cache; stale windows
+  // revalidate silently with rows kept visible (no flicker).
+  const [query, setQuery] = useState("");
+  const debouncedQuery = useDebouncedValue(query, 300);
+  const [page, setPage] = useState(1);
+  const { data: paged, loading, isValidating } = useCachedAction(
+    buildQueryKey({ module: 'super-admin', resource: 'deliveries', page, filters: { q: debouncedQuery } }),
+    () => browseDeliveriesPage({ page, q: debouncedQuery }),
     { staleTime: 30_000 }
   );
-  const rows = data ?? [];
+  const rows = useMemo(() => paged?.rows ?? [], [paged]);
+  const total = paged?.total ?? 0;
+  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const safePage = Math.min(Math.max(1, page), pageCount);
   const [detailRow, setDetailRow] = useState<BrowseDeliveryRow | null>(null);
   const [inspectionRow, setInspectionRow] = useState<BrowseDeliveryRow | null>(null);
 
@@ -70,7 +81,7 @@ export default function SuperAdminDeliveriesPage() {
     []
   );
 
-  if (loading) {
+  if (loading && rows.length === 0) {
     return <DeliveriesLoading />;
   }
 
@@ -80,11 +91,64 @@ export default function SuperAdminDeliveriesPage() {
       <div>
         <h1 className={styles.title}>Deliveries</h1>
         <p className={styles.subtitle}>
-          {`${rows.length} ${rows.length === 1 ? "delivery" : "deliveries"} logged by all personnel`} · read-only
+          {`${total} ${total === 1 ? "delivery" : "deliveries"} logged by all personnel`} · read-only
+          {isValidating ? " · updating…" : ""}
         </p>
       </div>
       <Card className={styles.panel}>
-        <BrowseTable rows={rows} columns={columns} searchPlaceholder="Search supplier, PO, ref, logger…" pageSizeKey="pgso:admin:deliveries" getRowKey={(r) => r.id} isValidating={isValidating} />
+        <div className={browseStyles.searchRow}>
+          <Input
+            type="search"
+            aria-label="Search deliveries"
+            placeholder="Search supplier, PO, ref, logger…"
+            value={query}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              setPage(1);
+            }}
+          />
+          {isValidating ? (
+            <span role="status" aria-live="polite" style={{ fontSize: "0.75rem", color: "var(--color-navy-500)", whiteSpace: "nowrap" }}>
+              Updating…
+            </span>
+          ) : null}
+        </div>
+        <div className={browseStyles.tableWrap}>
+          <table className={browseStyles.table}>
+            <thead>
+              <tr>
+                {columns.map((c) => (
+                  <th key={c.key}>{c.label}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.id}>
+                  {columns.map((c) => (
+                    <td key={c.key}>{c.value(r)}</td>
+                  ))}
+                </tr>
+              ))}
+              {rows.length === 0 && (
+                <tr>
+                  <td colSpan={columns.length} className={browseStyles.empty}>
+                    No records found.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+        {total > 0 ? (
+          <TablePager
+            id="admin-deliveries"
+            total={total}
+            pageSize={PAGE_SIZE}
+            page={safePage}
+            onPageChange={setPage}
+          />
+        ) : null}
       </Card>
       <DeliveryDetailModal row={detailRow} onClose={() => setDetailRow(null)} />
       <InspectionDetailModal row={inspectionRow} onClose={() => setInspectionRow(null)} />

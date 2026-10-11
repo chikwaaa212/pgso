@@ -42,6 +42,7 @@ import {
 import { formatPeso } from "@/lib/issuance-rules";
 import { TablePager, FIXED_PAGE_SIZE } from "@/components/personnel/TablePager";
 import { useCachedAction } from "@/hooks/use-cached-action";
+import { buildQueryKey, resourcePrefix } from "@/lib/query-keys";
 import { CLIENT_CACHE_KEYS, bustClientCache } from "@/lib/client-cache";
 import RequestsLoading from "./loading";
 import styles from "../dashboard/page.module.css";
@@ -107,7 +108,13 @@ export default function PersonnelRequestsPage() {
   // Server-paged queue (own requests): search/status/type/page all filter
   // in the DB; back-navigation still paints instantly from the client SWR
   // cache and revalidates silently when stale.
-  const cacheKey = `${CLIENT_CACHE_KEYS.requests}:${page}:${pageSize}:${debouncedQuery}:${statusTab}:${typeFilter}`;
+  const cacheKey = buildQueryKey({
+    module: 'personnel',
+    resource: 'requests',
+    page,
+    pageSize,
+    filters: { q: debouncedQuery, status: statusTab, type: typeFilter },
+  });
   const {
     data: snapshot,
     loading,
@@ -211,6 +218,23 @@ export default function PersonnelRequestsPage() {
       CLIENT_CACHE_KEYS.issues,
       CLIENT_CACHE_KEYS.issuances,
       CLIENT_CACHE_KEYS.logs,
+      resourcePrefix("personnel", "dashboard"),
+      resourcePrefix("personnel", "deliveries"),
+      resourcePrefix("personnel", "inspections"),
+      resourcePrefix("personnel", "inspections-air"),
+      resourcePrefix("personnel", "inspections-counts"),
+      resourcePrefix("personnel", "inventory"),
+      resourcePrefix("personnel", "inventory-stats"),
+      resourcePrefix("personnel", "assets"),
+      resourcePrefix("personnel", "documents"),
+      resourcePrefix("personnel", "documents-counts"),
+      resourcePrefix("personnel", "documents-viewed"),
+      resourcePrefix("personnel", "issues"),
+      resourcePrefix("personnel", "issues-type-options"),
+      resourcePrefix("personnel", "issues-completed"),
+      resourcePrefix("personnel", "issuances"),
+      resourcePrefix("personnel", "logs"),
+      resourcePrefix("personnel", "logs-modules"),
     ]);
     refreshRows();
   };

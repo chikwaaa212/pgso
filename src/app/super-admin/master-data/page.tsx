@@ -6,7 +6,7 @@ import { label } from "@/lib/labels";
 import { getCatalog, getDepartments, getUnits } from "./actions";
 import { AddCatalogForm, AddDepartmentForm, AddUnitForm, CatalogEdit, CatalogToggle, DepartmentToggle, ImportCatalogDialog, UnitToggle } from "./master-forms";
 import { useCachedAction } from "@/hooks/use-cached-action";
-import { CLIENT_CACHE_KEYS } from "@/lib/client-cache";
+import { buildQueryKey } from "@/lib/query-keys";
 import MasterDataLoading from "./loading";
 import styles from "./page.module.css";
 
@@ -16,7 +16,7 @@ export default function SuperAdminMasterDataPage() {
   // (60s, matching the server caches) — same SWR pattern as the other
   // admin pages. Writes bust + revalidate through the forms.
   const { data: snapshot, loading } = useCachedAction(
-    CLIENT_CACHE_KEYS.adminMasterData,
+    buildQueryKey({ module: 'super-admin', resource: 'master-data' }),
     () =>
       Promise.all([getUnits(), getCatalog(), getDepartments()]).then(([units, catalog, departments]) => ({
         units,

@@ -2,12 +2,16 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { browseIssuance, browseIssuances } from "../browse/actions";
+import { browseIssuance, browseIssuancesPage } from "../browse/actions";
 import type { IssuanceDetail } from "@/app/personnel/issuances/actions";
 import { useCachedAction } from "@/hooks/use-cached-action";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
+import { buildQueryKey } from "@/lib/query-keys";
 import { useReceipt } from "@/hooks/use-receipt";
-import { CLIENT_CACHE_KEYS } from "@/lib/client-cache";
+import { PAGE_SIZE } from "@/lib/constants";
 import { Card } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { TablePager } from "@/components/personnel/TablePager";
 import { ReceiptLoading } from "@/components/personnel/ReceiptLoading";
 import { ReceiptOverlay } from "@/app/personnel/documents/receipt-overlay";
 import { ParReportSheet } from "@/app/personnel/documents/par-report";
@@ -39,12 +43,14 @@ function peso(n: number | null | undefined) {
 }
 
 export default function SuperAdminIssuancesPage() {
-  // Same client caching as the personnel issuances page: back-navigation
-  // paints instantly from memory / sessionStorage and only revalidates
-  // silently when stale (30s, matching the server list cache).
-  const { data: cached, loading } = useCachedAction(
-    CLIENT_CACHE_KEYS.adminIssuances,
-    browseIssuances,
+  // Server-paged window (PAGE_SIZE = 15): the DB returns only the window +
+  // exact total per filter set (30s, busted by issuance writes).
+  const [query, setQuery] = useState("");
+  const debouncedQuery = useDebouncedValue(query, 300);
+  const [page, setPage] = useState(1);
+  const { data: paged, loading, isValidating } = useCachedAction(
+    buildQueryKey({ module: 'super-admin', resource: 'issuances', page, filters: { q: debouncedQuery } }),
+    () => browseIssuancesPage({ page, q: debouncedQuery }),
     { staleTime: 30_000 }
   );
   const [view, setView] = useState<"table" | "grid">("table");
@@ -54,9 +60,12 @@ export default function SuperAdminIssuancesPage() {
   const viewer = useReceipt<IssuanceDetail | null>();
   const openReceipt = (id: string) =>
     viewer.open(id, `admin-issuance:${id}`, () => browseIssuance(id));
-  const rows = useMemo(() => cached ?? [], [cached]);
+  const rows = useMemo(() => paged?.rows ?? [], [paged]);
+  const total = paged?.total ?? 0;
+  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const safePage = Math.min(Math.max(1, page), pageCount);
 
-  if (loading) {
+  if (loading && rows.length === 0) {
     return <IssuancesLoading />;
   }
 
@@ -69,9 +78,10 @@ export default function SuperAdminIssuancesPage() {
         <div>
           <h1 className={styles.title}>PAR / ICS Issuances</h1>
           <p className={styles.subtitle}>
-            {rows.length} {rows.length === 1 ? "record" : "records"} · value
+            {total} {total === 1 ? "record" : "records"} · value
             over ₱50,000 → PAR, ₱50,000 or less → ICS · every issuance from all
             personnel
+            {isValidating ? " · updating…" : ""}
           </p>
         </div>
         <div className={styles.actions}>
@@ -96,6 +106,18 @@ export default function SuperAdminIssuancesPage() {
         </div>
       </div>
       <Card className={styles.panel}>
+        <div style={{ display: "flex", gap: "0.75rem", marginBottom: "1rem" }}>
+          <Input
+            type="search"
+            aria-label="Search issuances"
+            placeholder="Search document, employee, item…"
+            value={query}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              setPage(1);
+            }}
+          />
+        </div>
         {rows.length === 0 ? (
           <div className={styles.emptyState}>
             <p className={styles.panelSub}>
@@ -202,6 +224,15 @@ export default function SuperAdminIssuancesPage() {
             ))}
           </div>
         )}
+        {total > 0 ? (
+          <TablePager
+            id="admin-issuances"
+            total={total}
+            pageSize={PAGE_SIZE}
+            page={safePage}
+            onPageChange={setPage}
+          />
+        ) : null}
       </Card>
 
       <ReceiptOverlay

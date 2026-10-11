@@ -36,6 +36,7 @@ import {
 } from "lucide-react";
 import { logout } from "@/app/(auth)/auth";
 import { broadcastLogout } from "@/components/ClientCacheManager";
+import { navPrefetchProps } from "@/lib/nav-prefetch";
 import { SubmitButton } from "@/components/ui/submit-button";
 import { ChangePasswordDialog } from "@/components/account/ChangePasswordDialog";
 import { useThemePreference, type ThemePreference } from "@/hooks/use-theme-preference";
@@ -303,6 +304,7 @@ export function SuperAdminNavbar({
             className={styles.topLink}
             data-active={isActive(dashboard.href)}
             aria-current={isActive(dashboard.href) ? "page" : undefined}
+            {...navPrefetchProps(dashboard.href)}
           >
             {dashboard.label}
           </Link>
@@ -360,6 +362,7 @@ export function SuperAdminNavbar({
                           data-active={linkActive}
                           aria-current={linkActive ? "page" : undefined}
                           onClick={() => setOpenMenu(null)}
+                          {...navPrefetchProps(link.href)}
                         >
                           <span className={styles.itemIcon} aria-hidden="true">
                             <Icon size={18} />
@@ -509,6 +512,7 @@ export function SuperAdminNavbar({
               className={styles.sheetLink}
               data-active={isActive(dashboard.href)}
               aria-current={isActive(dashboard.href) ? "page" : undefined}
+              {...navPrefetchProps(dashboard.href)}
             >
               <dashboard.icon size={18} aria-hidden="true" />
               {dashboard.label}
@@ -552,6 +556,7 @@ export function SuperAdminNavbar({
                             className={styles.sheetLink}
                             data-active={linkActive}
                             aria-current={linkActive ? "page" : undefined}
+                            {...navPrefetchProps(link.href)}
                           >
                             <Icon size={18} aria-hidden="true" />
                             {link.label}

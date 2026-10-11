@@ -51,8 +51,8 @@ import {
 } from "@/components/personnel/skeletons";
 import { ReceiptLoading } from "@/components/personnel/ReceiptLoading";
 import { useCachedAction } from "@/hooks/use-cached-action";
+import { buildQueryKey } from "@/lib/query-keys";
 import {
-  CLIENT_CACHE_KEYS,
   getClientCache,
   setClientCache,
 } from "@/lib/client-cache";
@@ -187,7 +187,7 @@ function SuperAdminDocumentsContent() {
     loading,
     error,
   } = useCachedAction(
-    `${CLIENT_CACHE_KEYS.adminDocuments}:${tab}:${page}:${pageSize}:${debouncedQuery}`,
+    buildQueryKey({ module: 'super-admin', resource: 'documents', page, pageSize, filters: { tab, q: debouncedQuery } }),
     () =>
       getAdminDocumentsTabPage(tab as AdminDocumentsTab, { page, q: debouncedQuery }).then(
         (res) => ({ ...res, _tab: tab })
@@ -198,7 +198,7 @@ function SuperAdminDocumentsContent() {
     tabPayload && (tabPayload as { _tab?: string })._tab === tab ? tabPayload : undefined;
   // Cheap per-tab totals for the header counts (no row payloads).
   const { data: countsData } = useCachedAction(
-    `${CLIENT_CACHE_KEYS.adminDocuments}-counts`,
+    buildQueryKey({ module: 'super-admin', resource: 'documents-counts' }),
     getDocumentsCounts,
     { staleTime: 60_000 }
   );
@@ -243,7 +243,7 @@ function SuperAdminDocumentsContent() {
     [tab, windowRows]
   );
   const { data: viewedKeysData } = useCachedAction(
-    `${CLIENT_CACHE_KEYS.adminDocuments}-viewed`,
+    buildQueryKey({ module: 'super-admin', resource: 'documents-viewed' }),
     browseViewedDocKeys,
     { staleTime: 60_000 }
   );
@@ -436,7 +436,7 @@ function SuperAdminDocumentsContent() {
   // Prefetch next page while the user views the current one (no flicker).
   useEffect(() => {
     if (!tabData || tabTotal <= page * pageSize) return;
-    const nextKey = `${CLIENT_CACHE_KEYS.adminDocuments}:${tab}:${page + 1}:${pageSize}:${debouncedQuery}`;
+    const nextKey = buildQueryKey({ module: 'super-admin', resource: 'documents', page: page + 1, pageSize, filters: { tab, q: debouncedQuery } });
     if (getClientCache(nextKey)) return;
     const t = setTimeout(() => {
       void getAdminDocumentsTabPage(tab as AdminDocumentsTab, { page: page + 1, q: debouncedQuery })

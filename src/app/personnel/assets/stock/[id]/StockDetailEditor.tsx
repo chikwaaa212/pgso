@@ -80,6 +80,10 @@ function QrCard({ stock }: { stock: StockRow }) {
           src={stock.qr_data_url}
           alt={`QR code for ${stock.item_name}`}
           className={assetStyles.qrImgLarge}
+          width={96}
+          height={96}
+          loading="lazy"
+          decoding="async"
         />
       ) : (
         <span className={assetStyles.qrPlaceholder}>No QR code</span>
@@ -201,8 +205,16 @@ export function StockDetailEditor({
         // Patch every cached registry window holding this row (union windows
         // carry stock rows too) — no refetch.
         void import("@/lib/client-cache").then((m) =>
-          m.patchClientCache(["pgso:assets:unified", "pgso:admin-assets:unified"], (data) =>
-            patchRowInPage(data, stock.id, overrides)
+          import("@/lib/query-keys").then(({ resourcePrefix }) =>
+            m.patchClientCache(
+              [
+                "pgso:assets:unified",
+                "pgso:admin-assets:unified",
+                resourcePrefix("personnel", "assets"),
+                resourcePrefix("super-admin", "assets"),
+              ],
+              (data) => patchRowInPage(data, stock.id, overrides)
+            )
           )
         );
       }

@@ -47,6 +47,8 @@ export function IarReportSheet({
           src={record.iar_image_url}
           alt={`Attached IAR scan for delivery ${deliveryRef}`}
           className={iar.scanImg}
+          loading="lazy"
+          decoding="async"
         />
         <figcaption className={iar.scanCap}>
           Attached IAR scan{record.iar_no ? ` — ${record.iar_no}` : ""} ·{" "}

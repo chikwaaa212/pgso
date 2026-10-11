@@ -31,6 +31,7 @@ import { Pagination } from "@/components/ui/pagination";
 import { PAGE_SIZE, CACHE_TTL } from "@/lib/constants";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useCachedAction } from "@/hooks/use-cached-action";
+import { buildQueryKey, resourcePrefix } from "@/lib/query-keys";
 import {
   CLIENT_CACHE_KEYS,
   bustClientCache,
@@ -139,7 +140,20 @@ function SuperAdminAssetsContent() {
     refresh: refreshPaged,
     mutate: mutatePaged,
   } = useCachedAction(
-    `pgso:admin-assets:unified:${page}:${pageSize}:${debouncedQuery}:${statusFilter}:${sourceFilter}:${conditionFilter}:${unitFilter}:${assetTypeFilter}`,
+    buildQueryKey({
+      module: 'super-admin',
+      resource: 'assets',
+      page,
+      pageSize,
+      filters: {
+        q: debouncedQuery,
+        status: statusFilter,
+        source: sourceFilter,
+        condition: conditionFilter,
+        unit: unitFilter,
+        category: assetTypeFilter,
+      },
+    }),
     () =>
       getUnifiedAssetsPage({
         page,
@@ -166,7 +180,20 @@ function SuperAdminAssetsContent() {
   // Prefetch next page while the user views the current one (no flicker).
   useEffect(() => {
     if (!paged || total <= page * pageSize) return;
-    const nextKey = `pgso:admin-assets:unified:${page + 1}:${pageSize}:${debouncedQuery}:${statusFilter}:${sourceFilter}:${conditionFilter}:${unitFilter}:${assetTypeFilter}`;
+    const nextKey = buildQueryKey({
+      module: 'super-admin',
+      resource: 'assets',
+      page: page + 1,
+      pageSize,
+      filters: {
+        q: debouncedQuery,
+        status: statusFilter,
+        source: sourceFilter,
+        condition: conditionFilter,
+        unit: unitFilter,
+        category: assetTypeFilter,
+      },
+    });
     if (getClientCache(nextKey)) return;
     const t = setTimeout(() => {
       void getUnifiedAssetsPage({
@@ -186,12 +213,12 @@ function SuperAdminAssetsContent() {
     // Own write (add / import / issue) — force fresh rows now and drop the
     // dashboard snapshot so its next visit refetches. Old data stays visible
     // while the refetch runs (no skeleton flash).
-    bustClientCache([CLIENT_CACHE_KEYS.dashboard, CLIENT_CACHE_KEYS.issuances]);
+    bustClientCache([CLIENT_CACHE_KEYS.dashboard, CLIENT_CACHE_KEYS.issuances, resourcePrefix("personnel", "dashboard"), resourcePrefix("personnel", "issuances"), resourcePrefix("super-admin", "issuances")]);
     refreshPaged();
   };
 
   const bustSiblings = useCallback(() => {
-    bustClientCache([CLIENT_CACHE_KEYS.dashboard, CLIENT_CACHE_KEYS.issuances]);
+    bustClientCache([CLIENT_CACHE_KEYS.dashboard, CLIENT_CACHE_KEYS.issuances, resourcePrefix("personnel", "dashboard"), resourcePrefix("personnel", "issuances"), resourcePrefix("super-admin", "issuances")]);
   }, []);
 
   const canClaimPosition =
@@ -708,6 +735,10 @@ function SuperAdminAssetsContent() {
                 src={qrRow.qr_data_url}
                 alt={`QR code for ${qrRow.qr_code ?? qrRow.account_code ?? "asset"}`}
                 className={assetStyles.qrOverlayImg}
+                width={96}
+                height={96}
+                loading="lazy"
+                decoding="async"
               />
             ) : (
               <span className={assetStyles.qrPlaceholder}>No QR code</span>

@@ -11,11 +11,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { label } from "@/lib/labels";
-import { getAllLogs } from "./actions";
+import { getAdminLogModules, getLogsPage } from "./actions";
 import { TablePager } from "@/components/personnel/TablePager";
-import { usePageSize } from "@/hooks/use-page-size";
 import { useCachedAction } from "@/hooks/use-cached-action";
-import { CLIENT_CACHE_KEYS } from "@/lib/client-cache";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
+import { buildQueryKey } from "@/lib/query-keys";
+import { PAGE_SIZE } from "@/lib/constants";
 import LogsLoading from "./loading";
 import styles from "./page.module.css";
 import air from "@/app/personnel/inspections/air-section.module.css";
@@ -35,45 +36,34 @@ function fmtDateTime(iso: string | null) {
 }
 
 export default function SuperAdminLogsPage() {
-  // Same client caching as the personnel logs page: back-navigation
-  // paints instantly from memory / sessionStorage and only revalidates
-  // silently when stale (30s, matching the server list cache).
-  const { data, loading } = useCachedAction(
-    CLIENT_CACHE_KEYS.adminLogs,
-    getAllLogs,
+  // Server-paged audit window (PAGE_SIZE = 15): the DB returns only the
+  // window + exact total per filter set (30s TTL; audit writes are too
+  // frequent to bust per mutation).
+  const [query, setQuery] = useState("");
+  const debouncedQuery = useDebouncedValue(query, 300);
+  const [moduleFilter, setModuleFilter] = useState("all");
+  const [page, setPage] = useState(1);
+  const { data: paged, loading, isValidating } = useCachedAction(
+    buildQueryKey({ module: 'super-admin', resource: 'logs', page, filters: { q: debouncedQuery, module: moduleFilter } }),
+    () => getLogsPage({ page, q: debouncedQuery, module: moduleFilter }),
     { staleTime: 30_000 }
   );
-  const rows = useMemo(() => data ?? [], [data]);
-  const [query, setQuery] = useState("");
-  const [moduleFilter, setModuleFilter] = useState("all");
-  const [pageSize, setPageSize] = usePageSize("pgso:admin:logs", 10);
-  const [page, setPage] = useState(1);
-
-  const modules = useMemo(() => {
-    const set = new Set(rows.map((r) => r.module).filter(Boolean));
-    return ["all", ...[...set].sort((a, b) => a.localeCompare(b))];
-  }, [rows]);
-
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return rows.filter((r) => {
-      if (moduleFilter !== "all" && r.module !== moduleFilter) return false;
-      if (!q) return true;
-      return [r.action, r.module, r.user_name, r.purpose ?? "", r.summary ?? ""]
-        .join(" ")
-        .toLowerCase()
-        .includes(q);
-    });
-  }, [rows, query, moduleFilter]);
-
-  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const rows = useMemo(() => paged?.rows ?? [], [paged]);
+  const total = paged?.total ?? 0;
+  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const safePage = Math.min(Math.max(1, page), pageCount);
-  const visible = filtered.slice(
-    (safePage - 1) * pageSize,
-    (safePage - 1) * pageSize + pageSize
+  const { data: modulesData } = useCachedAction(
+    buildQueryKey({ module: 'super-admin', resource: 'logs-modules' }),
+    getAdminLogModules,
+    { staleTime: 300_000 }
   );
+  const modules = useMemo(
+    () => ["all", ...((modulesData ?? []).filter(Boolean))],
+    [modulesData]
+  );
+  const visible = rows;
 
-  if (loading) {
+  if (loading && rows.length === 0) {
     return <LogsLoading />;
   }
 
@@ -83,9 +73,8 @@ export default function SuperAdminLogsPage() {
       <div>
         <h1 className={styles.title}>System Logs</h1>
         <p className={styles.subtitle}>
-          {filtered.length} of {rows.length}{" "}
-          {rows.length === 1 ? "entry" : "entries"} across all users — newest
-          first.
+          {total} {total === 1 ? "entry" : "entries"} across all users — newest
+          first.{isValidating ? " Updating…" : ""}
         </p>
       </div>
 
@@ -149,7 +138,7 @@ export default function SuperAdminLogsPage() {
                   </td>
                 </tr>
               ))}
-              {filtered.length === 0 && (
+              {visible.length === 0 && (
                 <tr>
                   <td colSpan={5} className={styles.empty}>
                     No log entries match this filter.
@@ -159,13 +148,12 @@ export default function SuperAdminLogsPage() {
             </tbody>
           </table>
         </div>
-        {filtered.length > 0 ? (
+        {total > 0 ? (
           <TablePager
             id="admin-logs"
-            total={filtered.length}
-            pageSize={pageSize}
+            total={total}
+            pageSize={PAGE_SIZE}
             page={safePage}
-            onPageSizeChange={setPageSize}
             onPageChange={setPage}
           />
         ) : null}

@@ -1,26 +1,30 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { TablePager } from "@/components/personnel/TablePager";
 import {
-  BrowseTable,
   StatusPill,
   fmtDate,
   type BrowseColumn,
 } from "@/components/super-admin/BrowseTable";
-import { browseRepair, browseRepairs } from "../browse/actions";
-import type { RepairRow } from "@/app/personnel/repairs/actions";
+import { browseRepair } from "../browse/actions";
+import { getRepairsPage, type RepairRow } from "@/app/personnel/repairs/actions";
 import { useCachedAction } from "@/hooks/use-cached-action";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
+import { buildQueryKey } from "@/lib/query-keys";
 import { useAdminRealtime } from "@/hooks/use-admin-realtime";
 import { useReceipt } from "@/hooks/use-receipt";
-import { CLIENT_CACHE_KEYS } from "@/lib/client-cache";
+import { PAGE_SIZE } from "@/lib/constants";
 import { ReceiptLoading } from "@/components/personnel/ReceiptLoading";
 import { ReceiptOverlay } from "@/app/personnel/documents/receipt-overlay";
 import { RepairReceipt } from "@/app/personnel/repairs/repair-receipt";
 import receipt from "@/app/personnel/inspections/components/receipt.module.css";
 import RepairsLoading from "./loading";
 import actionStyles from "@/app/personnel/dashboard/page.module.css";
+import browseStyles from "../users/page.module.css";
 import styles from "./page.module.css";
 
 function fmtCost(v: number | null) {
@@ -29,12 +33,15 @@ function fmtCost(v: number | null) {
 }
 
 export default function SuperAdminRepairsPage() {
-  // Same client caching as the personnel repairs page: back-navigation
-  // paints instantly from memory / sessionStorage and only revalidates
-  // silently when stale (30s, matching the server list cache).
-  const { data, loading, refresh, isValidating } = useCachedAction(
-    CLIENT_CACHE_KEYS.adminRepairs,
-    browseRepairs,
+  // Server-paged window (PAGE_SIZE = 15) via the shared repairs reader
+  // (super_admin scope is global there): the DB returns only the window +
+  // exact total per filter set (30s, busted by repair writes).
+  const [query, setQuery] = useState("");
+  const debouncedQuery = useDebouncedValue(query, 300);
+  const [page, setPage] = useState(1);
+  const { data: paged, loading, refresh, isValidating } = useCachedAction(
+    buildQueryKey({ module: 'super-admin', resource: 'repairs', page, filters: { q: debouncedQuery } }),
+    () => getRepairsPage({ page, pageSize: PAGE_SIZE, q: debouncedQuery }),
     { staleTime: 30_000 }
   );
   useAdminRealtime({
@@ -42,7 +49,10 @@ export default function SuperAdminRepairsPage() {
     tables: [{ table: "repair" }],
     onEvent: refresh,
   });
-  const rows = useMemo(() => data ?? [], [data]);
+  const rows = useMemo(() => paged?.rows ?? [], [paged]);
+  const total = paged?.total ?? 0;
+  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const safePage = Math.min(Math.max(1, page), pageCount);
   // Overlay receipt viewer with per-record client caching (same shared
   // scheme as personnel — admin-prefixed keys keep per-role caches
   // separate): viewing a receipt opens a modal, not a new page.
@@ -50,7 +60,7 @@ export default function SuperAdminRepairsPage() {
   const openReceipt = (id: string) =>
     viewer.open(id, `admin-repair:${id}`, () => browseRepair(id));
 
-  if (loading) {
+  if (loading && rows.length === 0) {
     return <RepairsLoading />;
   }
 
@@ -106,11 +116,64 @@ export default function SuperAdminRepairsPage() {
       <div>
         <h1 className={styles.title}>Repairs</h1>
         <p className={styles.subtitle}>
-          {`${rows.length} repair ${rows.length === 1 ? "ticket" : "tickets"}`} · read-only
+          {`${total} repair ${total === 1 ? "ticket" : "tickets"}`} · read-only
+          {isValidating ? " · updating…" : ""}
         </p>
       </div>
       <Card className={styles.panel}>
-        <BrowseTable rows={rows} columns={columns} searchPlaceholder="Search asset, reporter, technician…" pageSizeKey="pgso:admin:repairs" isValidating={isValidating} />
+        <div className={browseStyles.searchRow}>
+          <Input
+            type="search"
+            aria-label="Search repairs"
+            placeholder="Search asset, reporter, technician…"
+            value={query}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              setPage(1);
+            }}
+          />
+          {isValidating ? (
+            <span role="status" aria-live="polite" style={{ fontSize: "0.75rem", color: "var(--color-navy-500)", whiteSpace: "nowrap" }}>
+              Updating…
+            </span>
+          ) : null}
+        </div>
+        <div className={browseStyles.tableWrap}>
+          <table className={browseStyles.table}>
+            <thead>
+              <tr>
+                {columns.map((c) => (
+                  <th key={c.key}>{c.label}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.id}>
+                  {columns.map((c) => (
+                    <td key={c.key}>{c.value(r)}</td>
+                  ))}
+                </tr>
+              ))}
+              {rows.length === 0 && (
+                <tr>
+                  <td colSpan={columns.length} className={browseStyles.empty}>
+                    No records found.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+        {total > 0 ? (
+          <TablePager
+            id="admin-repairs"
+            total={total}
+            pageSize={PAGE_SIZE}
+            page={safePage}
+            onPageChange={setPage}
+          />
+        ) : null}
       </Card>
 
       <ReceiptOverlay

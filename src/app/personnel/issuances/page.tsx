@@ -7,7 +7,7 @@ import { TablePager, FIXED_PAGE_SIZE } from "@/components/personnel/TablePager";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useCachedAction } from "@/hooks/use-cached-action";
 import { useReceipt } from "@/hooks/use-receipt";
-import { CLIENT_CACHE_KEYS } from "@/lib/client-cache";
+import { buildQueryKey } from "@/lib/query-keys";
 import { Card } from "@/components/ui/card";
 import { ReceiptLoading } from "@/components/personnel/ReceiptLoading";
 import { ReceiptOverlay } from "../documents/receipt-overlay";
@@ -56,7 +56,13 @@ export default function PersonnelIssuancesPage() {
   const searching = query.trim() !== debouncedQuery.trim();
   // Server-paged issuances: search/doc-type/page all filter in the DB.
   const { data: paged, loading, isValidating } = useCachedAction(
-    `${CLIENT_CACHE_KEYS.issuances}:${page}:${debouncedQuery}:${docTab}`,
+    buildQueryKey({
+      module: 'personnel',
+      resource: 'issuances',
+      page,
+      pageSize,
+      filters: { q: debouncedQuery, docType: docTab },
+    }),
     () =>
       getIssuancesPage({
         page,

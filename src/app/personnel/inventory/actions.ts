@@ -74,12 +74,14 @@ export async function getInventoryStats(): Promise<{
   low: number
   critical: number
   out: number
+  /** Items with no reorder threshold (super-admin oversight banner). */
+  none: number
 }> {
   const { withCache, cacheKey } = await import('@/lib/personnel-cache')
   return withCache(cacheKey('personnel:inventory-stats'), 60, async () => {
-    const zeros = { skus: 0, units: 0, low: 0, critical: 0, out: 0 }
+    const zeros = { skus: 0, units: 0, low: 0, critical: 0, out: 0, none: 0 }
     try {
-      const [skus, units, low, critical, out] = await Promise.all([
+      const [skus, units, low, critical, out, none] = await Promise.all([
         prisma.inventoryItem.count().catch(() => 0),
         prisma.inventoryItem
           .aggregate({ _sum: { quantity: true } })
@@ -96,8 +98,9 @@ export async function getInventoryStats(): Promise<{
           .then((r) => Number(r[0]?.count ?? 0))
           .catch(() => 0),
         prisma.inventoryItem.count({ where: { quantity: { lte: 0 } } }).catch(() => 0),
+        prisma.inventoryItem.count({ where: { quantity: { gt: 0 }, reorder_threshold: null } }).catch(() => 0),
       ])
-      return { skus, units, low, critical, out }
+      return { skus, units, low, critical, out, none }
     } catch (e) {
       console.error('[getInventoryStats]', e)
       return zeros

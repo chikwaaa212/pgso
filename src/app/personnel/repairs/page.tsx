@@ -35,6 +35,7 @@ import { TablePager, FIXED_PAGE_SIZE } from "@/components/personnel/TablePager";
 import { ReceiptLoading } from "@/components/personnel/ReceiptLoading";
 import { useCachedAction } from "@/hooks/use-cached-action";
 import { useReceipt } from "@/hooks/use-receipt";
+import { buildQueryKey, resourcePrefix } from "@/lib/query-keys";
 import { CLIENT_CACHE_KEYS, bustClientCache } from "@/lib/client-cache";
 import RepairsLoading from "./loading";
 import { RepairReceipt } from "./repair-receipt";
@@ -124,7 +125,13 @@ export default function PersonnelRepairsPage() {
   const [page, setPage] = useState(1);
   const debouncedQuery = useDebouncedValue(query, 250);
   // Server-paged list: search/status/page filter in the DB.
-  const cacheKey = `${CLIENT_CACHE_KEYS.repairs}:${page}:${pageSize}:${debouncedQuery}:${statusTab}`;
+  const cacheKey = buildQueryKey({
+    module: 'personnel',
+    resource: 'repairs',
+    page,
+    pageSize,
+    filters: { q: debouncedQuery, status: statusTab },
+  });
   const {
     data: pageData,
     loading,
@@ -218,6 +225,24 @@ export default function PersonnelRepairsPage() {
       // Cached receipt overlays — a status/edit write must not leave a
       // stale receipt painting instantly on next open.
       "pgso:client:receipt",
+      resourcePrefix("personnel", "dashboard"),
+      resourcePrefix("personnel", "deliveries"),
+      resourcePrefix("personnel", "inspections"),
+      resourcePrefix("personnel", "inspections-air"),
+      resourcePrefix("personnel", "inspections-counts"),
+      resourcePrefix("personnel", "inventory"),
+      resourcePrefix("personnel", "inventory-stats"),
+      resourcePrefix("personnel", "assets"),
+      resourcePrefix("personnel", "documents"),
+      resourcePrefix("personnel", "documents-counts"),
+      resourcePrefix("personnel", "documents-viewed"),
+      resourcePrefix("personnel", "issues"),
+      resourcePrefix("personnel", "issues-type-options"),
+      resourcePrefix("personnel", "issues-completed"),
+      resourcePrefix("personnel", "requests"),
+      resourcePrefix("personnel", "issuances"),
+      resourcePrefix("personnel", "logs"),
+      resourcePrefix("personnel", "logs-modules"),
     ]);
     refreshRows();
   };

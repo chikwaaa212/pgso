@@ -2,22 +2,26 @@
 
 import { useMemo, useState } from "react";
 import { Card } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { TablePager } from "@/components/personnel/TablePager";
 import {
-  BrowseTable,
   StatusPill,
   fmtDate,
   type BrowseColumn,
 } from "@/components/super-admin/BrowseTable";
-import { browseInspections } from "../browse/actions";
+import { browseInspectionsPage } from "../browse/actions";
 import type { UnifiedInspectionRow } from "@/app/personnel/inspections/actions";
 import { useCachedAction } from "@/hooks/use-cached-action";
-import { CLIENT_CACHE_KEYS } from "@/lib/client-cache";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
+import { buildQueryKey } from "@/lib/query-keys";
+import { PAGE_SIZE } from "@/lib/constants";
 import InspectionsLoading from "./loading";
 import {
   InspectionDetailModal,
   type ModalRecord,
 } from "../deliveries/record-modals";
 import actionStyles from "@/app/personnel/dashboard/page.module.css";
+import browseStyles from "../users/page.module.css";
 import styles from "./page.module.css";
 
 function resultLabel(d: UnifiedInspectionRow) {
@@ -26,15 +30,20 @@ function resultLabel(d: UnifiedInspectionRow) {
 }
 
 export default function SuperAdminInspectionsPage() {
-  // Same client caching as the personnel inspections page: back-navigation
-  // paints instantly from memory / sessionStorage and only revalidates
-  // silently when stale (30s, matching the server list cache).
-  const { data, loading, isValidating } = useCachedAction(
-    CLIENT_CACHE_KEYS.adminInspections,
-    browseInspections,
+  // Server-paged window (PAGE_SIZE = 15): the DB returns only the window +
+  // exact total per filter set (30s, busted by inspection writes).
+  const [query, setQuery] = useState("");
+  const debouncedQuery = useDebouncedValue(query, 300);
+  const [page, setPage] = useState(1);
+  const { data: paged, loading, isValidating } = useCachedAction(
+    buildQueryKey({ module: 'super-admin', resource: 'inspections', page, filters: { q: debouncedQuery } }),
+    () => browseInspectionsPage({ page, q: debouncedQuery }),
     { staleTime: 30_000 }
   );
-  const rows = data ?? [];
+  const rows = useMemo(() => paged?.rows ?? [], [paged]);
+  const total = paged?.total ?? 0;
+  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const safePage = Math.min(Math.max(1, page), pageCount);
   const [detailRow, setDetailRow] = useState<ModalRecord | null>(null);
 
   // Row action opens the read-only inspection modal (no page navigation).
@@ -67,7 +76,7 @@ export default function SuperAdminInspectionsPage() {
     []
   );
 
-  if (loading) {
+  if (loading && rows.length === 0) {
     return <InspectionsLoading />;
   }
 
@@ -77,11 +86,64 @@ export default function SuperAdminInspectionsPage() {
       <div>
         <h1 className={styles.title}>Inspections</h1>
         <p className={styles.subtitle}>
-          {`${rows.length} ${rows.length === 1 ? "record" : "records"} across all personnel`} · read-only
+          {`${total} ${total === 1 ? "record" : "records"} across all personnel`} · read-only
+          {isValidating ? " · updating…" : ""}
         </p>
       </div>
       <Card className={styles.panel}>
-        <BrowseTable rows={rows} columns={columns} searchPlaceholder="Search supplier, PO, inspector, AIR…" pageSizeKey="pgso:admin:inspections" getRowKey={(r) => r.delivery_id} isValidating={isValidating} />
+        <div className={browseStyles.searchRow}>
+          <Input
+            type="search"
+            aria-label="Search inspections"
+            placeholder="Search supplier, PO, inspector, AIR…"
+            value={query}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              setPage(1);
+            }}
+          />
+          {isValidating ? (
+            <span role="status" aria-live="polite" style={{ fontSize: "0.75rem", color: "var(--color-navy-500)", whiteSpace: "nowrap" }}>
+              Updating…
+            </span>
+          ) : null}
+        </div>
+        <div className={browseStyles.tableWrap}>
+          <table className={browseStyles.table}>
+            <thead>
+              <tr>
+                {columns.map((c) => (
+                  <th key={c.key}>{c.label}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.delivery_id}>
+                  {columns.map((c) => (
+                    <td key={c.key}>{c.value(r)}</td>
+                  ))}
+                </tr>
+              ))}
+              {rows.length === 0 && (
+                <tr>
+                  <td colSpan={columns.length} className={browseStyles.empty}>
+                    No records found.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+        {total > 0 ? (
+          <TablePager
+            id="admin-inspections"
+            total={total}
+            pageSize={PAGE_SIZE}
+            page={safePage}
+            onPageChange={setPage}
+          />
+        ) : null}
       </Card>
       <InspectionDetailModal row={detailRow} onClose={() => setDetailRow(null)} />
     </section>

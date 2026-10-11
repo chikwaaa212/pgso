@@ -11,8 +11,8 @@ import {
   getRecentIssuances,
 } from "@/app/personnel/dashboard/actions";
 import { useCachedAction } from "@/hooks/use-cached-action";
+import { buildQueryKey } from "@/lib/query-keys";
 import { useReceipt } from "@/hooks/use-receipt";
-import { CLIENT_CACHE_KEYS } from "@/lib/client-cache";
 import { ReceiptLoading } from "@/components/personnel/ReceiptLoading";
 import { ReceiptOverlay } from "@/app/personnel/documents/receipt-overlay";
 import { AssetReceipt } from "@/app/personnel/assets/asset-receipt";
@@ -39,7 +39,7 @@ export default function SuperAdminRecordsPage() {
   // when stale (60s, matching the server caches) — same SWR pattern as
   // the other admin pages.
   const { data: snapshot, loading, isValidating } = useCachedAction(
-    CLIENT_CACHE_KEYS.adminRecords,
+    buildQueryKey({ module: 'super-admin', resource: 'records' }),
     () =>
       Promise.all([
         getRecordCounts(),

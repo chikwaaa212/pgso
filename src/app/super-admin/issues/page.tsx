@@ -1,13 +1,14 @@
 "use client";
 
-import { useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Card } from "@/components/ui/card";
-import { browseCompletedRequests, browseIssues } from "../browse/actions";
+import { getCompletedRequestIssues, getIssueFilterOptions, getPublicIssuesPage } from "@/app/personnel/issues/actions";
 import { IssuesTable } from "@/app/personnel/issues/issues-table";
 import { RequestQrButton } from "@/components/personnel/RequestQrButton";
+import { TablePager, FIXED_PAGE_SIZE } from "@/components/personnel/TablePager";
 import { requestTypeLabel } from "@/app/personnel/requests/request-types";
 import { useCachedAction } from "@/hooks/use-cached-action";
-import { CLIENT_CACHE_KEYS } from "@/lib/client-cache";
+import { buildQueryKey } from "@/lib/query-keys";
 import IssuesLoading from "./loading";
 import styles from "./page.module.css";
 
@@ -24,21 +25,64 @@ function fmtDate(value: string | null) {
 }
 
 export default function SuperAdminIssuesPage() {
-  // Same client caching as the personnel issues page: back-navigation
-  // paints instantly from memory / sessionStorage and only revalidates
-  // silently when stale (60s, matching the server snapshot cache).
-  const { data: snapshot, loading, isValidating } = useCachedAction(
-    CLIENT_CACHE_KEYS.adminIssues,
+  // Server-driven filters (reported up by the table, debounced there).
+  const [filters, setFilters] = useState({ q: "", docType: "all", assetType: "all" });
+  // Fixed 20 documents/page (no selector) — the DB returns only this window
+  // (super_admin scope is global). Same pattern as the personnel page.
+  const [page, setPage] = useState(1);
+  const [completedPage, setCompletedPage] = useState(1);
+  // Stable handler — shallow-equal guard breaks the report→render→report loop.
+  const handleFiltersChange = useCallback(
+    (f: { q: string; docType: string; assetType: string }) => {
+      setFilters((prev) =>
+        prev.q === f.q && prev.docType === f.docType && prev.assetType === f.assetType
+          ? prev
+          : f
+      );
+      setPage(1);
+    },
+    []
+  );
+  const { data: paged, loading, isValidating } = useCachedAction(
+    buildQueryKey({
+      module: 'super-admin',
+      resource: 'issues',
+      page,
+      pageSize: 20,
+      filters: { q: filters.q, docType: filters.docType, assetType: filters.assetType },
+    }),
     () =>
-      Promise.all([browseIssues(), browseCompletedRequests()]).then(
-        ([rows, completed]) => ({ rows, completed })
-      ),
+      getPublicIssuesPage({
+        page,
+        q: filters.q,
+        docType: filters.docType,
+        assetType: filters.assetType,
+      }),
     { staleTime: 60_000 }
   );
-  const rows = useMemo(() => snapshot?.rows ?? [], [snapshot]);
-  const completed = useMemo(() => snapshot?.completed ?? [], [snapshot]);
+  const rows = useMemo(() => paged?.rows ?? [], [paged]);
+  const totalDocs = paged?.total ?? 0;
 
-  if (loading) {
+  const { data: typeOptions } = useCachedAction(
+    buildQueryKey({ module: 'super-admin', resource: 'issues-type-options' }),
+    getIssueFilterOptions,
+    { staleTime: 300_000 }
+  );
+
+  const { data: completedData } = useCachedAction(
+    buildQueryKey({ module: 'super-admin', resource: 'issues-completed' }),
+    getCompletedRequestIssues,
+    { staleTime: 60_000 }
+  );
+  const completed = useMemo(() => completedData ?? [], [completedData]);
+  const completedPageCount = Math.max(1, Math.ceil(completed.length / FIXED_PAGE_SIZE));
+  const completedSafePage = Math.min(Math.max(1, completedPage), completedPageCount);
+  const completedVisible = completed.slice(
+    (completedSafePage - 1) * FIXED_PAGE_SIZE,
+    (completedSafePage - 1) * FIXED_PAGE_SIZE + FIXED_PAGE_SIZE
+  );
+
+  if (loading && rows.length === 0) {
     return <IssuesLoading />;
   }
 
@@ -48,7 +92,7 @@ export default function SuperAdminIssuesPage() {
       <div>
         <h1 className={styles.title}>Issues</h1>
         <p className={styles.subtitle}>
-          {rows.length} {rows.length === 1 ? "issued item" : "issued items"} · assets
+          {totalDocs} {totalDocs === 1 ? "issued document" : "issued documents"} · assets
           and stock issued to employees · read-only
           {completed.length > 0
             ? ` · ${completed.length} completed ${completed.length === 1 ? "request" : "requests"}`
@@ -59,7 +103,20 @@ export default function SuperAdminIssuesPage() {
         </p>
       </div>
       <Card className={styles.panel}>
-        <IssuesTable rows={rows} showLoggedBy />
+        <IssuesTable
+          rows={rows}
+          showLoggedBy
+          serverTypeOptions={typeOptions ?? []}
+          onFiltersChange={handleFiltersChange}
+        />
+        {totalDocs > 0 ? (
+          <TablePager
+            id="admin-issues"
+            total={totalDocs}
+            page={page}
+            onPageChange={setPage}
+          />
+        ) : null}
       </Card>
       <Card className={styles.panel}>
         <h2 className={styles.panelTitle}>Completed request QR records</h2>
@@ -81,7 +138,7 @@ export default function SuperAdminIssuesPage() {
               </tr>
             </thead>
             <tbody>
-              {completed.map((r) => {
+              {completedVisible.map((r) => {
                 const qty = (r.lines ?? []).reduce(
                   (sum, l) => sum + (l.quantity || 0),
                   0
@@ -109,6 +166,14 @@ export default function SuperAdminIssuesPage() {
             </tbody>
           </table>
         </div>
+        {completed.length > FIXED_PAGE_SIZE ? (
+          <TablePager
+            id="admin-issues-completed"
+            total={completed.length}
+            page={completedSafePage}
+            onPageChange={setCompletedPage}
+          />
+        ) : null}
       </Card>
     </section>
   );

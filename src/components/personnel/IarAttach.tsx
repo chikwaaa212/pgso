@@ -10,6 +10,7 @@ import {
   removeIarImage,
 } from "@/app/personnel/inspections/actions";
 import { CLIENT_CACHE_KEYS, bustClientCache } from "@/lib/client-cache";
+import { resourcePrefix } from "@/lib/query-keys";
 
 const BUCKET = "iar-attachments";
 const MAX_BYTES = 8 * 1024 * 1024;
@@ -75,6 +76,12 @@ export function IarAttachButton({
         CLIENT_CACHE_KEYS.dashboard,
         CLIENT_CACHE_KEYS.inventory,
         CLIENT_CACHE_KEYS.iar,
+        resourcePrefix("personnel", "inspections"),
+        resourcePrefix("personnel", "inspections-air"),
+        resourcePrefix("personnel", "inspections-counts"),
+        resourcePrefix("personnel", "dashboard"),
+        resourcePrefix("personnel", "inventory"),
+        resourcePrefix("personnel", "inventory-stats"),
       ]);
       router.refresh();
       onDone?.();
@@ -156,6 +163,12 @@ export function IarRemoveButton({
         CLIENT_CACHE_KEYS.dashboard,
         CLIENT_CACHE_KEYS.inventory,
         CLIENT_CACHE_KEYS.iar,
+        resourcePrefix("personnel", "inspections"),
+        resourcePrefix("personnel", "inspections-air"),
+        resourcePrefix("personnel", "inspections-counts"),
+        resourcePrefix("personnel", "dashboard"),
+        resourcePrefix("personnel", "inventory"),
+        resourcePrefix("personnel", "inventory-stats"),
       ]);
       router.refresh();
     } catch (e) {

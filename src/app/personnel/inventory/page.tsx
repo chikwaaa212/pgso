@@ -36,6 +36,7 @@ import {
 import { TablePager, FIXED_PAGE_SIZE } from '@/components/personnel/TablePager'
 import { useDebouncedValue } from '@/hooks/use-debounced-value'
 import { useCachedAction } from '@/hooks/use-cached-action'
+import { buildQueryKey, resourcePrefix } from '@/lib/query-keys'
 import { CLIENT_CACHE_KEYS, bustClientCache, patchClientCache } from '@/lib/client-cache'
 import { patchRowInPage, prependRowToPage } from '@/lib/list-patch'
 import { useMasterData } from '@/hooks/use-master-data'
@@ -148,7 +149,13 @@ function PersonnelInventoryContent() {
     refresh: refreshRows,
     mutate: mutateRows,
   } = useCachedAction(
-    `${CLIENT_CACHE_KEYS.inventory}:${page}:${pageSize}:${debouncedQuery}:${kind}:${accountCode}:${level}`,
+    buildQueryKey({
+      module: 'personnel',
+      resource: 'inventory',
+      page,
+      pageSize,
+      filters: { q: debouncedQuery, kind, accountCode, level },
+    }),
     () =>
       getInventoryPage({
         page,
@@ -164,7 +171,7 @@ function PersonnelInventoryContent() {
   const total = pageData?.total ?? 0
   // Cheap global stats + bounded filter options (no row payload).
   const { data: statsData } = useCachedAction(
-    `${CLIENT_CACHE_KEYS.inventory}-stats`,
+    buildQueryKey({ module: 'personnel', resource: 'inventory-stats' }),
     getInventoryStats,
     { staleTime: 60_000 }
   )
@@ -184,7 +191,7 @@ function PersonnelInventoryContent() {
   const reload = () => {
     // Own write (save / sync) — force fresh rows now and drop the dashboard
     // snapshot (low-stock card) so its next visit refetches too.
-    bustClientCache(CLIENT_CACHE_KEYS.dashboard)
+    bustClientCache([CLIENT_CACHE_KEYS.dashboard, resourcePrefix('personnel', 'dashboard')])
     refreshRows()
   }
 
@@ -295,7 +302,7 @@ function PersonnelInventoryContent() {
           location: record.location,
         }
         mutateRows((p) => (p ? patchRowInPage(p, record.id, reconciled) : p))
-        patchClientCache(CLIENT_CACHE_KEYS.adminInventory, (d) =>
+        patchClientCache(resourcePrefix('super-admin', 'inventory'), (d) =>
           patchRowInPage(d, record.id, reconciled)
         )
       } else if (!draft.id && record) {
@@ -319,14 +326,14 @@ function PersonnelInventoryContent() {
         } else {
           refreshRows()
         }
-        bustClientCache(CLIENT_CACHE_KEYS.adminInventory)
+        bustClientCache([CLIENT_CACHE_KEYS.adminInventory, resourcePrefix('super-admin', 'inventory')])
       } else {
         refreshRows()
       }
       setDialogOpen(false)
       // Own write — drop the dashboard snapshot (low-stock card) so its
       // next visit refetches. This list stays patched (no skeleton flash).
-      bustClientCache(CLIENT_CACHE_KEYS.dashboard)
+      bustClientCache([CLIENT_CACHE_KEYS.dashboard, resourcePrefix('personnel', 'dashboard')])
       toast.success('Stock item saved successfully.', {
         duration: 2000,
         closeButton: true,

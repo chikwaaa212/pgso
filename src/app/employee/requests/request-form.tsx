@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useToast } from "@/components/ui/toaster";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { CLIENT_CACHE_KEYS, bustClientCache } from "@/lib/client-cache";
+import { resourcePrefix } from "@/lib/query-keys";
 import {
   Select,
   SelectContent,
@@ -161,7 +162,7 @@ export function NewRequestForm({
             // Own write — drop this page's snapshot (history table) and the
             // My Assets snapshot (its requests table shows this filing) so
             // both revalidate silently instead of serving pre-write payloads.
-            bustClientCache([CLIENT_CACHE_KEYS.employeeRequests, CLIENT_CACHE_KEYS.employeeAssets]);
+            bustClientCache([CLIENT_CACHE_KEYS.employeeRequests, CLIENT_CACHE_KEYS.employeeAssets, resourcePrefix("employee", "requests"), resourcePrefix("employee", "assets")]);
             formRef.current?.reset();
             setType("new_assignment");
             setAssetId("");

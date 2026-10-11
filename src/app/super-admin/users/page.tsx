@@ -5,13 +5,14 @@ import { useMemo, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { label } from "@/lib/labels";
-import { getAllUsers, getUserCounts } from "./actions";
+import { getUsersPage, getUserCounts } from "./actions";
 import { ActiveToggle } from "./user-actions";
 import { TablePager } from "@/components/personnel/TablePager";
-import { usePageSize } from "@/hooks/use-page-size";
 import { useCachedAction } from "@/hooks/use-cached-action";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
+import { buildQueryKey } from "@/lib/query-keys";
 import { useAdminRealtime } from "@/hooks/use-admin-realtime";
-import { CLIENT_CACHE_KEYS } from "@/lib/client-cache";
+import { PAGE_SIZE } from "@/lib/constants";
 import UsersLoading from "./loading";
 import styles from "./page.module.css";
 
@@ -40,23 +41,27 @@ function statusTone(status: string) {
 }
 
 export default function SuperAdminUsersPage() {
-  // Cached snapshot (roster + counts): back-navigation paints
-  // instantly from memory / sessionStorage and only revalidates silently
-  // when stale (30s, matching the server caches) — same SWR pattern as
-  // the other admin pages.
-  const { data: snapshot, loading, refresh, isValidating } = useCachedAction(
-    CLIENT_CACHE_KEYS.adminUsers,
-    () =>
-      Promise.all([getAllUsers(), getUserCounts()]).then(
-        ([users, counts]) => ({ users, counts })
-      ),
+  // Server-paged roster window (PAGE_SIZE = 15): the DB returns only the
+  // window + exact total per filter set (30s, busted by user writes).
+  const [query, setQuery] = useState("");
+  const debouncedQuery = useDebouncedValue(query, 300);
+  const searching = query.trim() !== debouncedQuery.trim();
+  const [page, setPage] = useState(1);
+  const { data: paged, loading, refresh, isValidating } = useCachedAction(
+    buildQueryKey({ module: 'super-admin', resource: 'users', page, filters: { q: debouncedQuery } }),
+    () => getUsersPage({ page, q: debouncedQuery }),
     { staleTime: 30_000 }
   );
-  const users = useMemo(() => snapshot?.users ?? [], [snapshot]);
-  const counts = snapshot?.counts ?? { pending: 0, personnel: 0, employees: 0 };
-  const [query, setQuery] = useState("");
-  const [pageSize, setPageSize] = usePageSize("pgso:admin:users", 10);
-  const [page, setPage] = useState(1);
+  const users = useMemo(() => paged?.rows ?? [], [paged]);
+  const total = paged?.total ?? 0;
+  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const safePage = Math.min(Math.max(1, page), pageCount);
+  const { data: countsData } = useCachedAction(
+    buildQueryKey({ module: 'super-admin', resource: 'users-counts' }),
+    getUserCounts,
+    { staleTime: 30_000 }
+  );
+  const counts = countsData ?? { pending: 0, personnel: 0, employees: 0 };
 
   // Profile status/role changes by another admin sync silently.
   useAdminRealtime({
@@ -65,35 +70,11 @@ export default function SuperAdminUsersPage() {
     onEvent: refresh,
   });
 
-  if (loading) {
+  if (loading && users.length === 0) {
     return <UsersLoading />;
   }
 
-  const roster = users.filter((u) => u.status !== "pending" || u.role !== "employee");
-  const q = query.trim().toLowerCase();
-  const filteredRoster = q === ""
-    ? roster
-      : roster.filter((u) =>
-        [
-          u.full_name ?? "",
-          u.email ?? "",
-          roleLabel(u.role),
-          u.status,
-          u.position ?? "",
-          u.office ?? "",
-          u.employee_no ?? "",
-          u.department ?? "",
-        ]
-          .join(" ")
-          .toLowerCase()
-          .includes(q)
-      );
-  const pageCount = Math.max(1, Math.ceil(filteredRoster.length / pageSize));
-  const safePage = Math.min(Math.max(1, page), pageCount);
-  const visibleRoster = filteredRoster.slice(
-    (safePage - 1) * pageSize,
-    (safePage - 1) * pageSize + pageSize
-  );
+  const visibleRoster = users;
 
   return (
     <section className={styles.section}>
@@ -105,7 +86,7 @@ export default function SuperAdminUsersPage() {
           {counts.employees} employees. Employee + Personnel accounts are
           self-registered (Google or Email + OTP) and active immediately — no
           approval needed.
-          {isValidating ? (
+          {isValidating || searching ? (
             <span role="status" aria-live="polite"> Updating…</span>
           ) : null}
         </p>
@@ -179,13 +160,12 @@ export default function SuperAdminUsersPage() {
             </tbody>
           </table>
         </div>
-        {filteredRoster.length > 0 ? (
+        {total > 0 ? (
           <TablePager
             id="admin-users"
-            total={filteredRoster.length}
-            pageSize={pageSize}
+            total={total}
+            pageSize={PAGE_SIZE}
             page={safePage}
-            onPageSizeChange={setPageSize}
             onPageChange={setPage}
           />
         ) : null}

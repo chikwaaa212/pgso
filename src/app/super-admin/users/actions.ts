@@ -185,8 +185,104 @@ export async function getAllUsers(): Promise<AdminUserRow[]> {
   })
 }
 
-export async function getUserCounts(): Promise<{ pending: number; personnel: number; employees: number }> {
+export interface UsersPage {
+  rows: AdminUserRow[]
+  data: AdminUserRow[]
+  total: number
+  page: number
+  pageSize: number
+  totalPages: number
+}
+
+/**
+ * Server-paged roster window (PAGE_SIZE = 15) replacing the legacy take-300
+ * snapshot + client slice: the DB returns only the window (+ exact total per
+ * filter set, cached 30s and busted by user writes). Search spans the DB
+ * profile columns plus Auth emails (bounded pre-lookup, same 200-user cap as
+ * the legacy path). The pending-employee exclusion matches the roster table.
+ */
+export async function getUsersPage(
+  opts: { page?: number; q?: string } = {}
+): Promise<UsersPage> {
   try {
+    await requireSuperAdmin()
+  } catch {
+    return { rows: [], data: [], total: 0, page: 1, pageSize: 15, totalPages: 1 }
+  }
+  const { withScopedCache } = await import('@/lib/personnel-cache')
+  const { PAGE_SIZE } = await import('@/lib/constants')
+  const { parsePage, parseQuery, pageResponse } = await import('@/lib/paged')
+  const page = parsePage(opts.page)
+  const q = parseQuery(opts.q)
+  const pageSize = PAGE_SIZE
+  return withScopedCache('super-admin:users-page', 30, async () => {
+  try {
+    const like = q ? `%${q}%` : null
+    // Email lives in Auth, not the DB: pre-resolve matching ids (bounded)
+    // so email search keeps working on a server window.
+    let emailIds: string[] = []
+    if (like) {
+      try {
+        const supabase = adminClient()
+        const { data } = await supabase.auth.admin.listUsers({ perPage: 100 })
+        const all = [...(data?.users ?? [])]
+        if (all.length >= 100) {
+          const { data: page2 } = await supabase.auth.admin.listUsers({ perPage: 100, page: 2 })
+          all.push(...(page2?.users ?? []))
+        }
+        emailIds = all.filter((u) => (u.email ?? '').toLowerCase().includes(q.toLowerCase())).map((u) => u.id)
+      } catch {
+        emailIds = []
+      }
+    }
+    const where: Record<string, unknown> = {
+      NOT: [{ role: 'employee', status: 'pending' }],
+    }
+    if (like) {
+      // employee_no / department exist only after migration 25 (same guard
+      // as the SELECT list) — filtering on missing columns would P2022 the
+      // whole window into an empty roster on older DBs.
+      const migrated = await hasMigration25()
+      ;(where as Record<string, unknown>).OR = [
+        { full_name: { contains: q, mode: 'insensitive' } },
+        { role: { contains: q, mode: 'insensitive' } },
+        { status: { contains: q, mode: 'insensitive' } },
+        { position: { contains: q, mode: 'insensitive' } },
+        { office: { contains: q, mode: 'insensitive' } },
+        ...(migrated
+          ? [
+              { department: { contains: q, mode: 'insensitive' } },
+              { employee_no: { contains: q, mode: 'insensitive' } },
+            ]
+          : []),
+        ...(emailIds.length > 0 ? [{ id: { in: emailIds } }] : []),
+      ]
+    }
+    const [total, rows] = await Promise.all([
+      prisma.profile.count({ where: where as never }),
+      prisma.profile.findMany({
+        where: where as never,
+        orderBy: { created_at: 'desc' },
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+        select: ADMIN_SELECT,
+      }),
+    ])
+    const [emails, extra] = await Promise.all([
+      emailMapFor(rows.map((r) => r.id)),
+      extraFor(rows.map((r) => r.id)),
+    ])
+    const mapped = rows.map((r) => toAdminRow(r, emails, extra.get(r.id)))
+    const e = pageResponse(mapped, total, page, pageSize)
+    return { rows: e.rows, data: e.data, total: e.total, page: e.page, pageSize: e.pageSize, totalPages: e.totalPages }
+  } catch (e) {
+    console.error('[getUsersPage]', e)
+    return { rows: [], data: [], total: 0, page: 1, pageSize, totalPages: 1 }
+  }
+  }, { page, pageSize, q })
+}
+
+export async function getUserCounts(): Promise<{ pending: number; personnel: number; employees: number }> {  try {
     await requireSuperAdmin()
   } catch {
     return { pending: 0, personnel: 0, employees: 0 }

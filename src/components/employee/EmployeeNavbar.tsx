@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { logout } from "@/app/(auth)/auth";
 import { broadcastLogout } from "@/components/ClientCacheManager";
+import { navPrefetchProps } from "@/lib/nav-prefetch";
 import { SubmitButton } from "@/components/ui/submit-button";
 import { ChangePasswordDialog } from "@/components/account/ChangePasswordDialog";
 import { useThemePreference, type ThemePreference } from "@/hooks/use-theme-preference";
@@ -156,6 +157,7 @@ export function EmployeeNavbar({
                 className={styles.topLink}
                 data-active={active}
                 aria-current={active ? "page" : undefined}
+                {...navPrefetchProps(link.href)}
               >
                 {link.label}
               </Link>
@@ -284,6 +286,7 @@ export function EmployeeNavbar({
                   className={styles.sheetLink}
                   data-active={linkActive}
                   aria-current={linkActive ? "page" : undefined}
+                  {...navPrefetchProps(link.href)}
                 >
                   <Icon size={18} aria-hidden="true" />
                   {link.label}

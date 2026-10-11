@@ -366,6 +366,10 @@ export function IssuesTable({
                       <img
                         src={active.qr_data_url}
                         alt={`QR record for ${active.article ?? "issued item"} received by ${active.employee_name}`}
+                        width={120}
+                        height={120}
+                        loading="lazy"
+                        decoding="async"
                       />
                     ) : (
                       <span className={styles.panelSub}>No QR</span>

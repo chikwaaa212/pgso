@@ -650,3 +650,199 @@ export async function getAdminDocumentsTabPage(
     }
   }, { tab, page, pageSize, q })
 }
+
+// ─── Oversight per-resource windows (server pagination, PAGE_SIZE = 15) ───
+// Replaces the legacy take-300/500 full-list snapshots + client slice: each
+// visit fetches ONE 15-row window (+ exact total per filter set, cached 30s
+// and busted by the matching resource writes). Personnel window readers are
+// reused (super_admin scope is global there); per-window enrichment
+// (logged_by for the 15 visible rows) stays bounded.
+
+export interface BrowseDeliveriesPage {
+  rows: BrowseDeliveryRow[]
+  data: BrowseDeliveryRow[]
+  total: number
+  page: number
+  pageSize: number
+  totalPages: number
+}
+
+export async function browseDeliveriesPage(
+  opts: { page?: number; q?: string } = {}
+): Promise<BrowseDeliveriesPage> {
+  const { PAGE_SIZE } = await import('@/lib/constants')
+  const empty: BrowseDeliveriesPage = { rows: [], data: [], total: 0, page: 1, pageSize: PAGE_SIZE, totalPages: 1 }
+  if (!(await allowed())) return empty
+  const { withScopedCache } = await import('@/lib/personnel-cache')
+  const { parsePage, parseQuery, pageResponse } = await import('@/lib/paged')
+  const page = parsePage(opts.page)
+  const q = parseQuery(opts.q)
+  const pageSize = PAGE_SIZE
+  return withScopedCache('super-admin:deliveries-page', 30, async () => {
+  try {
+    const { getDeliveriesPage } = await import('@/app/personnel/deliveries/actions')
+    const r = await getDeliveriesPage({ page, pageSize, q })
+    const ids = r.rows.map((d) => d.id)
+    const received = ids.length > 0
+      ? await prisma.delivery
+          .findMany({ where: { id: { in: ids } }, select: { id: true, received_by: true } })
+          .catch(() => [] as { id: string; received_by: string }[])
+      : []
+    const byId = new Map(received.map((d) => [d.id, d.received_by]))
+    const names = await resolveProfileNames([...byId.values()])
+    const rows: BrowseDeliveryRow[] = r.rows.map((d) => {
+      const uid = byId.get(d.id)
+      return {
+        id: d.id,
+        ref: d.id.slice(0, 8).toUpperCase(),
+        supplier: d.supplier,
+        po_reference: d.po_reference,
+        date_delivered: d.date_delivered?.slice(0, 10) ?? null,
+        delivery_status: d.delivery_status,
+        inspection_status: d.inspection_status,
+        item_count: d.item_count,
+        logged_by: (uid ? names.get(uid) : undefined) ?? null,
+      }
+    })
+    const e = pageResponse(rows, r.total, page, pageSize)
+    return { rows: e.rows, data: e.data, total: e.total, page: e.page, pageSize: e.pageSize, totalPages: e.totalPages }
+  } catch (e) {
+    console.error('[browseDeliveriesPage]', e)
+    return { rows: [], data: [], total: 0, page: 1, pageSize, totalPages: 1 }
+  }
+  }, { page, pageSize, q })
+}
+
+export interface BrowseInspectionsPage {
+  rows: UnifiedInspectionRow[]
+  data: UnifiedInspectionRow[]
+  total: number
+  page: number
+  pageSize: number
+  totalPages: number
+}
+
+export async function browseInspectionsPage(
+  opts: { page?: number; q?: string } = {}
+): Promise<BrowseInspectionsPage> {
+  const { PAGE_SIZE } = await import('@/lib/constants')
+  const empty: BrowseInspectionsPage = { rows: [], data: [], total: 0, page: 1, pageSize: PAGE_SIZE, totalPages: 1 }
+  if (!(await allowed())) return empty
+  const { withScopedCache } = await import('@/lib/personnel-cache')
+  const { parsePage, parseQuery, pageResponse } = await import('@/lib/paged')
+  const page = parsePage(opts.page)
+  const q = parseQuery(opts.q)
+  const pageSize = PAGE_SIZE
+  return withScopedCache('super-admin:inspections-page', 30, async () => {
+  try {
+    const { getInspectionsPage } = await import('@/app/personnel/inspections/actions')
+    const r = await getInspectionsPage({ page, pageSize, q })
+    const names = await resolveProfileNames(
+      r.rows.map((d) => d.inspector_id).filter((v): v is string => Boolean(v))
+    )
+    const rows = r.rows.map((d) => ({
+      ...d,
+      logged_by: (d.inspector_id ? names.get(d.inspector_id) : undefined) ?? d.inspector_name ?? null,
+    }))
+    const e = pageResponse(rows, r.total, page, pageSize)
+    return { rows: e.rows, data: e.data, total: e.total, page: e.page, pageSize: e.pageSize, totalPages: e.totalPages }
+  } catch (e) {
+    console.error('[browseInspectionsPage]', e)
+    return { rows: [], data: [], total: 0, page: 1, pageSize, totalPages: 1 }
+  }
+  }, { page, pageSize, q })
+}
+
+export interface BrowseIssuancesPage {
+  rows: BrowseIssuanceRow[]
+  data: BrowseIssuanceRow[]
+  total: number
+  page: number
+  pageSize: number
+  totalPages: number
+}
+
+export async function browseIssuancesPage(
+  opts: { page?: number; q?: string } = {}
+): Promise<BrowseIssuancesPage> {
+  const { PAGE_SIZE } = await import('@/lib/constants')
+  const empty: BrowseIssuancesPage = { rows: [], data: [], total: 0, page: 1, pageSize: PAGE_SIZE, totalPages: 1 }
+  if (!(await allowed())) return empty
+  const { withScopedCache } = await import('@/lib/personnel-cache')
+  const { parsePage, parseQuery, pageResponse } = await import('@/lib/paged')
+  const page = parsePage(opts.page)
+  const q = parseQuery(opts.q)
+  const pageSize = PAGE_SIZE
+  return withScopedCache('super-admin:issuances-page', 30, async () => {
+  try {
+    const { getIssuancesPage } = await import('@/app/personnel/issuances/actions')
+    const r = await getIssuancesPage({ page, pageSize, q })
+    const rows = await withIssuanceLoggers(r.rows)
+    const e = pageResponse(rows, r.total, page, pageSize)
+    return { rows: e.rows, data: e.data, total: e.total, page: e.page, pageSize: e.pageSize, totalPages: e.totalPages }
+  } catch (e) {
+    console.error('[browseIssuancesPage]', e)
+    return { rows: [], data: [], total: 0, page: 1, pageSize, totalPages: 1 }
+  }
+  }, { page, pageSize, q })
+}
+
+export interface BrowseRequestsPage {
+  rows: BrowseRequestRow[]
+  data: BrowseRequestRow[]
+  total: number
+  page: number
+  pageSize: number
+  totalPages: number
+  /** Pending stock-replenishment queue depth (cached with the window). */
+  pendingReplenishment: number
+}
+
+export async function browseRequestsPage(
+  opts: { page?: number; q?: string } = {}
+): Promise<BrowseRequestsPage> {
+  const { PAGE_SIZE } = await import('@/lib/constants')
+  const empty: BrowseRequestsPage = { rows: [], data: [], total: 0, page: 1, pageSize: PAGE_SIZE, totalPages: 1, pendingReplenishment: 0 }
+  if (!(await allowed())) return empty
+  const { withScopedCache } = await import('@/lib/personnel-cache')
+  const { parsePage, parseQuery, pageResponse } = await import('@/lib/paged')
+  const page = parsePage(opts.page)
+  const q = parseQuery(opts.q)
+  const pageSize = PAGE_SIZE
+  return withScopedCache('super-admin:requests-page', 30, async () => {
+  try {
+    const { getRequestsPage } = await import('@/app/personnel/requests/actions')
+    const [r, pendingReplenishment] = await Promise.all([
+      getRequestsPage({ page, pageSize, q }),
+      prisma.request
+        .count({ where: { request_type: 'stock_replenishment', status: 'pending' } })
+        .catch(() => 0),
+    ])
+    let filerByRequest = new Map<string, string>()
+    try {
+      const audits = await prisma.auditLog.findMany({
+        where: { action: 'request:create' },
+        orderBy: { created_at: 'desc' },
+        take: 500,
+        select: { user_id: true, details: true },
+      })
+      for (const a of audits) {
+        const ref = (a.details as { reference_id?: unknown } | null)?.reference_id
+        if (typeof ref === 'string' && ref) filerByRequest.set(ref, a.user_id)
+      }
+    } catch {
+      filerByRequest = new Map()
+    }
+    const names = await resolveProfileNames([...filerByRequest.values()])
+    const rows: BrowseRequestRow[] = r.rows.map((row) => {
+      const filerId = filerByRequest.get(row.id)
+      return { ...row, logged_by: (filerId ? names.get(filerId) : undefined) ?? null }
+    })
+    const e = pageResponse(rows, r.total, page, pageSize)
+    return { rows: e.rows, data: e.data, total: e.total, page: e.page, pageSize: e.pageSize, totalPages: e.totalPages, pendingReplenishment }
+  } catch (e) {
+    console.error('[browseRequestsPage]', e)
+    return { rows: [], data: [], total: 0, page: 1, pageSize, totalPages: 1, pendingReplenishment: 0 }
+  }
+  }, { page, pageSize, q })
+}

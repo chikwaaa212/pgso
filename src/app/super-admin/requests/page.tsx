@@ -15,33 +15,43 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import {
-  BrowseTable,
   StatusPill,
   fmtDate,
   type BrowseColumn,
 } from "@/components/super-admin/BrowseTable";
-import { browseRequests, type BrowseRequestRow } from "../browse/actions";
+import { browseRequestsPage, type BrowseRequestRow } from "../browse/actions";
 import { setReplenishmentStatus } from "./actions";
 import { RequestQrButton } from "@/components/personnel/RequestQrButton";
 import { label } from "@/lib/labels";
+import { Input } from "@/components/ui/input";
+import { TablePager } from "@/components/personnel/TablePager";
 import { useCachedAction } from "@/hooks/use-cached-action";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
+import { buildQueryKey } from "@/lib/query-keys";
 import { useAdminRealtime } from "@/hooks/use-admin-realtime";
-import { CLIENT_CACHE_KEYS } from "@/lib/client-cache";
+import { PAGE_SIZE } from "@/lib/constants";
 import RequestsLoading from "./loading";
+import browseStyles from "../users/page.module.css";
 import styles from "./page.module.css";
 
 type AdminStatus = "approved" | "rejected" | "completed";
 
 export default function SuperAdminRequestsPage() {
-  // Same client caching as the personnel requests page: back-navigation
-  // paints instantly from memory / sessionStorage and only revalidates
-  // silently when stale (30s, matching the server list cache).
-  const { data, loading, refresh, isValidating } = useCachedAction(
-    CLIENT_CACHE_KEYS.adminRequests,
-    browseRequests,
+  // Server-paged window (PAGE_SIZE = 15): the DB returns only the window +
+  // exact total per filter set (30s, busted by request writes).
+  const [query, setQuery] = useState("");
+  const debouncedQuery = useDebouncedValue(query, 300);
+  const [page, setPage] = useState(1);
+  const { data: paged, loading, refresh, isValidating } = useCachedAction(
+    buildQueryKey({ module: 'super-admin', resource: 'requests', page, filters: { q: debouncedQuery } }),
+    () => browseRequestsPage({ page, q: debouncedQuery }),
     { staleTime: 30_000 }
   );
-  const rows = useMemo(() => data ?? [], [data]);
+  const rows = useMemo(() => paged?.rows ?? [], [paged]);
+  const total = paged?.total ?? 0;
+  const pendingReplenishment = paged?.pendingReplenishment ?? 0;
+  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const safePage = Math.min(Math.max(1, page), pageCount);
   const [actingId, setActingId] = useState<string | null>(null);
   const [actionError, setActionError] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -65,15 +75,7 @@ export default function SuperAdminRequestsPage() {
     onEvent: reload,
   });
 
-  const replenishmentCount = useMemo(
-    () =>
-      rows.filter(
-        (r) =>
-          r.request_type === "stock_replenishment" &&
-          (r.status ?? "pending") === "pending"
-      ).length,
-    [rows]
-  );
+  const replenishmentCount = pendingReplenishment;
 
   function openAction(row: BrowseRequestRow, status: AdminStatus) {
     setActionRow(row);
@@ -196,7 +198,7 @@ export default function SuperAdminRequestsPage() {
     },
   ];
 
-  if (loading) {
+  if (loading && rows.length === 0) {
     return <RequestsLoading />;
   }
 
@@ -206,11 +208,12 @@ export default function SuperAdminRequestsPage() {
       <div>
         <h1 className={styles.title}>Requests</h1>
         <p className={styles.subtitle}>
-          {`${rows.length} ${rows.length === 1 ? "request" : "requests"}`}
+          {`${total} ${total === 1 ? "request" : "requests"}`}
           {replenishmentCount > 0
             ? ` · ${replenishmentCount} replenishment pending`
             : ""}
           {" · "}personnel replenishment is actionable; employee requests are read-only
+          {isValidating ? " · updating…" : ""}
         </p>
       </div>
       {actionError ? (
@@ -219,7 +222,59 @@ export default function SuperAdminRequestsPage() {
         </p>
       ) : null}
       <Card className={styles.panel}>
-        <BrowseTable rows={rows} columns={columns} searchPlaceholder="Search requester, filer, type, item…" pageSizeKey="pgso:admin:requests" isValidating={isValidating} />
+        <div className={browseStyles.searchRow}>
+          <Input
+            type="search"
+            aria-label="Search requests"
+            placeholder="Search requester, filer, type, item…"
+            value={query}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              setPage(1);
+            }}
+          />
+          {isValidating ? (
+            <span role="status" aria-live="polite" style={{ fontSize: "0.75rem", color: "var(--color-navy-500)", whiteSpace: "nowrap" }}>
+              Updating…
+            </span>
+          ) : null}
+        </div>
+        <div className={browseStyles.tableWrap}>
+          <table className={browseStyles.table}>
+            <thead>
+              <tr>
+                {columns.map((c) => (
+                  <th key={c.key}>{c.label}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.id}>
+                  {columns.map((c) => (
+                    <td key={c.key}>{c.value(r)}</td>
+                  ))}
+                </tr>
+              ))}
+              {rows.length === 0 && (
+                <tr>
+                  <td colSpan={columns.length} className={browseStyles.empty}>
+                    No records found.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+        {total > 0 ? (
+          <TablePager
+            id="admin-requests"
+            total={total}
+            pageSize={PAGE_SIZE}
+            page={safePage}
+            onPageChange={setPage}
+          />
+        ) : null}
       </Card>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>

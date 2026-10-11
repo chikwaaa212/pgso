@@ -19,6 +19,7 @@ import { Label } from "@/components/ui/label";
 import { DatePicker } from "@/components/ui/date-picker";
 import { saveAir } from "@/app/personnel/inspections/actions";
 import { CLIENT_CACHE_KEYS, bustClientCache } from "@/lib/client-cache";
+import { resourcePrefix } from "@/lib/query-keys";
 
 function Field({
   label,
@@ -120,6 +121,12 @@ export function IarDialog({
         CLIENT_CACHE_KEYS.dashboard,
         CLIENT_CACHE_KEYS.inventory,
         CLIENT_CACHE_KEYS.iar,
+        resourcePrefix("personnel", "inspections"),
+        resourcePrefix("personnel", "inspections-air"),
+        resourcePrefix("personnel", "inspections-counts"),
+        resourcePrefix("personnel", "dashboard"),
+        resourcePrefix("personnel", "inventory"),
+        resourcePrefix("personnel", "inventory-stats"),
       ]);
       if (res.stockWarning) {
         // AIR is saved — stay and show the warning with a way through.

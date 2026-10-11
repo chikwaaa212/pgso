@@ -18,6 +18,7 @@ import { InspectConfirmButton } from '@/components/personnel/InspectConfirmDialo
 import { TablePager, FIXED_PAGE_SIZE } from '@/components/personnel/TablePager'
 import { useDebouncedValue } from '@/hooks/use-debounced-value'
 import { useCachedAction } from '@/hooks/use-cached-action'
+import { buildQueryKey, resourcePrefix } from '@/lib/query-keys'
 import { CLIENT_CACHE_KEYS, bustClientCache } from '@/lib/client-cache'
 import styles from '../dashboard/page.module.css'
 import air from './air-section.module.css'
@@ -201,7 +202,13 @@ export default function PersonnelInspectionsPage() {
     isValidating: inspValidating,
     refresh: refreshInsp,
   } = useCachedAction(
-    `${CLIENT_CACHE_KEYS.inspections}:${inspPage}:${debouncedQuery}:${filter}`,
+    buildQueryKey({
+      module: 'personnel',
+      resource: 'inspections',
+      page: inspPage,
+      pageSize: inspPageSize,
+      filters: { q: debouncedQuery, status: filter },
+    }),
     () =>
       getInspectionsPage({
         page: inspPage,
@@ -218,7 +225,13 @@ export default function PersonnelInspectionsPage() {
     isValidating: airValidating,
     refresh: refreshAir,
   } = useCachedAction(
-    `${CLIENT_CACHE_KEYS.inspections}-air:${airPage}:${debouncedQuery}:${airStatus}:${airResult}`,
+    buildQueryKey({
+      module: 'personnel',
+      resource: 'inspections-air',
+      page: airPage,
+      pageSize: airPageSize,
+      filters: { q: debouncedQuery, air: airStatus, result: airResult },
+    }),
     () =>
       getInspectionsPage({
         page: airPage,
@@ -231,7 +244,7 @@ export default function PersonnelInspectionsPage() {
   )
   // Cheap counts for the AIR stats cards (no row payload).
   const { data: countsData } = useCachedAction(
-    `${CLIENT_CACHE_KEYS.inspections}-counts`,
+    buildQueryKey({ module: 'personnel', resource: 'inspections-counts' }),
     getInspectionsCounts,
     { staleTime: 60_000 }
   )
@@ -251,6 +264,10 @@ export default function PersonnelInspectionsPage() {
       CLIENT_CACHE_KEYS.deliveries,
       CLIENT_CACHE_KEYS.dashboard,
       CLIENT_CACHE_KEYS.inventory,
+      resourcePrefix("personnel", "deliveries"),
+      resourcePrefix("personnel", "dashboard"),
+      resourcePrefix("personnel", "inventory"),
+      resourcePrefix("personnel", "inventory-stats"),
     ])
     refreshInsp()
     refreshAir()
