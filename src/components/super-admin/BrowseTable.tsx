@@ -44,6 +44,7 @@ export function BrowseTable<T>({
   pageSizeKey,
   getRowKey,
   isValidating = false,
+  fixedPageSize,
 }: {
   rows: T[];
   columns: BrowseColumn<T>[];
@@ -52,13 +53,19 @@ export function BrowseTable<T>({
   getRowKey?: (row: T) => string;
   /** True while a background refetch runs — shows a subtle pill, never a skeleton. */
   isValidating?: boolean;
+  /** When set (e.g. PAGE_SIZE for Record Keeper/Registrar), disables the
+   *  size selector and fixes paging to 15. Unset keeps legacy variable sizes
+   *  for unrelated modules. */
+  fixedPageSize?: number;
 }) {
   const [query, setQuery] = useState("");
-  const [pageSize, setPageSize] = usePageSize(pageSizeKey, 10);
+  const [storedSize, setStoredSize] = usePageSize(pageSizeKey, 10);
+  const pageSize = fixedPageSize ?? storedSize;
+  const setPageSize = fixedPageSize ? undefined : setStoredSize;
   const [page, setPage] = useState(1);
   // Debounced filtering so fast typing over large rosters doesn't re-run
   // the full text scan on every keystroke; input stays immediate.
-  const debouncedQuery = useDebouncedValue(query, 250);
+  const debouncedQuery = useDebouncedValue(query, 300);
 
   const filtered = useMemo(() => {
     const q = debouncedQuery.trim().toLowerCase();

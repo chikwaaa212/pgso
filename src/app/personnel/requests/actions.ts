@@ -105,10 +105,13 @@ async function getAssetLabelMap(): Promise<
 /** Every employee request, newest first, with employee + asset labels.
  * Pass `{ forRecipient: true }` and personnel only see requests sent to them
  * (strict `recipient_id` match — legacy recipient-less rows are excluded).
+ * Pass `{ employeeId }` (must equal caller) for the employee-own path used by
+ * the employee portal — personnel callers must not use it.
  * Fails closed: without an authenticated user it returns nothing instead of
  * the whole queue. */
 export interface RequestsPageOpts {
   forRecipient?: boolean
+  employeeId?: string
   page?: number
   pageSize?: number
   q?: string
@@ -128,9 +131,11 @@ function clampPageSize(n: unknown, fallback: number): number {
 
 export async function getRequests(filter?: {
   forRecipient?: boolean
+  employeeId?: string
 }): Promise<RequestRow[]> {
   const { rows } = await getRequestsPage({
     forRecipient: filter?.forRecipient,
+    employeeId: filter?.employeeId,
     page: 1,
     pageSize: 500,
   })
@@ -146,11 +151,18 @@ export async function getRequestsPage(
   const q = (opts.q ?? '').trim().slice(0, 120)
   const status = (opts.status ?? 'all').trim()
   const type = (opts.type ?? 'all').trim()
+  const employeeIdOpt = typeof opts.employeeId === 'string' ? opts.employeeId : null
   return withScopedCache('personnel:requests', 30, async () => {
   try {
     const { getPersonnelScope } = await import('@/lib/personnel-scope')
     const scope = await getPersonnelScope()
-    if (scope.isEmpty || !scope.userId) return { rows: [], total: 0 }
+    // Employee-own path: employee portal may list only its own rows.
+    // Must equal caller; otherwise fail closed (no global queue for employees).
+    if (scope.role === 'employee') {
+      if (!scope.userId || employeeIdOpt !== scope.userId) return { rows: [], total: 0 }
+    } else if (scope.isEmpty || !scope.userId) {
+      return { rows: [], total: 0 }
+    }
     let recipientId: string | null = null
     if (opts.forRecipient) {
       recipientId = scope.userId
@@ -160,6 +172,10 @@ export async function getRequestsPage(
     }
     const where: Record<string, unknown> = {}
     if (recipientId !== null) (where as Record<string, string>).recipient_id = recipientId
+    // Employee-own filter (exact match, no leak).
+    if (scope.role === 'employee' && employeeIdOpt) {
+      ;(where as Record<string, string>).employee_id = employeeIdOpt
+    }
     if (status !== 'all') (where as Record<string, string>).status = status
     if (type !== 'all') (where as Record<string, string>).request_type = type
     if (q) {
@@ -259,6 +275,7 @@ export async function getRequestsPage(
   }
   }, {
     forRecipient: opts.forRecipient ?? false,
+    employeeId: employeeIdOpt ?? null,
     page,
     pageSize,
     q,
@@ -393,36 +410,46 @@ export interface AssetOption {
   disabledReason: string | null
 }
 
-function assetOptionDisabledReason(a: {
-  source: string
-  status?: string | null
-  quantity?: number | null
-  assigned_to?: string | null
-}): string | null {
-  if (a.source === 'stock') {
-    return typeof a.quantity === 'number' && a.quantity <= 0
-      ? 'Out of stock'
-      : null
-  }
-  if (a.assigned_to) return 'Already assigned'
-  if (typeof a.quantity === 'number' && a.quantity <= 0) return 'Out of stock'
-  const st = (a.status ?? 'available').trim().toLowerCase()
-  if (st !== 'available') {
-    const s = (a.status ?? '').trim()
-    return s ? s.charAt(0).toUpperCase() + s.slice(1) : 'Unavailable'
-  }
-  return null
-}
+/** Shared with the employee picker (same disable rules both roles see). */
+import { assetOptionDisabledReason } from '@/lib/asset-option';
+export { assetOptionDisabledReason };
 
-export async function getRequestFormOptions(): Promise<{
+export async function getRequestFormOptions(
+  opts: { q?: string } = {}
+): Promise<{
   employees: EmployeeOption[]
   assets: AssetOption[]
 }> {
+  const q = String(opts.q ?? '').trim().slice(0, 60)
   const { withCache, cacheKey } = await import('@/lib/personnel-cache')
-  return withCache(cacheKey('personnel:request-form-options'), 60, async () => {
+  const { PAGE_SIZE } = await import('@/lib/constants')
+  return withCache(cacheKey('personnel:request-form-options', { q }), 60, async () => {
   try {
     // Slim pick-list (labels only, no QR / custom-bag fan-out of
     // getAllUnifiedAssets() — the dialog renders zero QR codes).
+    // Server-searched PAGE_SIZE window per source (was two 500-row takes =
+    // ~1000 rows per dialog open): typing filters in the DB, the dialog
+    // merges windows by id so a picked item stays resolvable.
+    const assetWhere =
+      q !== ''
+        ? {
+            OR: [
+              { article: { contains: q, mode: 'insensitive' as const } },
+              { description: { contains: q, mode: 'insensitive' as const } },
+              { account_code: { contains: q, mode: 'insensitive' as const } },
+              { qr_code: { contains: q, mode: 'insensitive' as const } },
+            ],
+          }
+        : {}
+    const stockWhere =
+      q !== ''
+        ? {
+            OR: [
+              { item_name: { contains: q, mode: 'insensitive' as const } },
+              { account_code: { contains: q, mode: 'insensitive' as const } },
+            ],
+          }
+        : {}
     const [profiles, assetRows, stockRows] = await Promise.all([
       // Only employees can file requests — personnel cannot request.
       prisma.profile.findMany({
@@ -432,8 +459,9 @@ export async function getRequestFormOptions(): Promise<{
       }),
       prisma.asset
         .findMany({
+          where: assetWhere,
           orderBy: { created_at: 'desc' },
-          take: 500,
+          take: PAGE_SIZE,
           select: {
             id: true, qr_code: true, account_code: true, article: true,
             description: true, account_title: true, account_name: true,
@@ -444,8 +472,9 @@ export async function getRequestFormOptions(): Promise<{
         .catch(() => []),
       prisma.inventoryItem
         .findMany({
+          where: stockWhere,
           orderBy: { item_name: 'asc' },
-          take: 500,
+          take: PAGE_SIZE,
           select: {
             id: true, item_name: true, account_code: true, quantity: true,
             location: true, unit_cost: true,

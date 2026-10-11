@@ -397,28 +397,6 @@ export async function getIssuances(): Promise<IssuanceRecordRow[]> {
   return rows
 }
 
-async function getIssuancesByType(docType: 'PAR' | 'ICS'): Promise<IssuanceRecordRow[]> {
-  const { rows } = await getIssuancesPage({ page: 1, pageSize: 500, docType })
-  return rows
-}
-
-export async function getParReports(): Promise<IssuanceRecordRow[]> {
-  return getIssuancesByType('PAR')
-}
-
-export async function getIcsReports(): Promise<IssuanceRecordRow[]> {
-  return getIssuancesByType('ICS')
-}
-
-/** Single DB round-trip for both PAR + ICS (documents page called both). */
-export async function getParAndIcsReports(): Promise<{ pars: IssuanceRecordRow[]; icss: IssuanceRecordRow[] }> {
-  const { rows } = await getIssuancesPage({ page: 1, pageSize: 500 })
-  return {
-    pars: rows.filter((r) => r.doc_type === 'PAR'),
-    icss: rows.filter((r) => r.doc_type === 'ICS'),
-  }
-}
-
 /** Single issuance with live asset/stock snapshots for the sheet.
  * Per-record scoped Redis cache (30s) — overlay revisits are cache hits.
  * Busted automatically by bustPersonnelCache() on writes. */
@@ -924,8 +902,12 @@ async function evaluateAndAssign(
     // Await the single Redis bust BEFORE revalidating/reporting success:
     // the client's immediate refetch must not re-cache pre-write rows as
     // fresh. revalidatePath() below is pure Next.js (no hidden extra busts).
-    const { bustPersonnelScopes } = await import('@/lib/personnel-cache')
+    const { bustPersonnelScopes, bustCachePrefixes } = await import('@/lib/personnel-cache')
     await bustPersonnelScopes(['issuances', 'documents', 'dashboard', 'assets', 'requests', 'issues'])
+    // Employee-visible issuance data (docs, assets, detail sheets) changes
+    // here too — bust the employee namespace (module-scoped, never the
+    // whole cache). Human-frequency writes; correctness first.
+    await bustCachePrefixes(['employee:'])
     revalidatePath('/personnel/documents')
     revalidatePath('/personnel/issuances')
     revalidatePath(`/personnel/issuances/${recordId}`)
@@ -1468,8 +1450,12 @@ export async function approveRequestWithIssuance(
     // must not re-cache pre-write rows as fresh. Pure Next revalidations
     // below — no per-path bust fan-out (that stormed Upstash with ~6 busts
     // per write and stalled actions for seconds).
-    const { bustPersonnelScopes } = await import('@/lib/personnel-cache')
+    const { bustPersonnelScopes, bustCachePrefixes } = await import('@/lib/personnel-cache')
     await bustPersonnelScopes(['issuances', 'documents', 'dashboard', 'assets', 'requests', 'issues'])
+    // Employee-visible issuance data (docs, assets, detail sheets) changes
+    // here too — bust the employee namespace (module-scoped, never the
+    // whole cache). Human-frequency writes; correctness first.
+    await bustCachePrefixes(['employee:'])
     revalidatePath('/personnel/documents')
     revalidatePath('/personnel/issuances')
     revalidatePath(`/personnel/issuances/${newId}`)
@@ -1521,8 +1507,12 @@ export async function attachIssuanceScan(
     if (!existing) return { error: 'Issuance record not found.' }
     await prisma.$executeRaw`
       UPDATE issuance_records SET image_url = ${url} WHERE id = ${issuanceId}::uuid`
-    const { bustPersonnelScopes } = await import('@/lib/personnel-cache')
+    const { bustPersonnelScopes, bustCachePrefixes } = await import('@/lib/personnel-cache')
     await bustPersonnelScopes(['issuances', 'documents', 'dashboard', 'assets', 'requests', 'issues'])
+    // Employee-visible issuance data (docs, assets, detail sheets) changes
+    // here too — bust the employee namespace (module-scoped, never the
+    // whole cache). Human-frequency writes; correctness first.
+    await bustCachePrefixes(['employee:'])
     revalidatePath('/personnel/documents')
     revalidatePath(`/personnel/issuances/${issuanceId}`)
     return { success: true }
@@ -1541,8 +1531,12 @@ export async function removeIssuanceScan(
   try {
     await prisma.$executeRaw`
       UPDATE issuance_records SET image_url = NULL WHERE id = ${issuanceId}::uuid`
-    const { bustPersonnelScopes } = await import('@/lib/personnel-cache')
+    const { bustPersonnelScopes, bustCachePrefixes } = await import('@/lib/personnel-cache')
     await bustPersonnelScopes(['issuances', 'documents', 'dashboard', 'assets', 'requests', 'issues'])
+    // Employee-visible issuance data (docs, assets, detail sheets) changes
+    // here too — bust the employee namespace (module-scoped, never the
+    // whole cache). Human-frequency writes; correctness first.
+    await bustCachePrefixes(['employee:'])
     revalidatePath('/personnel/documents')
     revalidatePath(`/personnel/issuances/${issuanceId}`)
     return { success: true }

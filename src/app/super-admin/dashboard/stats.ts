@@ -93,12 +93,14 @@ export async function getSuperAdminOverview(): Promise<SuperOverview> {
     ])
 
     // Extras the badge stats don't carry — one small sequential batch.
+    // Low/out-of-stock are counted in SQL (was a full inventoryItem.findMany
+    // download + JS loop — the largest overview payload).
     const [
       inProgressRepairs,
       totalAssets,
       totalStockSkus,
       totalIssuances,
-      stocks,
+      stockLevels,
     ] = await Promise.all([
       prisma.repair.count({ where: { status: 'in_progress' } }).catch(() => 0),
       prisma.asset.count().catch(() => 0),
@@ -106,20 +108,20 @@ export async function getSuperAdminOverview(): Promise<SuperOverview> {
       prisma.$queryRaw<Array<{ count: bigint }>>`SELECT COUNT(*)::bigint AS count FROM issuance_records`
         .then((r) => Number(r[0]?.count ?? 0))
         .catch(() => 0),
-      prisma.inventoryItem
-        .findMany({ select: { quantity: true, reorder_threshold: true } })
-        .catch(() => [] as { quantity: number; reorder_threshold: number | null }[]),
+      prisma.$queryRaw<Array<{ out_count: bigint; low_count: bigint }>>`
+        SELECT
+          COUNT(*) FILTER (WHERE quantity <= 0)::bigint AS out_count,
+          COUNT(*) FILTER (WHERE quantity > 0 AND reorder_threshold IS NOT NULL AND quantity <= reorder_threshold)::bigint AS low_count
+        FROM inventory`
+        .then((r) => ({
+          out: Number(r[0]?.out_count ?? 0),
+          low: Number(r[0]?.low_count ?? 0),
+        }))
+        .catch(() => ({ out: 0, low: 0 })),
     ])
 
-    let low = 0
-    let out = 0
-    for (const s of stocks) {
-      if (s.quantity <= 0) {
-        out += 1
-      } else if (s.reorder_threshold != null && s.quantity <= s.reorder_threshold) {
-        low += 1
-      }
-    }
+    const low = stockLevels.low
+    const out = stockLevels.out
 
     const ops: OperationsStats = {
       totalDeliveries: dash.totalDeliveries,

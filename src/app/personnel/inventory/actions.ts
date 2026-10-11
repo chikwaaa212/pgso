@@ -36,6 +36,8 @@ export interface InventoryRow {
 export interface InventoryState {
   success?: boolean
   error?: string
+  /** Created/updated record — lets the client patch cache without refetch. */
+  record?: unknown
 }
 
 /**
@@ -134,17 +136,28 @@ export async function getInventoryItems(): Promise<InventoryRow[]> {
 
 export async function getInventoryPage(
   opts: InventoryPageOpts = {}
-): Promise<{ rows: InventoryRow[]; total: number }> {
+): Promise<{ rows: InventoryRow[]; data: InventoryRow[]; total: number; page: number; pageSize: number; totalPages: number }> {
   const { withCache, cacheKey } = await import('@/lib/personnel-cache')
-  const page = Math.floor(Number(opts.page)) >= 1 ? Math.min(Math.floor(Number(opts.page)), 1000) : 1
-  const pageSize = Number.isFinite(Number(opts.pageSize))
-    ? Math.min(Math.max(Math.floor(Number(opts.pageSize)), 1), 100)
-    : 20
-  const q = (opts.q ?? '').trim().slice(0, 120)
+  const { PAGE_SIZE } = await import('@/lib/constants')
+  const { parsePage, parseQuery, clampPage, totalPagesFor } = await import('@/lib/paged')
+  const page = parsePage(opts.page)
+  // Honor caller pageSize (legacy full-list wrappers pass 500); UI lists
+  // pass/omit to PAGE_SIZE. Clamped to keep windows bounded.
+  const rawSize = Math.floor(Number(opts.pageSize))
+  const pageSize = Number.isFinite(rawSize) ? Math.min(Math.max(rawSize, 1), 100) : PAGE_SIZE
+  const q = parseQuery(opts.q)
   const kind = (opts.kind ?? 'all').trim()
   const accountCode = (opts.accountCode ?? 'all').trim()
   const level = (opts.level ?? 'all').trim()
-  // Shared stock pool — global key.
+  // Fail-closed before cache so employee/anon never hit the shared pool cache.
+  try {
+    const { getPersonnelScope } = await import('@/lib/personnel-scope')
+    const scope = await getPersonnelScope()
+    if (scope.isEmpty || !scope.isPersonnel) return { rows: [], data: [], total: 0, page: 1, pageSize, totalPages: 1 }
+  } catch {
+    return { rows: [], data: [], total: 0, page: 1, pageSize, totalPages: 1 }
+  }
+  // Shared stock pool — global key (same data for all personnel).
   return withCache(cacheKey('personnel:inventory-items', { page, pageSize, q, kind, accountCode, level }), 60, async () => {
   try {
     const { Prisma } = await import('@prisma/client')
@@ -183,7 +196,8 @@ export async function getInventoryPage(
         ORDER BY item_name ASC LIMIT ${pageSize} OFFSET ${offset}`,
     ])
     const total = Number(countRows[0]?.count ?? 0)
-    if (rows.length === 0) return { rows: [], total }
+    const safePage = clampPage(page, Math.max(1, total))
+    if (rows.length === 0) return { rows: [], data: [], total, page: safePage, pageSize, totalPages: totalPagesFor(total, pageSize) }
     // Account title is display-only (no inventory column) — resolve it from
     // the active catalog so the UI can show it next to the code.
     let titleByCode = new Map<string, string>()
@@ -194,19 +208,24 @@ export async function getInventoryPage(
     } catch {
       titleByCode = new Map()
     }
-    return {
-      total,
-      rows: rows.map((r) => ({
+    const mapped = rows.map((r) => ({
         ...r,
         account_title: r.account_code
           ? (titleByCode.get(r.account_code) ?? null)
           : null,
         unit_cost: r.unit_cost != null ? Number(r.unit_cost) : null,
-      })),
+      }))
+    return {
+      total,
+      rows: mapped,
+      data: mapped,
+      page: safePage,
+      pageSize,
+      totalPages: totalPagesFor(total, pageSize),
     }
   } catch (e) {
     console.error('[getInventoryItems]', e)
-    return { rows: [], total: 0 }
+    return { rows: [], data: [], total: 0, page: 1, pageSize, totalPages: 1 }
   }
   })
 }
@@ -243,8 +262,15 @@ export async function saveInventoryItem(
     return { error: 'Unit cost must be zero or more.' }
   }
 
-  const user = await requireUser()
-  if (!user) return { error: 'You must be signed in to manage stocks.' }
+  let user: { id: string }
+  try {
+    const { requirePersonnelScope } = await import('@/lib/personnel-scope')
+    const scope = await requirePersonnelScope()
+    user = { id: scope.userId! }
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'Not authenticated.'
+    return { error: msg.startsWith('Forbidden') ? 'Forbidden: Personnel only.' : 'You must be signed in to manage stocks.' }
+  }
 
   // Strict mode: codes and units must come from Master Data.
   // The account code drives the asset type — same as the delivery modal:
@@ -281,6 +307,26 @@ export async function saveInventoryItem(
   }
 
   try {
+    // Saved-row echo (list display fields) — lets the client patch the
+    // cached window without a refetch.
+    const recordSelect = {
+      id: true,
+      item_name: true,
+      account_code: true,
+      quantity: true,
+      unit: true,
+      unit_cost: true,
+      location: true,
+    } as const
+    let record: {
+      id: string
+      item_name: string
+      account_code: string | null
+      quantity: number
+      unit: string | null
+      unit_cost: unknown
+      location: string | null
+    } | null = null
     if (input.id) {
       // Personnel cannot edit stock — updates are Super Admin only.
       const { getPersonnelScope } = await import('@/lib/personnel-scope')
@@ -295,10 +341,17 @@ export async function saveInventoryItem(
       if (!exists) return { error: 'Stock item not found.' }
       // Personnel cannot change the reorder threshold — only Super Admin sets
       // it. Omit it here so any existing value is preserved untouched.
-      await prisma.inventoryItem.update({ where: { id: input.id }, data })
+      record = await prisma.inventoryItem.update({
+        where: { id: input.id },
+        data,
+        select: { ...recordSelect },
+      })
     } else {
       // New items start without a threshold until Super Admin sets one.
-      await prisma.inventoryItem.create({ data: { ...data, reorder_threshold: null } })
+      record = await prisma.inventoryItem.create({
+        data: { ...data, reorder_threshold: null },
+        select: { ...recordSelect },
+      })
     }
     await writeAuditLog({
       userId: user.id,
@@ -307,47 +360,15 @@ export async function saveInventoryItem(
       details: {
         purpose: `${input.id ? 'Update' : 'Add'} stock item ${name}`,
         summary: `${name} · Qty ${input.quantity}${input.unit ? ` ${input.unit}` : ''}`,
-        reference_id: input.id ?? null,
+        reference_id: record?.id ?? input.id ?? undefined,
+        after: record,
       },
     })
     revalidatePath('/personnel/inventory')
-    return { success: true }
+    return { success: true, record }
   } catch (e) {
     console.error('[saveInventoryItem]', e)
     return { error: 'Failed to save the stock item. Please try again.' }
-  }
-}
-
-export async function deleteInventoryItem(id: string): Promise<InventoryState> {
-  if (!id) return { error: 'Stock item ID is required.' }
-
-  const user = await requireUser()
-  if (!user) return { error: 'You must be signed in to manage stocks.' }
-
-  // Personnel cannot delete stock — Super Admin only.
-  const { getPersonnelScope } = await import('@/lib/personnel-scope')
-  const scope = await getPersonnelScope()
-  if (!scope.isSuperAdmin) {
-    return { error: 'Only Super Admin can delete stock items.' }
-  }
-
-  try {
-    await prisma.inventoryItem.delete({ where: { id } })
-    await writeAuditLog({
-      userId: user.id,
-      action: 'inventory:delete',
-      module: 'inventory',
-      details: {
-        purpose: 'Remove stock item',
-        summary: `Deleted stock ${id.slice(0, 8).toUpperCase()}`,
-        reference_id: id,
-      },
-    })
-    revalidatePath('/personnel/inventory')
-    return { success: true }
-  } catch (e) {
-    console.error('[deleteInventoryItem]', e)
-    return { error: 'Failed to delete the stock item. Please try again.' }
   }
 }
 

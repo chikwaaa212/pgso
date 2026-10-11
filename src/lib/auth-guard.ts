@@ -1,9 +1,8 @@
 import 'server-only'
 
 import { cache } from 'react'
-import { createClient } from '@/lib/supabase/server'
+import { getSessionIdentity } from '@/lib/personnel-scope'
 import prisma from '@/lib/prisma'
-
 export interface SuperAdminSession {
   userId: string
   email: string | null
@@ -26,17 +25,14 @@ export interface SuperAdminSession {
  * lookup instead of N duplicate round-trips.
  */
 async function requireSuperAdminUncached(): Promise<SuperAdminSession> {
-  const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
+  const { userId, email } = await getSessionIdentity()
 
-  if (!user) {
+  if (!userId) {
     throw new Error('Not authenticated.')
   }
 
   const profile = await prisma.profile.findUnique({
-    where: { id: user.id },
+    where: { id: userId },
     select: { id: true, full_name: true, role: true, status: true, position: true, office: true },
   })
 
@@ -44,7 +40,7 @@ async function requireSuperAdminUncached(): Promise<SuperAdminSession> {
     throw new Error('Forbidden: Super Admin only.')
   }
 
-  return { userId: user.id, email: user.email ?? null, profile }
+  return { userId, email, profile }
 }
 
 export const requireSuperAdmin = cache(requireSuperAdminUncached)
@@ -69,17 +65,14 @@ export interface EmployeeSession {
  * Use as the first line of every employee server action / page.
  */
 export async function requireEmployee(): Promise<EmployeeSession> {
-  const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
+  const { userId, email } = await getSessionIdentity()
 
-  if (!user) {
+  if (!userId) {
     throw new Error('Not authenticated.')
   }
 
   const profile = await prisma.profile.findUnique({
-    where: { id: user.id },
+    where: { id: userId },
     select: { full_name: true, role: true, status: true },
   })
 
@@ -93,5 +86,5 @@ export async function requireEmployee(): Promise<EmployeeSession> {
     throw new Error('Forbidden: Employee only.')
   }
 
-  return { userId: user.id, email: user.email ?? null, fullName: profile.full_name }
+  return { userId, email, fullName: profile.full_name }
 }

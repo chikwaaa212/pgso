@@ -14,6 +14,62 @@ const BUST_TIMEOUT_MS = 5000
 // Bound a single prefix bust so a huge keyspace can't loop forever.
 const BUST_MAX_SCAN_PAGES = 20
 
+/**
+ * Server TTL table (seconds) — single source of truth for hot-read TTLs.
+ * - Static lookups (catalog/units/departments/filter options): 300s.
+ * - Slowly changing lists (assets/documents/records): 60s page windows, 30s details.
+ * - Live queues/counts (requests/repairs/deliveries/inspections/badges): 30s.
+ * - Session/role (middleware + in-memory): 60s (see personnel-scope.ts +
+ *   middleware.ts). 60s bounds how long a role change or deactivation can go
+ *   unnoticed; explicit busts on writes/logout make it effective immediately.
+ */
+export const SERVER_TTLS = {
+  staticLookup: 300,
+  slowList: 60,
+  slowDetail: 30,
+  liveList: 30,
+  liveCount: 30,
+  dashboard: 60,
+  sessionRole: 60,
+} as const
+
+// In-memory fallback when Redis is unavailable (dev/CI/Redis outage).
+// Size-capped LRU-ish (500 entries): prevents unbounded growth on long-lived
+// server instances while keeping hot reads fast without Redis.
+const MEM_FALLBACK_MAX = 500
+const memFallback = new Map<string, { value: unknown; expires: number }>()
+function memGet<T>(key: string): T | null {
+  const hit = memFallback.get(key)
+  if (!hit) return null
+  if (hit.expires <= Date.now()) {
+    memFallback.delete(key)
+    return null
+  }
+  // refresh LRU position
+  memFallback.delete(key)
+  memFallback.set(key, hit)
+  return hit.value as T
+}
+function memSet(key: string, value: unknown, ttlSeconds: number): void {
+  if (memFallback.has(key)) memFallback.delete(key)
+  memFallback.set(key, { value, expires: Date.now() + ttlSeconds * 1000 })
+  while (memFallback.size > MEM_FALLBACK_MAX) {
+    const oldest = memFallback.keys().next()
+    if (oldest.done) break
+    memFallback.delete(oldest.value)
+  }
+}
+function memDelPrefix(prefix: string): void {
+  const full = `${PREFIX}:${prefix}`
+  for (const k of [...memFallback.keys()]) {
+    if (k === full || k.startsWith(full)) memFallback.delete(k)
+  }
+}
+
+// Single-flight: concurrent cold reads for the same key share one fetcher
+// run instead of stampeding the DB (hot dashboard/count keys under bursts).
+const readInflight = new Map<string, Promise<unknown>>()
+
 /** Rejects if `promise` takes longer than `ms`. The loser side stays
  *  handled via Promise.race, so no unhandled rejections. */
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
@@ -73,9 +129,13 @@ export async function scopedKey(
   try {
     const scope = await getPersonnelScope()
     const userId = scope.userId ?? 'anon'
+    // `u` isolates per user, `a` per admin flag, `r` per full role string
+    // (personnel vs employee vs super_admin can never share an entry even
+    // when extra filters collide). Merged with caller extras (page/filters).
     const key = cacheKey(namespace, {
       u: userId,
       a: scope.isSuperAdmin ? 1 : 0,
+      r: scope.role ?? 'none',
       ...extra,
     })
     return { key, userId: scope.userId, isSuperAdmin: scope.isSuperAdmin }
@@ -91,13 +151,15 @@ export async function scopedKey(
 export async function cacheGet<T>(key: string): Promise<T | null> {
   try {
     const redis = getRedis()
-    if (!redis) return null
+    if (!redis) return memGet<T>(key)
     // Bound every Redis round-trip: a slow/cold Upstash endpoint must
     // degrade to a direct DB read, never stall a server action for seconds.
-    return (await withTimeout(redis.get<T>(key), CACHE_IO_TIMEOUT_MS)) ?? null
+    const hit = await withTimeout(redis.get<T>(key), CACHE_IO_TIMEOUT_MS).catch(() => null)
+    if (hit !== null && hit !== undefined) return hit
+    return memGet<T>(key)
   } catch (e) {
     console.warn('[cache] get failed', key, e)
-    return null
+    return memGet<T>(key)
   }
 }
 
@@ -106,6 +168,7 @@ export async function cacheSet(
   value: unknown,
   ttlSeconds: number
 ): Promise<void> {
+  memSet(key, value, ttlSeconds)
   try {
     const redis = getRedis()
     if (!redis) return
@@ -117,15 +180,17 @@ export async function cacheSet(
     await withTimeout(
       redis.set(key, value as never, { ex: ttlSeconds }),
       CACHE_IO_TIMEOUT_MS
-    )
+    ).catch(() => undefined)
   } catch (e) {
     console.warn('[cache] set failed', key, e)
   }
 }
 
 /**
- * Read-through helper: try Redis, fall back to `fetcher`, then store.
- * Never throws — on Redis failure it just runs the fetcher.
+ * Read-through helper: try Redis (then memory fallback), fall back to
+ * `fetcher`, then store. Single-flight: concurrent callers for the same key
+ * share one fetcher run (no stampede). Never throws — on Redis failure it
+ * just runs the fetcher.
  */
 export async function withCache<T>(
   key: string,
@@ -134,12 +199,25 @@ export async function withCache<T>(
 ): Promise<T> {
   const hit = await cacheGet<T>(key)
   if (hit !== null && hit !== undefined) return hit
-  // Transient pooler blips (P1001 etc.) are common under parallel bursts —
-  // retry the fetcher before giving up so one bad connection doesn't fail
-  // the whole dashboard.
-  const fresh = await withDbRetry(fetcher)
-  await cacheSet(key, fresh, ttlSeconds)
-  return fresh
+  const inflight = readInflight.get(key) as Promise<T> | undefined
+  if (inflight) return inflight
+  // Definite holder (const): `promise` is only read inside `finally`,
+  // which executes after the assignment below completes.
+  const holder: { promise: Promise<T> | null } = { promise: null }
+  holder.promise = (async () => {
+    try {
+      // Transient pooler blips (P1001 etc.) are common under parallel bursts —
+      // retry the fetcher before giving up so one bad connection doesn't fail
+      // the whole dashboard.
+      const fresh = await withDbRetry(fetcher)
+      await cacheSet(key, fresh, ttlSeconds)
+      return fresh
+    } finally {
+      if (readInflight.get(key) === holder.promise) readInflight.delete(key)
+    }
+  })()
+  readInflight.set(key, holder.promise)
+  return holder.promise
 }
 
 /** Prisma codes that mean "try again" rather than "bad query". */
@@ -204,6 +282,13 @@ export async function withScopedCache<T>(
 export async function bustCachePrefixes(
   prefixes: string[]
 ): Promise<void> {
+  for (const p of prefixes) {
+    try {
+      memDelPrefix(p)
+    } catch {
+      /* ignore */
+    }
+  }
   if (bustInFlight) return bustInFlight
   bustInFlight = (async () => {
     try {
@@ -232,6 +317,31 @@ export async function bustPersonnelCache(): Promise<void> {
     'inventory:',
     'assets:',
   ])
+}
+
+/**
+ * Clear the middleware Edge role entry for one user (or all when omitted).
+ * Call after any role/status write and on logout so a deactivation or role
+ * change is visible on the next request instead of waiting out the 60s TTL.
+ * Best-effort, timeout-bounded, never throws.
+ */
+export async function bustMiddlewareRoleCache(userId?: string): Promise<void> {
+  try {
+    if (userId) {
+      memFallback.delete(`pgso:middleware-role:${userId}`)
+    } else {
+      memDelPrefix('middleware-role:')
+    }
+    const redis = getRedis()
+    if (!redis) return
+    if (userId) {
+      await withTimeout(redis.del(`pgso:middleware-role:${userId}`), CACHE_IO_TIMEOUT_MS).catch(() => undefined)
+    } else {
+      await bustCachePrefixes(['middleware-role:'])
+    }
+  } catch {
+    /* best-effort */
+  }
 }
 
 /**

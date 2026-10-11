@@ -1,8 +1,9 @@
 "use client";
 
-import { useRef, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { useToast } from "@/components/ui/toaster";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { CLIENT_CACHE_KEYS, bustClientCache } from "@/lib/client-cache";
 import {
   Select,
@@ -12,7 +13,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { requestTypeLabel } from "@/app/personnel/requests/request-types";
-import { createMyRequest } from "../actions";
+import { createMyRequest, getMyRequestOptions } from "../actions";
 
 const TYPES = ["transfer", "new_assignment", "repair"] as const;
 
@@ -60,15 +61,47 @@ export function NewRequestForm({
   const needsAsset = type === "transfer" || type === "repair";
   const isTransfer = type === "transfer";
   const isRepair = type === "repair";
+  // Server-side item search (small PAGE_SIZE window per source, never the
+  // 500-row slice): typing filters the catalog on the server. Held assets
+  // always come along, so transfer/repair keep working under any search.
+  const [itemQuery, setItemQuery] = useState("");
+  const debouncedItemQuery = useDebouncedValue(itemQuery, 300);
+  const trimmedSearch = debouncedItemQuery.trim();
+  // Last completed search (query text + its rows). Derived display state —
+  // no synchronous resets inside the fetch effect below.
+  const [searched, setSearched] = useState<typeof assets | null>(null);
+  const [searchedFor, setSearchedFor] = useState("");
+  const searching = trimmedSearch !== "" && searchedFor !== trimmedSearch;
+  useEffect(() => {
+    const q = debouncedItemQuery.trim();
+    if (q === "") return;
+    let live = true;
+    void getMyRequestOptions({ q })
+      .then((res) => {
+        if (live) {
+          setSearched(res.assets);
+          setSearchedFor(q);
+        }
+      })
+      .catch(() => {
+        if (live) setSearchedFor(q);
+      });
+    return () => {
+      live = false;
+    };
+  }, [debouncedItemQuery]);
+  // Empty query → snapshot options; pending query → previous results stay
+  // visible (no flash of wrong options while the next window loads).
+  const baseAssets = trimmedSearch === "" ? assets : (searched ?? assets);
   // Transfer and repair both act on items already in the requester's hand:
   // only assets currently assigned to this employee can be picked — never
   // other people's items or unassigned PGSO stock.
-  const heldAssets = assets.filter((a) => a.kind === "asset" && a.heldByMe);
+  const heldAssets = baseAssets.filter((a) => a.kind === "asset" && a.heldByMe);
   const heldOnly = isTransfer || isRepair;
-  const itemOptions = heldOnly ? heldAssets : assets;
+  const itemOptions = heldOnly ? heldAssets : baseAssets;
   // Every delivered item is an asset; "stock" is just its quantity on hand —
   // transfer / assignment / repair can all pick either kind.
-  const selected = assets.find((a) => a.id === assetId) ?? null;
+  const selected = baseAssets.find((a) => a.id === assetId) ?? assets.find((a) => a.id === assetId) ?? null;
   const isStockPick = selected?.kind === "stock";
   const stockMax = selected?.quantity ?? 0;
 
@@ -179,6 +212,19 @@ export function NewRequestForm({
             : needsAsset
               ? "Item (asset / stock) *"
               : "Item (asset / stock, optional)"}
+          <input
+            type="search"
+            value={itemQuery}
+            onChange={(e) => setItemQuery(e.target.value)}
+            placeholder="Search items…"
+            aria-label="Search items"
+            style={inputStyle}
+          />
+          {searching ? (
+            <span style={{ fontWeight: 400, fontSize: "0.6875rem", color: "var(--color-navy-500)" }}>
+              Searching…
+            </span>
+          ) : null}
           <Select value={assetId || undefined} onValueChange={setAssetId}>
             <SelectTrigger style={{ ...inputStyle, display: "flex" }} aria-label="Item">
               <SelectValue

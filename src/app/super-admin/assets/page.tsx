@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Eye, QrCode, Search, Send } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -21,14 +22,22 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { browseAssets, browseCategories } from "../browse/actions";
+import { getUnifiedAssetsPage, getAssetFilterOptions } from "@/app/personnel/assets/actions";
 import type { UnifiedAssetRow } from "@/app/personnel/assets/actions";
-import { AddAssetDialog, ImportAssetsDialog } from "@/app/personnel/assets/asset-dialogs";
-import { AddColumnDialog, customSearchText } from "@/app/personnel/assets/custom-columns";
+import { AddAssetDialog, ImportAssetsDialog, type AssetMutationEvent } from "@/app/personnel/assets/asset-dialogs";
+import { AddColumnDialog } from "@/app/personnel/assets/custom-columns";
 import { IssuanceEvaluateDialog } from "@/components/personnel/IssuanceDialog";
-import { usePageSize } from "@/hooks/use-page-size";
+import { Pagination } from "@/components/ui/pagination";
+import { PAGE_SIZE, CACHE_TTL } from "@/lib/constants";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useCachedAction } from "@/hooks/use-cached-action";
-import { CLIENT_CACHE_KEYS } from "@/lib/client-cache";
+import {
+  CLIENT_CACHE_KEYS,
+  bustClientCache,
+  getClientCache,
+  setClientCache,
+} from "@/lib/client-cache";
+import { patchRowInPage, prependRowToPage, removeRowFromPage } from "@/lib/list-patch";
 import AssetsLoading from "./loading";
 import styles from "@/app/personnel/dashboard/page.module.css";
 import assetStyles from "@/app/personnel/assets/page.module.css";
@@ -58,60 +67,31 @@ const SOURCE_FILTERS = [
   { value: "stock", label: "Stock" },
 ] as const;
 
-const PAGE_SIZES = [10, 20, 50, 100];
-
-const norm = (v: string | null | undefined) => (v ?? "").trim().toLowerCase();
-
-function distinctValues(rows: UnifiedAssetRow[], pick: (r: UnifiedAssetRow) => string | null) {
-  const map = new Map<string, string>();
-  for (const r of rows) {
-    const raw = (pick(r) ?? "").trim();
-    if (!raw) continue;
-    const key = raw.toLowerCase();
-    if (!map.has(key)) map.set(key, raw);
-  }
-  return [...map.entries()].sort((a, b) => a[1].localeCompare(b[1]));
-}
-
-function pageWindow(current: number, total: number) {
-  const start = Math.max(1, Math.min(current - 2, total - 4));
-  const end = Math.min(total, start + 4);
-  const pages: number[] = [];
-  for (let p = Math.max(1, end - 4); p <= end; p++) pages.push(p);
-  return { pages: pages.filter((p) => p >= start), start };
-}
-
 export default function SuperAdminAssetsPage() {
-  // Same client caching as the personnel assets page: back-navigation
-  // paints instantly from memory / sessionStorage and only revalidates
-  // silently when stale (60s, matching the server snapshot cache).
-  const {
-    data: snapshot,
-    loading,
-    refresh,
-  } = useCachedAction(
-    CLIENT_CACHE_KEYS.adminAssets,
-    () =>
-      Promise.all([browseAssets(), browseCategories()]).then(
-        ([rows, categories]) => ({ rows, categories })
-      ),
-    { staleTime: 60_000 }
+  return (
+    <Suspense fallback={<AssetsLoading />}>
+      <SuperAdminAssetsContent />
+    </Suspense>
   );
-  const rows = useMemo(() => snapshot?.rows ?? [], [snapshot]);
-  const categories = useMemo(() => snapshot?.categories ?? [], [snapshot]);
-  // Custom-field values stay searchable via customSearchText; the columns
-  // themselves live on the asset detail page, not in this table.
-  const [query, setQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState("all");
-  const [sourceFilter, setSourceFilter] = useState("all");
-  const [conditionFilter, setConditionFilter] = useState("all");
-  const [unitFilter, setUnitFilter] = useState("all");
-  const [assetTypeFilter, setAssetTypeFilter] = useState("all");
-  const [pageSize, setPageSize] = usePageSize(
-    "pgso:admin:page-size:assets",
-    PAGE_SIZES[0]
-  );
-  const [page, setPage] = useState(1);
+}
+
+function SuperAdminAssetsContent() {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
+  // Server-paginated registry window (PAGE_SIZE = 15): search + all filters
+  // run in the DB via getUnifiedAssetsPage — one 15-row window per visit,
+  // never the full browseAssets list. Same SWR pattern as personnel assets.
+  const [query, setQuery] = useState(searchParams.get("q") ?? "");
+  const debouncedQuery = useDebouncedValue(query, 300);
+  const searching = query.trim() !== debouncedQuery.trim();
+  const [statusFilter, setStatusFilter] = useState(searchParams.get("status") ?? "all");
+  const [sourceFilter, setSourceFilter] = useState(searchParams.get("source") ?? "all");
+  const [conditionFilter, setConditionFilter] = useState(searchParams.get("condition") ?? "all");
+  const [unitFilter, setUnitFilter] = useState(searchParams.get("unit") ?? "all");
+  const [assetTypeFilter, setAssetTypeFilter] = useState(searchParams.get("category") ?? "all");
+  const pageSize = PAGE_SIZE;
+  const [page, setPage] = useState(Math.max(1, Number(searchParams.get("page")) || 1));
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [issuanceOpen, setIssuanceOpen] = useState(false);
   const [presetAssetId, setPresetAssetId] = useState<string | null>(null);
@@ -122,9 +102,160 @@ export default function SuperAdminAssetsPage() {
     setSelectedId(null);
   };
 
-  const conditionOptions = useMemo(() => distinctValues(rows, (r) => r.condition), [rows]);
-  const unitOptions = useMemo(() => distinctValues(rows, (r) => r.unit), [rows]);
-  const assetTypeOptions = useMemo(() => distinctValues(rows, (r) => r.category), [rows]);
+  // Keep URL in sync (refresh + back/forward work). Callers reset to page 1
+  // when search/filters change via resetPage above.
+  const setUrl = useCallback(
+    (next: Record<string, string | null>) => {
+      const params = new URLSearchParams(searchParams.toString());
+      for (const [k, v] of Object.entries(next)) {
+        if (v === null || v === "" || v === "all") params.delete(k);
+        else params.set(k, v);
+      }
+      router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+    },
+    [searchParams, router, pathname]
+  );
+
+  useEffect(() => {
+    setUrl({
+      page: page === 1 ? null : String(page),
+      q: debouncedQuery || null,
+      status: statusFilter,
+      source: sourceFilter,
+      condition: conditionFilter,
+      unit: unitFilter,
+      category: assetTypeFilter,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, debouncedQuery, statusFilter, sourceFilter, conditionFilter, unitFilter, assetTypeFilter]);
+
+  // Server-paginated registry window: search + all filters run in the DB.
+  // Back-navigation paints instantly from cache; URL holds page/filters.
+  const {
+    data: paged,
+    loading,
+    isValidating,
+    error,
+    refresh: refreshPaged,
+    mutate: mutatePaged,
+  } = useCachedAction(
+    `pgso:admin-assets:unified:${page}:${pageSize}:${debouncedQuery}:${statusFilter}:${sourceFilter}:${conditionFilter}:${unitFilter}:${assetTypeFilter}`,
+    () =>
+      getUnifiedAssetsPage({
+        page,
+        q: debouncedQuery,
+        status: statusFilter,
+        source: sourceFilter,
+        condition: conditionFilter,
+        unit: unitFilter,
+        category: assetTypeFilter,
+      }),
+    { staleTime: CACHE_TTL.countsMs }
+  );
+  const rows = useMemo(() => paged?.rows ?? [], [paged]);
+  const total = paged?.total ?? 0;
+  // Bounded dropdown options from the server (the page window no longer
+  // contains every value).
+  const { data: filterOptions } = useCachedAction(
+    `${CLIENT_CACHE_KEYS.adminAssets}-filter-options`,
+    getAssetFilterOptions,
+    { staleTime: 300_000 }
+  );
+  const categories = useMemo(() => filterOptions?.categories ?? [], [filterOptions]);
+
+  // Prefetch next page while the user views the current one (no flicker).
+  useEffect(() => {
+    if (!paged || total <= page * pageSize) return;
+    const nextKey = `pgso:admin-assets:unified:${page + 1}:${pageSize}:${debouncedQuery}:${statusFilter}:${sourceFilter}:${conditionFilter}:${unitFilter}:${assetTypeFilter}`;
+    if (getClientCache(nextKey)) return;
+    const t = setTimeout(() => {
+      void getUnifiedAssetsPage({
+        page: page + 1,
+        q: debouncedQuery,
+        status: statusFilter,
+        source: sourceFilter,
+        condition: conditionFilter,
+        unit: unitFilter,
+        category: assetTypeFilter,
+      }).then((fresh) => setClientCache(nextKey, fresh)).catch(() => {});
+    }, 400);
+    return () => clearTimeout(t);
+  }, [paged, total, page, pageSize, debouncedQuery, statusFilter, sourceFilter, conditionFilter, unitFilter, assetTypeFilter]);
+
+  const refresh = () => {
+    // Own write (add / import / issue) — force fresh rows now and drop the
+    // dashboard snapshot so its next visit refetches. Old data stays visible
+    // while the refetch runs (no skeleton flash).
+    bustClientCache([CLIENT_CACHE_KEYS.dashboard, CLIENT_CACHE_KEYS.issuances]);
+    refreshPaged();
+  };
+
+  const bustSiblings = useCallback(() => {
+    bustClientCache([CLIENT_CACHE_KEYS.dashboard, CLIENT_CACHE_KEYS.issuances]);
+  }, []);
+
+  const canClaimPosition =
+    page === 1 &&
+    query.trim() === "" &&
+    statusFilter === "all" &&
+    sourceFilter === "all" &&
+    conditionFilter === "all" &&
+    unitFilter === "all" &&
+    assetTypeFilter === "all";
+
+  /**
+   * Optimistic create lifecycle (no refetch) — mirrors the personnel
+   * registry: prepend temp on submit, reconcile on success, roll back on
+   * failure; filtered/deep pages fall back to refresh.
+   */
+  const handleAssetCreateEvent = useCallback(
+    (e: AssetMutationEvent) => {
+      if (e.phase === "start") {
+        if (!canClaimPosition) return;
+        mutatePaged((prev) => (prev ? prependRowToPage(prev, e.temp) : prev));
+        return;
+      }
+      if (e.phase === "success" && e.record) {
+        bustSiblings();
+        mutatePaged((prev) => {
+          if (!prev) return prev;
+          const rows = (prev as { rows?: { id: string }[] }).rows ?? [];
+          if (rows.some((r) => r.id === e.tempId)) {
+            return patchRowInPage(prev, e.tempId, {
+              ...e.temp,
+              id: e.record!.id,
+              account_code: e.record!.account_code ?? e.temp.account_code,
+              article: e.record!.article ?? e.temp.article,
+            } as Record<string, unknown>);
+          }
+          if (canClaimPosition) {
+            return prependRowToPage(prev, {
+              ...e.temp,
+              id: e.record!.id,
+            } as (typeof rows)[number] & { id: string });
+          }
+          refreshPaged();
+          return prev;
+        });
+        return;
+      }
+      mutatePaged((prev) => (prev ? removeRowFromPage(prev, e.tempId) : prev));
+    },
+    [canClaimPosition, mutatePaged, refreshPaged, bustSiblings]
+  );
+
+  const conditionOptions = useMemo(
+    () => (filterOptions?.conditions ?? []).map((v) => [v.toLowerCase(), v] as [string, string]),
+    [filterOptions]
+  );
+  const unitOptions = useMemo(
+    () => (filterOptions?.units ?? []).map((v) => [v.toLowerCase(), v] as [string, string]),
+    [filterOptions]
+  );
+  const assetTypeOptions = useMemo(
+    () => (filterOptions?.categories ?? []).map((v) => [v.toLowerCase(), v] as [string, string]),
+    [filterOptions]
+  );
 
   const hasActiveFilters =
     query.trim() !== "" ||
@@ -134,59 +265,10 @@ export default function SuperAdminAssetsPage() {
     unitFilter !== "all" ||
     assetTypeFilter !== "all";
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return rows.filter((a) => {
-      if (q) {
-        const hay = [
-          a.account_code,
-          a.qr_code,
-          a.category,
-          a.account_title,
-          a.account_name,
-          a.identifier,
-          a.article,
-          a.description,
-          a.location,
-          a.remarks,
-          a.brand,
-          a.engine_displacement,
-          a.fuel_type,
-          a.engine_number,
-          a.chassis_number,
-          a.color,
-          a.plate_number,
-          a.fund,
-          a.status,
-          a.condition,
-          a.unit,
-          a.dv_tracking_number,
-          a.supplier_payee,
-          a.account_name_charge,
-          a.account_number,
-          a.obr_number,
-          a.dv_number,
-          customSearchText(a),
-        ]
-          .filter(Boolean)
-          .join(" ")
-          .toLowerCase();
-        if (!hay.includes(q)) return false;
-      }
-      if (statusFilter !== "all" && norm(a.status) !== statusFilter) return false;
-      if (sourceFilter !== "all" && a.source !== sourceFilter) return false;
-      if (conditionFilter !== "all" && norm(a.condition) !== conditionFilter) return false;
-      if (unitFilter !== "all" && norm(a.unit) !== unitFilter) return false;
-      if (assetTypeFilter !== "all" && norm(a.category) !== assetTypeFilter) return false;
-      return true;
-    });
-  }, [rows, query, statusFilter, conditionFilter, unitFilter, assetTypeFilter, sourceFilter]);
-
-  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
-  const safePage = Math.min(page, pageCount);
-  const start = (safePage - 1) * pageSize;
-  const visible = filtered.slice(start, start + pageSize);
-  const { pages } = pageWindow(safePage, pageCount);
+  // Server already filtered + paged — visible is the page window.
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
+  const safePage = Math.min(Math.max(1, page), pageCount);
+  const visible = rows;
 
   const selectedRow = rows.find((r) => r.id === selectedId) ?? null;
   const selectedAssignable =
@@ -195,7 +277,9 @@ export default function SuperAdminAssetsPage() {
     !(typeof selectedRow.quantity === "number" && selectedRow.quantity <= 0) &&
     selectedRow.assigned_to == null;
 
-  if (loading) {
+  // Cold start only: background refetches keep stale rows visible with
+  // an "updating…" badge instead of flashing the full skeleton.
+  if (loading && rows.length === 0) {
     return <AssetsLoading />;
   }
 
@@ -206,8 +290,8 @@ export default function SuperAdminAssetsPage() {
         <div>
           <h1 className={styles.title}>Assets</h1>
           <p className={styles.subtitle}>
-            {rows.length} {rows.length === 1 ? "asset" : "assets"} registered
-            {hasActiveFilters ? ` · ${filtered.length} shown` : ""}
+            {total} {total === 1 ? "asset" : "assets"} registered
+            {(isValidating || searching) ? " · updating…" : ""}
           </p>
         </div>
         <div className={styles.actions}>
@@ -229,7 +313,8 @@ export default function SuperAdminAssetsPage() {
           </Button>
           <AddAssetDialog
             categories={categories}
-            onSuccess={() => refresh()}
+            onSuccess={bustSiblings}
+            onMutationEvent={handleAssetCreateEvent}
             triggerClassName="h-8 gap-2 rounded-[4px] px-3.5 text-xs font-semibold"
           />
           <ImportAssetsDialog
@@ -421,10 +506,10 @@ export default function SuperAdminAssetsPage() {
           </span>
         </div>
 
-        {filtered.length === 0 ? (
+        {rows.length === 0 ? (
           <div className={styles.emptyState}>
             <p className={styles.panelSub}>
-              {rows.length === 0
+              {total === 0
                 ? "No assets have been registered yet. Use Add asset or Import Excel to get started."
                 : "No assets match your search or filters."}
             </p>
@@ -591,73 +676,14 @@ export default function SuperAdminAssetsPage() {
               </table>
             </div>
 
-            <div className={styles.pager}>
-              <span className={styles.pagerInfo}>
-                Showing {start + 1}–
-                {Math.min(start + pageSize, filtered.length)} of{" "}
-                {filtered.length}
-              </span>
-              <div className={styles.pagerControls}>
-                <span className={styles.pageSizeWrap}>
-                  <label htmlFor="admin-assets-page-size">Rows</label>
-                  <Select
-                    value={String(pageSize)}
-                    onValueChange={(v) => {
-                      setPageSize(Number(v));
-                      setPage(1);
-                    }}
-                  >
-                    <SelectTrigger
-                      id="admin-assets-page-size"
-                      size="sm"
-                      className="w-[5.5rem]"
-                    >
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {PAGE_SIZES.map((size) => (
-                        <SelectItem key={size} value={String(size)}>
-                          {size}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </span>
-                <button
-                  type="button"
-                  className={styles.pageBtn}
-                  disabled={safePage === 1}
-                  onClick={() => setPage(safePage - 1)}
-                  aria-label="Previous page"
-                >
-                  ‹
-                </button>
-                {pages.map((p) => (
-                  <button
-                    key={p}
-                    type="button"
-                    className={styles.pageBtn}
-                    data-active={p === safePage}
-                    onClick={() => setPage(p)}
-                    aria-label={`Page ${p}`}
-                    aria-current={p === safePage ? "page" : undefined}
-                  >
-                    {p}
-                  </button>
-                ))}
-                <button
-                  type="button"
-                  className={styles.pageBtn}
-                  disabled={safePage === pageCount}
-                  onClick={() => setPage(safePage + 1)}
-                  aria-label="Next page"
-                >
-                  ›
-                </button>
-              </div>
-            </div>
+            <Pagination total={total} page={safePage} onPageChange={setPage} id="admin-assets" />
           </>
         )}
+        {error && rows.length === 0 && !loading ? (
+          <div className={styles.emptyState} role="alert">
+            <p className={styles.panelSub}>Failed to load assets. Please try again.</p>
+          </div>
+        ) : null}
       </Card>
 
       <Dialog

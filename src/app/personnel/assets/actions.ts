@@ -21,6 +21,8 @@ import { fetchCustomBags, type CustomBag } from "./custom-fields";
 export interface EditState {
   success?: boolean;
   error?: string;
+  /** Updated record — lets the client patch cache without refetch. */
+  record?: unknown;
 }
 
 const ASSET_EDITABLE_KEYS = [
@@ -107,111 +109,7 @@ export interface AssetRow {
   custom_fields: CustomBag;
 }
 
-export async function getAssets(): Promise<AssetRow[]> {
-  const { withCache, cacheKey } = await import('@/lib/personnel-cache')
-  return withCache(cacheKey('personnel:assets'), 60, async () => {
-  try {
-    const assets = await prisma.asset.findMany({
-      orderBy: { created_at: "desc" },
-      // Server cap: registry pages slice client-side today; bound the
-      // transfer while true server paging lands per-tab.
-      take: 500,
-      select: {
-        id: true,
-        account_code: true,
-        identifier: true,
-        account_title: true,
-        account_name: true,
-        category: true,
-        article: true,
-        quantity: true,
-        unit: true,
-        description: true,
-        date_acquired: true,
-        location: true,
-        total_cost: true,
-        remarks: true,
-        condition: true,
-        unit_cost: true,
-        end_user: true,
-        brand: true,
-        cylinders: true,
-        engine_displacement: true,
-        fuel_type: true,
-        engine_number: true,
-        chassis_number: true,
-        color: true,
-        plate_number: true,
-        fund: true,
-        status: true,
-        dv_tracking_number: true,
-        supplier_payee: true,
-        account_name_charge: true,
-        account_number: true,
-        obr_number: true,
-        dv_number: true,
-        date_received: true,
-        qr_code: true,
-        created_at: true,
-        assigned_to: true,
-      },
-    });
 
-    const bags = await fetchCustomBags(
-      assets.map((a) => a.id),
-      []
-    );
-
-    const rows: AssetRow[] = await Promise.all(
-      assets.map(async (a) => ({
-        id: a.id,        account_code: a.account_code,
-        identifier: a.identifier,
-        account_title: a.account_title,
-        account_name: a.account_name,
-        category: a.category,
-        article: a.article,
-        quantity: a.quantity,
-        unit: a.unit,
-        description: a.description,
-        date_acquired: a.date_acquired?.toISOString().slice(0, 10) ?? null,
-        location: a.location,
-        total_cost: a.total_cost !== null && a.total_cost !== undefined ? Number(a.total_cost) : null,
-        remarks: a.remarks,
-        condition: a.condition,
-        unit_cost: a.unit_cost !== null && a.unit_cost !== undefined ? Number(a.unit_cost) : null,
-        end_user: a.end_user,
-        brand: a.brand,
-        cylinders: a.cylinders,
-        engine_displacement: a.engine_displacement,
-        fuel_type: a.fuel_type,
-        engine_number: a.engine_number,
-        chassis_number: a.chassis_number,
-        color: a.color,
-        plate_number: a.plate_number,
-        fund: a.fund,
-        status: a.status,
-        dv_tracking_number: a.dv_tracking_number,
-        supplier_payee: a.supplier_payee,
-        account_name_charge: a.account_name_charge,
-        account_number: a.account_number,
-        obr_number: a.obr_number,
-        dv_number: a.dv_number,
-        date_received: a.date_received?.toISOString().slice(0, 10) ?? null,
-        qr_code: a.qr_code,
-        created_at: a.created_at?.toISOString() ?? null,
-        assigned_to: a.assigned_to,
-        qr_data_url: await generateAssetQrDataUrl(a.id),
-        custom_fields: bags.get(`asset:${a.id}`) ?? {},
-      })),
-    );
-
-    return rows;
-  } catch (e) {
-    console.error("[getAssets]", e);
-    return [];
-  }
-  })
-}
 
 export async function getCategories(): Promise<string[]> {
   const { withCache, cacheKey } = await import('@/lib/personnel-cache')
@@ -345,58 +243,6 @@ function mapAssetToUnified(asset: AssetRow): UnifiedAssetRow {
     ...asset,
     source: "asset",
   };
-}
-
-export async function getStocks(): Promise<StockRow[]> {
-  const { withCache, cacheKey } = await import('@/lib/personnel-cache')
-  return withCache(cacheKey('personnel:stocks'), 60, async () => {
-  try {
-    const items = await prisma.inventoryItem.findMany({
-      orderBy: { item_name: "asc" },
-      take: 500,
-      select: {
-        id: true,
-        item_name: true,
-        category: true,
-        account_code: true,
-        quantity: true,
-        unit: true,
-        unit_cost: true,
-        reorder_threshold: true,
-        location: true,
-        updated_at: true,
-      },
-    });
-
-    const bags = await fetchCustomBags(
-      [],
-      items.map((i) => i.id)
-    );
-
-    const rows: StockRow[] = await Promise.all(
-      items.map(async (item) => ({
-        id: item.id,
-        item_name: item.item_name,
-        category: item.category,
-        account_code: item.account_code,
-        quantity: item.quantity,
-        unit: item.unit,
-        unit_cost: item.unit_cost != null ? Number(item.unit_cost) : null,
-        total_cost: item.unit_cost != null ? Number(item.unit_cost) * item.quantity : null,
-        reorder_threshold: item.reorder_threshold,
-        location: item.location,
-        updated_at: item.updated_at?.toISOString() ?? null,
-        qr_data_url: await generateStockQrDataUrl(item.id),
-        custom_fields: bags.get(`stock:${item.id}`) ?? {},
-      })),
-    )
-
-    return rows
-  } catch (e) {
-    console.error("[getStocks]", e)
-    return []
-  }
-  })
 }
 
 export async function getAsset(id: string): Promise<AssetRow | null> {
@@ -542,7 +388,15 @@ export async function updateAsset(
   _prevState: EditState,
   formData: FormData
 ): Promise<EditState> {
-  const id = formData.get("id") as string;
+  let actor: { userId: string | null };
+  try {
+    const { requirePersonnelScope } = await import('@/lib/personnel-scope')
+    actor = await requirePersonnelScope()
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'Not authenticated.'
+    return { success: false, error: msg.startsWith('Forbidden') ? 'Forbidden: Personnel only.' : 'Not authenticated.' }
+  }
+  const id = String(formData.get("id") ?? "").trim().slice(0, 36);
   if (!id) {
     return { success: false, error: "Missing asset id." };
   }
@@ -555,7 +409,7 @@ export async function updateAsset(
       data[key] = null;
       continue;
     }
-    const val = raw as string;
+    const val = String(raw).trim().slice(0, 500);
     if (NUMERIC_KEYS.has(key)) {
       const n = Number(val);
       data[key] = Number.isNaN(n) ? null : n;
@@ -570,14 +424,29 @@ export async function updateAsset(
     }
   }
 
+  // Allowlist already enforced above (ASSET_EDITABLE_KEYS + trim/cap).
+  const before = await prisma.asset.findUnique({ where: { id }, select: { id: true, account_code: true, article: true, status: true } }).catch(() => null)
+  if (!before) return { success: false, error: "Asset not found." }
+
   try {
-    await prisma.asset.update({
+    const updated = await prisma.asset.update({
       where: { id },
       data,
+      select: { id: true, account_code: true, article: true, status: true, location: true, quantity: true },
     });
+    // Audit official-record write (who/role/action/id/before-after/timestamp).
+    // Fire-and-forget so slow audit writes never block the mutation response.
+    void import('@/lib/audit').then((m) =>
+      m.writeAuditLog({
+        userId: actor.userId!,
+        action: 'asset:update',
+        module: 'assets',
+        details: { purpose: `Update asset ${before.account_code ?? before.id.slice(0, 8)}`, reference_id: id, before, after: updated },
+      }).catch(() => {})
+    ).catch(() => {});
     revalidatePath("/personnel/assets");
     revalidatePath(`/personnel/assets/${id}`);
-    return { success: true };
+    return { success: true, record: updated };
   } catch (e) {
     console.error("[updateAsset]", e);
     return { success: false, error: "Failed to update asset." };
@@ -600,6 +469,13 @@ export async function updateStock(
   _prevState: EditState,
   formData: FormData
 ): Promise<EditState> {
+  try {
+    const { requirePersonnelScope } = await import('@/lib/personnel-scope')
+    await requirePersonnelScope()
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'Not authenticated.'
+    return { success: false, error: msg.startsWith('Forbidden') ? 'Forbidden: Personnel only.' : 'Not authenticated.' }
+  }
   const id = formData.get("id") as string;
   if (!id) {
     return { success: false, error: "Missing stock id." };
@@ -657,65 +533,38 @@ export async function updateStock(
   }
 
   try {
-    await prisma.inventoryItem.update({
+    const updated = await prisma.inventoryItem.update({
       where: { id },
       data,
+      select: { id: true, item_name: true, account_code: true, quantity: true, location: true },
     });
+    void import('@/lib/personnel-scope').then(async (m) => {
+      try {
+        const scope = await m.getPersonnelScope();
+        if (scope.userId) {
+          const { writeAuditLog } = await import('@/lib/audit');
+          await writeAuditLog({
+            userId: scope.userId,
+            action: 'stock:update',
+            module: 'assets',
+            details: { purpose: `Update stock ${id.slice(0, 8)}`, reference_id: id, after: updated },
+          }).catch(() => {});
+        }
+      } catch { /* audit never blocks */ }
+    }).catch(() => {});
     revalidatePath("/personnel/assets");
     revalidatePath(`/personnel/assets/stock/${id}`);
-    return { success: true };
+    return { success: true, record: updated };
   } catch (e) {
     console.error("[updateStock]", e);
     return { success: false, error: "Failed to update stock item." };
   }
 }
 
-export async function getAllUnifiedAssets(): Promise<UnifiedAssetRow[]> {
-  const { withCache, cacheKey } = await import('@/lib/personnel-cache')
-  return withCache(cacheKey('personnel:unified-assets'), 60, async () => {
-  try {
-    const assets = await getAssets();
-    const stocks = await getStocks();
-
-    const unified: UnifiedAssetRow[] = [
-      ...assets.map(mapAssetToUnified),
-      ...stocks.map(mapStockToUnified),
-    ];
-
-    unified.sort((a, b) => {
-      const aField = a.article ?? a.account_code ?? a.category ?? a.id;
-      const bField = b.article ?? b.account_code ?? b.category ?? b.id;
-      return String(aField).localeCompare(String(bField));
-    });
-
-    return unified;
-  } catch (e) {
-    console.error("[getAllUnifiedAssets]", e);
-    return [];
-  }
-  })
-}
-
-export interface AssetsSnapshot {
-  rows: UnifiedAssetRow[];
-  categories: string[];
-}
-
-/**
- * Single round-trip for the assets list page (rows + category options),
- * cached client-side under CLIENT_CACHE_KEYS.assets like the
- * dashboard / deliveries / inspections / stocks pages.
- */
-export async function getAssetsSnapshot(): Promise<AssetsSnapshot> {
-  const [rows, categories] = await Promise.all([
-    getAllUnifiedAssets(),
-    getCategories(),
-  ]);
-  return { rows, categories };
-}
-
 export interface UnifiedAssetsPageOpts {
   page?: number
+  /** Window size (default PAGE_SIZE, clamped 1..100). UI lists omit it. */
+  pageSize?: number
   q?: string
   status?: string
   source?: string
@@ -763,145 +612,311 @@ export async function getAssetFilterOptions(): Promise<{
   })
 }
 
-const norm = (v: string | null | undefined) => (v ?? '').trim().toLowerCase()
-
 /**
- * Server-filtered unified registry window (fixed 20/page).
+ * Server-paginated unified registry window (PAGE_SIZE = 15).
  *
- * Why this shape: assets + stocks live in two tables with a merged
- * localeCompare sort, so a single SQL window can't page the union. Instead
- * the server fetches SLIM rows (no QR data URLs), filters + sorts the
- * merged set, then hydrates QR + custom bags for the 20 visible rows only.
- * Transfer stays small and the DOM stays at 20 rows; `total` is the exact
- * merged filtered count (bounded to the first 2000 rows per source).
+ * Single raw-SQL UNION ALL over assets + inventory with ORDER BY + LIMIT /
+ * OFFSET and COUNT(*) OVER() — one DB round-trip for the window AND the
+ * exact filtered total (no separate count query, no 2000-row preload, no
+ * in-memory merge/sort). Exact filters (status/condition/unit/category) are
+ * pushed into each branch so the new indexes apply; text search runs over
+ * the same haystack as the registry UI (native columns + custom_fields
+ * bag text, LIKE-escaped). Custom bags + QR hydrate for the 15 visible
+ * rows only.
+ *
+ * Two documented deltas vs the old in-memory merge:
+ * - Sort uses DB collation on the same key (article ?? account_code ??
+ *   category ?? id) instead of JS localeCompare — equivalent ordering for
+ *   registry text.
+ * - A q containing spaces matches per-column (OR) rather than across the
+ *   joined haystack — strictly narrower, never broader.
  */
 export async function getUnifiedAssetsPage(
   opts: UnifiedAssetsPageOpts = {}
-): Promise<{ rows: UnifiedAssetRow[]; total: number }> {
-  const { withCache, cacheKey } = await import('@/lib/personnel-cache')
-  const page = Math.floor(Number(opts.page)) >= 1 ? Math.min(Math.floor(Number(opts.page)), 1000) : 1
-  const pageSize = 20
-  const q = (opts.q ?? '').trim().toLowerCase().slice(0, 120)
+): Promise<{ rows: UnifiedAssetRow[]; total: number; data: UnifiedAssetRow[]; page: number; pageSize: number; totalPages: number }> {
+  const { withScopedCache } = await import('@/lib/personnel-cache')
+  const { PAGE_SIZE } = await import('@/lib/constants')
+  const { parsePage, parseQuery, clampPage, totalPagesFor, escapeLike } = await import('@/lib/paged')
+  const { parseCustomBagText } = await import('@/lib/custom-bag')
+  const { Prisma } = await import('@prisma/client')
+  const page = parsePage(opts.page)
+  const rawSize = Math.floor(Number(opts.pageSize))
+  const pageSize = Number.isFinite(rawSize) ? Math.min(Math.max(rawSize, 1), 100) : PAGE_SIZE
+  const q = parseQuery(opts.q)
   const status = (opts.status ?? 'all').trim().toLowerCase()
   const source = (opts.source ?? 'all').trim().toLowerCase()
   const condition = (opts.condition ?? 'all').trim().toLowerCase()
   const unit = (opts.unit ?? 'all').trim().toLowerCase()
   const category = (opts.category ?? 'all').trim().toLowerCase()
   const slim = opts.slim === true
-  return withCache(
-    cacheKey('personnel:unified-assets-page', { page, q, status, source, condition, unit, category, slim }),
+  // Fail-closed before cache: employee/anon never reach the global pool,
+  // so one role never receives another role's cached page.
+  try {
+    const { getPersonnelScope } = await import('@/lib/personnel-scope')
+    const scope = await getPersonnelScope()
+    if (scope.isEmpty || !scope.isPersonnel) return { rows: [], data: [], total: 0, page: 1, pageSize, totalPages: 1 }
+  } catch {
+    return { rows: [], data: [], total: 0, page: 1, pageSize, totalPages: 1 }
+  }
+  return withScopedCache(
+    'personnel:unified-assets-page',
     60,
     async () => {
+      const empty = { rows: [], data: [], total: 0, page: 1, pageSize, totalPages: 1 } as {
+        rows: UnifiedAssetRow[]; data: UnifiedAssetRow[]; total: number; page: number; pageSize: number; totalPages: number
+      }
       try {
+        // Stocks carry no status/condition of their own (they surface as
+        // status 'available'): a status/condition filter excludes the branch,
+        // matching the old in-memory semantics exactly.
         const wantAssets = source === 'all' || source === 'asset'
-        const wantStocks = source === 'all' || source === 'stock'
-        // Built as named promises (not inline ternaries) so both tables
-        // query concurrently.
-        const assetsPromise = wantAssets
-          ? prisma.asset
-              .findMany({
-                orderBy: { created_at: 'desc' },
-                take: 2000,
-                select: {
-                  id: true, account_code: true, identifier: true, account_title: true,
-                  account_name: true, category: true, article: true, quantity: true,
-                  unit: true, description: true, date_acquired: true, location: true,
-                  total_cost: true, remarks: true, condition: true, unit_cost: true,
-                  end_user: true, brand: true, cylinders: true, engine_displacement: true,
-                  fuel_type: true, engine_number: true, chassis_number: true, color: true,
-                  plate_number: true, fund: true, status: true, dv_tracking_number: true,
-                  supplier_payee: true, account_name_charge: true, account_number: true,
-                  obr_number: true, dv_number: true, date_received: true, qr_code: true,
-                  created_at: true, assigned_to: true,
-                },
-              })
-              .catch(() => [])
-          : Promise.resolve([])
-        const stocksPromise = wantStocks
-          ? prisma.inventoryItem
-              .findMany({
-                orderBy: { item_name: 'asc' },
-                take: 2000,
-                select: {
-                  id: true, item_name: true, category: true, account_code: true,
-                  quantity: true, unit: true, unit_cost: true, reorder_threshold: true,
-                  location: true, updated_at: true,
-                },
-              })
-              .catch(() => [])
-          : Promise.resolve([])
-        const [assets, stocks] = await Promise.all([assetsPromise, stocksPromise])
-        // Custom bags in two batched queries (needed for custom-field search).
-        const { fetchCustomBags } = await import('./custom-fields')
-        const bags = await fetchCustomBags(
-          assets.map((a) => a.id),
-          stocks.map((s) => s.id)
-        )
-        // Same haystack as customSearchText() (kept inline: that module is
-        // client-side and can't be imported from a server action).
-        const customSearchText = (bag: CustomBag): string => Object.values(bag ?? {}).join(' ')
-        // Merge slim rows (no QR yet) with the same sort as the registry.
-        type Slim = UnifiedAssetRow & { qr_data_url: string }
-        const merged: Slim[] = [
-          ...assets.map((a) =>
-            mapAssetToUnified({
-              ...a,
-              date_acquired: a.date_acquired?.toISOString().slice(0, 10) ?? null,
-              date_received: a.date_received?.toISOString().slice(0, 10) ?? null,
-              created_at: a.created_at?.toISOString() ?? null,
-              total_cost: a.total_cost != null ? Number(a.total_cost) : null,
-              unit_cost: a.unit_cost != null ? Number(a.unit_cost) : null,
-              qr_data_url: '',
-              custom_fields: bags.get(`asset:${a.id}`) ?? {},
-            } as AssetRow)
-          ),
-          ...stocks.map((s) =>
-            mapStockToUnified({
-              ...s,
-              unit_cost: s.unit_cost != null ? Number(s.unit_cost) : null,
-              total_cost: s.unit_cost != null ? Number(s.unit_cost) * s.quantity : null,
-              updated_at: s.updated_at?.toISOString() ?? null,
-              qr_data_url: '',
-              custom_fields: bags.get(`stock:${s.id}`) ?? {},
-            } as StockRow)
-          ),
-        ]
-        merged.sort((a, b) => {
-          const aField = a.article ?? a.account_code ?? a.category ?? a.id
-          const bField = b.article ?? b.account_code ?? b.category ?? b.id
-          return String(aField).localeCompare(String(bField))
-        })
-        // Exact same filter semantics as the registry page.
-        const filtered = merged.filter((a) => {
-          if (q) {
-            const hay = [
-              a.account_code, a.qr_code, a.category, a.account_title, a.account_name,
-              a.identifier, a.article, a.description, a.location, a.remarks, a.brand,
-              a.engine_displacement, a.fuel_type, a.engine_number, a.chassis_number,
-              a.color, a.plate_number, a.fund, a.status, a.condition, a.unit,
-              a.dv_tracking_number, a.supplier_payee, a.account_name_charge,
-              a.account_number, a.obr_number, a.dv_number, customSearchText(a.custom_fields),
-            ]
-              .filter(Boolean)
-              .join(' ')
-              .toLowerCase()
-            if (!hay.includes(q)) return false
-          }
-          if (status !== 'all' && norm(a.status) !== status) return false
-          if (source !== 'all' && a.source !== source) return false
-          if (condition !== 'all' && norm(a.condition) !== condition) return false
-          if (unit !== 'all' && norm(a.unit) !== unit) return false
-          if (category !== 'all' && norm(a.category) !== category) return false
-          return true
-        })
-        const total = filtered.length
-        const window = filtered.slice((page - 1) * pageSize, (page - 1) * pageSize + pageSize)
-        if (slim) {
-          return { rows: window.map((a) => ({ ...a, qr_data_url: '' })), total }
+        const wantStocks =
+          (source === 'all' || source === 'stock') &&
+          (status === 'all' || status === 'available') &&
+          condition === 'all'
+        if (!wantAssets && !wantStocks) return empty
+
+        const like = q !== '' ? `%${escapeLike(q)}%` : null
+
+        const assetConds: InstanceType<typeof Prisma.Sql>[] = []
+        if (status !== 'all') assetConds.push(Prisma.sql`lower(a.status) = ${status}`)
+        if (condition !== 'all') assetConds.push(Prisma.sql`lower(a.condition) = ${condition}`)
+        if (unit !== 'all') assetConds.push(Prisma.sql`lower(a.unit) = ${unit}`)
+        if (category !== 'all') assetConds.push(Prisma.sql`lower(a.category) = ${category}`)
+        const stockConds: InstanceType<typeof Prisma.Sql>[] = []
+        if (unit !== 'all') stockConds.push(Prisma.sql`lower(s.unit) = ${unit}`)
+        if (category !== 'all') stockConds.push(Prisma.sql`lower(s.category) = ${category}`)
+
+        const assetCols = Prisma.sql`
+          a.id::text AS id, 'asset' AS source,
+          a.account_code, a.identifier, a.account_title, a.account_name,
+          a.category, a.article, a.quantity, a.unit, a.description,
+          a.date_acquired, a.location, a.total_cost, a.remarks, a.condition,
+          a.unit_cost, a.end_user, a.brand, a.cylinders, a.engine_displacement,
+          a.fuel_type, a.engine_number, a.chassis_number, a.color,
+          a.plate_number, a.fund, a.status, a.dv_tracking_number,
+          a.supplier_payee, a.account_name_charge, a.account_number,
+          a.obr_number, a.dv_number, a.date_received, a.qr_code,
+          a.created_at, a.assigned_to::text AS assigned_to,
+          NULL::integer AS reorder_threshold, NULL::timestamptz AS updated_at,
+          a.custom_fields::text AS custom_bag,
+          COALESCE(a.article, a.account_code, a.category, a.id::text) AS sort_key`
+        const stockCols = Prisma.sql`
+          s.id::text AS id, 'stock' AS source,
+          s.account_code, NULL::text AS identifier, NULL::text AS account_title,
+          NULL::text AS account_name, s.category, s.item_name AS article,
+          s.quantity, s.unit, NULL::text AS description,
+          NULL::date AS date_acquired, s.location, NULL::numeric AS total_cost,
+          NULL::text AS remarks, NULL::text AS condition, s.unit_cost,
+          NULL::text AS end_user, NULL::text AS brand, NULL::integer AS cylinders,
+          NULL::text AS engine_displacement, NULL::text AS fuel_type,
+          NULL::text AS engine_number, NULL::text AS chassis_number,
+          NULL::text AS color, NULL::text AS plate_number, NULL::text AS fund,
+          'available' AS status, NULL::text AS dv_tracking_number,
+          NULL::text AS supplier_payee, NULL::text AS account_name_charge,
+          NULL::text AS account_number, NULL::text AS obr_number,
+          NULL::text AS dv_number, NULL::date AS date_received,
+          NULL::text AS qr_code, s.updated_at AS created_at,
+          NULL::text AS assigned_to, s.reorder_threshold, s.updated_at,
+          s.custom_fields::text AS custom_bag,
+          COALESCE(s.item_name, s.account_code, s.category, s.id::text) AS sort_key`
+
+        const branches: InstanceType<typeof Prisma.Sql>[] = []
+        if (wantAssets) {
+          branches.push(Prisma.sql`SELECT ${assetCols} FROM assets a ${
+            assetConds.length > 0 ? Prisma.sql`WHERE ${Prisma.join(assetConds, ' AND ')}` : Prisma.empty
+          }`)
         }
-        // Hydrate QR only for the visible 20 (was per-row for the registry).
+        if (wantStocks) {
+          branches.push(Prisma.sql`SELECT ${stockCols} FROM inventory s ${
+            stockConds.length > 0 ? Prisma.sql`WHERE ${Prisma.join(stockConds, ' AND ')}` : Prisma.empty
+          }`)
+        }
+        const unionAll = Prisma.join(branches, ' UNION ALL ')
+        const searchOrs = like
+          ? Prisma.sql`(
+              w.account_code ILIKE ${like} OR w.qr_code ILIKE ${like}
+              OR w.category ILIKE ${like} OR w.account_title ILIKE ${like}
+              OR w.account_name ILIKE ${like} OR w.identifier ILIKE ${like}
+              OR w.article ILIKE ${like} OR w.description ILIKE ${like}
+              OR w.location ILIKE ${like} OR w.remarks ILIKE ${like}
+              OR w.brand ILIKE ${like} OR w.engine_displacement ILIKE ${like}
+              OR w.fuel_type ILIKE ${like} OR w.engine_number ILIKE ${like}
+              OR w.chassis_number ILIKE ${like} OR w.color ILIKE ${like}
+              OR w.plate_number ILIKE ${like} OR w.fund ILIKE ${like}
+              OR w.status ILIKE ${like} OR w.condition ILIKE ${like}
+              OR w.unit ILIKE ${like} OR w.dv_tracking_number ILIKE ${like}
+              OR w.supplier_payee ILIKE ${like} OR w.account_name_charge ILIKE ${like}
+              OR w.account_number ILIKE ${like} OR w.obr_number ILIKE ${like}
+              OR w.dv_number ILIKE ${like} OR w.custom_bag ILIKE ${like}
+            )`
+          : null
+        const whereOuter = searchOrs ? Prisma.sql`WHERE ${searchOrs}` : Prisma.empty
+
+        interface UnionRawRow {
+          id: string
+          source: 'asset' | 'stock'
+          account_code: string | null
+          identifier: string | null
+          account_title: string | null
+          account_name: string | null
+          category: string | null
+          article: string | null
+          quantity: unknown
+          unit: string | null
+          description: string | null
+          date_acquired: Date | string | null
+          location: string | null
+          total_cost: unknown
+          remarks: string | null
+          condition: string | null
+          unit_cost: unknown
+          end_user: string | null
+          brand: string | null
+          cylinders: unknown
+          engine_displacement: string | null
+          fuel_type: string | null
+          engine_number: string | null
+          chassis_number: string | null
+          color: string | null
+          plate_number: string | null
+          fund: string | null
+          status: string | null
+          dv_tracking_number: string | null
+          supplier_payee: string | null
+          account_name_charge: string | null
+          account_number: string | null
+          obr_number: string | null
+          dv_number: string | null
+          date_received: Date | string | null
+          qr_code: string | null
+          created_at: Date | string | null
+          assigned_to: string | null
+          reorder_threshold: unknown
+          updated_at: Date | string | null
+          custom_bag: string | null
+          full_count: bigint
+        }
+
+        const isoDay = (v: Date | string | null): string | null => {
+          if (!v) return null
+          const d = v instanceof Date ? v : new Date(v)
+          if (Number.isNaN(d.getTime())) return null
+          return d.toISOString().slice(0, 10)
+        }
+        const isoFull = (v: Date | string | null): string | null => {
+          if (!v) return null
+          const d = v instanceof Date ? v : new Date(v)
+          if (Number.isNaN(d.getTime())) return null
+          return d.toISOString()
+        }
+        const num = (v: unknown): number | null => {
+          if (v === null || v === undefined) return null
+          const n = Number(v)
+          return Number.isFinite(n) ? n : null
+        }
+        const intOrNull = (v: unknown): number | null => {
+          const n = num(v)
+          return n === null ? null : Math.trunc(n)
+        }
+
+        const toUnified = (r: Omit<UnionRawRow, 'full_count' | 'sort_key'> & { sort_key?: string }): UnifiedAssetRow => {
+          const bag = parseCustomBagText(r.custom_bag)
+          if (r.source === 'stock') {
+            const stockUnitCost = num(r.unit_cost)
+            const stockQty = intOrNull(r.quantity) ?? 0
+            return mapStockToUnified({
+              id: r.id,
+              item_name: r.article,
+              category: r.category,
+              account_code: r.account_code,
+              quantity: stockQty,
+              unit: r.unit,
+              unit_cost: stockUnitCost,
+              total_cost: stockUnitCost != null ? stockUnitCost * stockQty : null,
+              reorder_threshold: intOrNull(r.reorder_threshold),
+              location: r.location,
+              updated_at: isoFull(r.updated_at ?? r.created_at),
+              qr_data_url: '',
+              custom_fields: bag,
+            } as StockRow)
+          }
+          return mapAssetToUnified({
+            id: r.id,
+            account_code: r.account_code,
+            identifier: r.identifier,
+            account_title: r.account_title,
+            account_name: r.account_name,
+            category: r.category,
+            article: r.article,
+            quantity: intOrNull(r.quantity),
+            unit: r.unit,
+            description: r.description,
+            date_acquired: isoDay(r.date_acquired),
+            location: r.location,
+            total_cost: num(r.total_cost),
+            remarks: r.remarks,
+            condition: r.condition,
+            unit_cost: num(r.unit_cost),
+            end_user: r.end_user,
+            brand: r.brand,
+            cylinders: intOrNull(r.cylinders),
+            engine_displacement: r.engine_displacement,
+            fuel_type: r.fuel_type,
+            engine_number: r.engine_number,
+            chassis_number: r.chassis_number,
+            color: r.color,
+            plate_number: r.plate_number,
+            fund: r.fund,
+            status: r.status,
+            dv_tracking_number: r.dv_tracking_number,
+            supplier_payee: r.supplier_payee,
+            account_name_charge: r.account_name_charge,
+            account_number: r.account_number,
+            obr_number: r.obr_number,
+            dv_number: r.dv_number,
+            date_received: isoDay(r.date_received),
+            qr_code: r.qr_code,
+            created_at: isoFull(r.created_at),
+            assigned_to: r.assigned_to,
+            qr_data_url: '',
+            custom_fields: bag,
+          } as AssetRow)
+        }
+
+        const runWindow = (offset: number) =>
+          prisma.$queryRaw<UnionRawRow[]>`
+            SELECT w.*, COUNT(*) OVER() AS full_count
+            FROM (${unionAll}) w ${whereOuter}
+            ORDER BY w.sort_key ASC
+            LIMIT ${pageSize} OFFSET ${offset}`.catch(() => [] as UnionRawRow[])
+
+        let offset = (page - 1) * pageSize
+        let raw = await runWindow(offset)
+        let total = raw.length > 0 ? Number(raw[0]?.full_count ?? 0) : 0
+        // Out-of-range deep link (hand-edited ?page=): recount cheaply once
+        // and re-run on the clamped page instead of showing an empty window.
+        if (raw.length === 0 && page > 1) {
+          const counted = await prisma.$queryRaw<Array<{ count: bigint }>>`
+            SELECT COUNT(*)::bigint AS count FROM (${unionAll}) w ${whereOuter}`.catch(
+            () => [] as Array<{ count: bigint }>
+          )
+          total = Number(counted[0]?.count ?? 0)
+          if (total > 0) {
+            offset = (clampPage(page, Math.max(1, total)) - 1) * pageSize
+            raw = await runWindow(offset)
+          }
+        }
+        const safePage = clampPage(total > 0 ? Math.floor(offset / pageSize) + 1 : 1, Math.max(1, total))
+        const totalPages = totalPagesFor(total, pageSize)
+        const mapped = raw.map((r) => toUnified(r))
+        if (slim) {
+          const slimRows = mapped.map((a) => ({ ...a, qr_data_url: '' }))
+          return { rows: slimRows, data: slimRows, total, page: safePage, pageSize, totalPages }
+        }
+        // Hydrate QR only for the visible window (15).
         const rows = await Promise.all(
-          window.map(async (a) => ({
+          mapped.map(async (a) => ({
             ...a,
             qr_data_url:
               a.source === 'asset'
@@ -909,12 +924,13 @@ export async function getUnifiedAssetsPage(
                 : await generateStockQrDataUrl(a.id).catch(() => ''),
           }))
         )
-        return { rows, total }
+        return { rows, data: rows, total, page: safePage, pageSize, totalPages }
       } catch (e) {
         console.error('[getUnifiedAssetsPage]', e)
-        return { rows: [], total: 0 }
+        return { rows: [], data: [], total: 0, page: 1, pageSize, totalPages: 1 }
       }
-    }
+    },
+    { page, pageSize, q, status, source, condition, unit, category, slim }
   )
 }
 
@@ -1219,7 +1235,15 @@ export async function updateUnifiedAsset(
   _prevState: EditState,
   formData: FormData
 ): Promise<EditState> {
-  const id = formData.get("id") as string;
+  let actor: { userId: string | null };
+  try {
+    const { requirePersonnelScope } = await import('@/lib/personnel-scope')
+    actor = await requirePersonnelScope()
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'Not authenticated.'
+    return { success: false, error: msg.startsWith('Forbidden') ? 'Forbidden: Personnel only.' : 'Not authenticated.' }
+  }
+  const id = String(formData.get("id") ?? "").trim().slice(0, 36);
   if (!id) {
     return { success: false, error: "Missing asset id." };
   }
@@ -1234,7 +1258,7 @@ export async function updateUnifiedAsset(
       data[key] = null;
       continue;
     }
-    const val = raw as string;
+    const val = String(raw).trim().slice(0, 500);
     if (NUMERIC_KEYS.has(key)) {
       const n = Number(val);
       data[key] = Number.isNaN(n) ? null : n;
@@ -1280,19 +1304,21 @@ export async function updateUnifiedAsset(
     }
   }
 
+  const before = await prisma.asset.findUnique({ where: { id }, select: { id: true, account_code: true, article: true } }).catch(() => null);
+
   try {
     if (source === "stock") {
       // Sync stock-specific fields back to InventoryItem
       const stockData: Record<string, unknown> = {};
       const itemName = formData.get("article") as string | null;
-      if (itemName) stockData["item_name"] = itemName.trim();
+      if (itemName) stockData["item_name"] = String(itemName).trim().slice(0, 500);
       const unit = formData.get("unit") as string | null;
       if (unit) {
         const canonical = await resolveUnitName(unit);
         if (!canonical) {
           return {
             success: false,
-            error: `Unknown UNIT "${unit.trim()}" — ask your Super Admin to add it to Master Data.`,
+            error: `Unknown UNIT "${String(unit).trim().slice(0, 100)}" — ask your Super Admin to add it to Master Data.`,
           };
         }
         stockData["unit"] = canonical;
@@ -1300,7 +1326,7 @@ export async function updateUnifiedAsset(
       const qtyRaw = formData.get("quantity");
       if (qtyRaw) stockData["quantity"] = Number(qtyRaw);
       const loc = formData.get("location") as string | null;
-      if (loc) stockData["location"] = loc;
+      if (loc) stockData["location"] = String(loc).trim().slice(0, 500);
       const unitCostRaw = formData.get("unit_cost");
       stockData["unit_cost"] = unitCostRaw ? Number(unitCostRaw) : null;
       const totalCostRaw = formData.get("total_cost");
@@ -1311,7 +1337,7 @@ export async function updateUnifiedAsset(
         await prisma.inventoryItem.update({
           where: { id },
           data: stockData,
-        });
+        }).catch(() => null);
       }
 
       // Create or update an Asset record with all Asset fields the user entered
@@ -1320,28 +1346,48 @@ export async function updateUnifiedAsset(
         select: { id: true },
       });
 
+      let record: unknown;
       if (existingAsset) {
-        await prisma.asset.update({
+        record = await prisma.asset.update({
           where: { id },
           data,
+          select: { id: true, account_code: true, article: true },
         });
       } else {
-        await prisma.asset.create({
+        record = await prisma.asset.create({
           data: { ...data, id },
+          select: { id: true, account_code: true, article: true },
         });
       }
 
+      void import('@/lib/audit').then((m) =>
+        m.writeAuditLog({
+          userId: actor.userId!,
+          action: 'asset:update',
+          module: 'assets',
+          details: { purpose: `Update unified asset ${id.slice(0, 8)}`, reference_id: id, before, after: record },
+        }).catch(() => {})
+      ).catch(() => {});
       revalidatePath("/personnel/assets");
       revalidatePath(`/personnel/assets/${id}`);
-      return { success: true };
+      return { success: true, record };
     } else {
-      await prisma.asset.update({
+      const updated = await prisma.asset.update({
         where: { id },
         data,
+        select: { id: true, account_code: true, article: true },
       });
+      void import('@/lib/audit').then((m) =>
+        m.writeAuditLog({
+          userId: actor.userId!,
+          action: 'asset:update',
+          module: 'assets',
+          details: { purpose: `Update unified asset ${id.slice(0, 8)}`, reference_id: id, before, after: updated },
+        }).catch(() => {})
+      ).catch(() => {});
       revalidatePath("/personnel/assets");
       revalidatePath(`/personnel/assets/${id}`);
-      return { success: true };
+      return { success: true, record: updated };
     }
   } catch (e) {
     console.error("[updateUnifiedAsset]", e);
@@ -1349,12 +1395,12 @@ export async function updateUnifiedAsset(
   }
 }
 
-// ── Add single asset ──────────────────────────────────────────────
-
 export interface CreateAssetState {
   success?: boolean;
   error?: string;
   id?: string;
+  /** Created record — lets the client patch cache without refetch. */
+  record?: unknown;
 }
 
 function normalizeConditionInput(value: string | null): string | null {
@@ -1377,10 +1423,18 @@ export async function createAsset(
   _prevState: CreateAssetState,
   formData: FormData
 ): Promise<CreateAssetState> {
+  let actor: { userId: string | null };
+  try {
+    const { requirePersonnelScope } = await import('@/lib/personnel-scope')
+    actor = await requirePersonnelScope()
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'Not authenticated.'
+    return { success: false, error: msg.startsWith('Forbidden') ? 'Forbidden: Personnel only.' : 'Not authenticated.' }
+  }
   const get = (k: string) => {
     const v = formData.get(k);
     if (v === null || v === undefined) return null;
-    const s = String(v).trim();
+    const s = String(v).trim().slice(0, 500);
     return s === "" ? null : s;
   };
 
@@ -1490,11 +1544,19 @@ export async function createAsset(
         date_received: parseDate("date_received"),
         qr_code: qrCode,
       },
-      select: { id: true },
+      select: { id: true, account_code: true, article: true },
     });
 
+    void import('@/lib/audit').then((m) =>
+      m.writeAuditLog({
+        userId: actor.userId!,
+        action: 'asset:create',
+        module: 'assets',
+        details: { purpose: `Create asset ${created.account_code ?? created.id.slice(0, 8)}`, reference_id: created.id, after: created },
+      }).catch(() => {})
+    ).catch(() => {});
     revalidatePath("/personnel/assets");
-    return { success: true, id: created.id };
+    return { success: true, id: created.id, record: created };
   } catch (e) {
     console.error("[createAsset]", e);
     return { success: false, error: "Failed to add the asset. Please try again." };
@@ -1623,6 +1685,14 @@ export async function importAssetsFromExcel(
   _prevState: ImportAssetsState,
   formData: FormData
 ): Promise<ImportAssetsState> {
+  let actor: { userId: string | null };
+  try {
+    const { requirePersonnelScope } = await import('@/lib/personnel-scope')
+    actor = await requirePersonnelScope()
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'Not authenticated.'
+    return { success: false, error: msg.startsWith('Forbidden') ? 'Forbidden: Personnel only.' : 'Not authenticated.' }
+  }
   const file = formData.get("file");
   if (!file || !(file instanceof File) || file.size === 0)
     return { success: false, error: "No file was chosen. Please choose your filled-in Excel file (.xlsx) first, then click Import file." };
@@ -1955,5 +2025,13 @@ export async function importAssetsFromExcel(
     };
 
   revalidatePath("/personnel/assets");
+  void import('@/lib/audit').then((m) =>
+    m.writeAuditLog({
+      userId: actor.userId!,
+      action: 'asset:import',
+      module: 'assets',
+      details: { purpose: `Import assets from Excel`, summary: `created ${created}, updated ${updated}, skipped ${skipped}`, created, updated, skipped },
+    }).catch(() => {})
+  ).catch(() => {});
   return { success: true, created, updated, skipped, errors: errors.slice(0, 20), matched };
 }

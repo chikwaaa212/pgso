@@ -1,9 +1,10 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
+import { PAGE_SIZE, CACHE_TTL } from "@/lib/constants";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import {
@@ -46,12 +47,14 @@ import { ParReportSheet } from "./par-report";
 import { IcsReportSheet } from "./ics-report";
 import { ReceiptOverlay } from "./receipt-overlay";
 import receipt from "../inspections/components/receipt.module.css";
-import { TablePager, FIXED_PAGE_SIZE } from "@/components/personnel/TablePager";
+import { TablePager } from "@/components/personnel/TablePager";
 import { ReceiptLoading } from "@/components/personnel/ReceiptLoading";
 import { useCachedAction } from "@/hooks/use-cached-action";
 import {
   CLIENT_CACHE_KEYS,
   bustClientCache,
+  getClientCache,
+  setClientCache,
 } from "@/lib/client-cache";
 import { useReceipt } from "@/hooks/use-receipt";
 import DocumentsLoading from "./loading";
@@ -141,29 +144,56 @@ export default function PersonnelDocumentsPage() {
 
 function PersonnelDocumentsContent() {
   const searchParams = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
   const initialTab = isTab(searchParams.get("tab"))
     ? (searchParams.get("tab") as Tab)
     : "delivery";
+  const initialPage = Math.max(1, Number(searchParams.get("page")) || 1);
+  const initialQ = searchParams.get("q") ?? "";
 
   const [tab, setTab] = useState<Tab>(initialTab);
-  const [query, setQuery] = useState("");
-  const debouncedQuery = useDebouncedValue(query, 250);
+  const [query, setQuery] = useState(initialQ);
+  const debouncedQuery = useDebouncedValue(query, 300);
   const searching = query.trim() !== debouncedQuery.trim();
-  // Fixed 20 rows/page (no selector) — only the ACTIVE tab fetches, and the
-  // DB returns just this window (was: all 8 tabs, unbounded, on every visit).
-  const pageSize = FIXED_PAGE_SIZE;
-  const [page, setPage] = useState(1);
+  const pageSize = PAGE_SIZE;
+  const [page, setPage] = useState(initialPage);
+
+  const setUrl = useCallback(
+    (next: Record<string, string | null>) => {
+      const params = new URLSearchParams(searchParams.toString());
+      for (const [k, v] of Object.entries(next)) {
+        if (v === null || v === "") params.delete(k);
+        else params.set(k, v);
+      }
+      router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+    },
+    [searchParams, router, pathname]
+  );
+
+  // Keep URL in sync (refresh + back/forward work). Reset to page 1 when
+  // search/filters change is handled by callers via resetDocPages.
+  useEffect(() => {
+    setUrl({
+      tab: tab === "delivery" ? null : tab,
+      page: page === 1 ? null : String(page),
+      q: debouncedQuery || null,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, page, debouncedQuery]);
+
   const {
     data: tabPayload,
     loading,
     isValidating,
+    error,
   } = useCachedAction(
-    `${CLIENT_CACHE_KEYS.documents}:${tab}:${page}:${debouncedQuery}`,
+    `pgso:documents:${tab}:${page}:${pageSize}:${debouncedQuery}`,
     () =>
       getDocumentsTabPage(tab as DocumentsTab, { page, q: debouncedQuery }).then(
         (res) => ({ ...res, _tab: tab })
       ),
-    { staleTime: 30_000 }
+    { staleTime: CACHE_TTL.listsMs }
   );
   // The hook keeps the previous key's payload while the new key loads.
   // Only trust rows/totals stamped for the CURRENT tab — otherwise a
@@ -399,6 +429,20 @@ function PersonnelDocumentsContent() {
   // Warm refetches keep stale rows visible with an "updating…" badge.
   const cold = loading && windowRows.length === 0;
 
+  // Prefetch next page while user views current one (no flicker on Next).
+  useEffect(() => {
+    if (!tabData || tabTotal <= page * pageSize) return;
+    const nextKey = `pgso:documents:${tab}:${page + 1}:${pageSize}:${debouncedQuery}`;
+    if (getClientCache(nextKey)) return;
+    const t = setTimeout(() => {
+      void getDocumentsTabPage(tab as DocumentsTab, { page: page + 1, q: debouncedQuery })
+        .then((fresh) => setClientCache(nextKey, { ...fresh, _tab: tab }))
+        .catch(() => {});
+    }, 400);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, page, debouncedQuery, tabData]);
+
   return (
     <section className={styles.section}>
       <p className={styles.crumb}>Personnel / Documents</p>
@@ -453,6 +497,14 @@ function PersonnelDocumentsContent() {
             aria-label={`Search ${tab} documents`}
           />
         </div>
+
+        {error && !cold ? (
+          <div className={styles.emptyState} role="alert">
+            <p className={styles.panelSub}>
+              Failed to load documents. Please try again.
+            </p>
+          </div>
+        ) : null}
 
         <>
           {tab === "delivery" &&

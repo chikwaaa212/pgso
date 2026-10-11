@@ -151,6 +151,31 @@ export default function PersonnelRepairsPage() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [assets, setAssets] = useState<RepairAssetOption[]>([]);
   const [employees, setEmployees] = useState<RepairEmployeeOption[]>([]);
+  // Server-side item search (small PAGE_SIZE window per open, never the
+  // 500-row slice): typing filters assets in the DB. Windows merge by id so
+  // a picked asset stays resolvable across searches.
+  const [itemQuery, setItemQuery] = useState("");
+  const debouncedItemQuery = useDebouncedValue(itemQuery, 300);
+  const trimmedItemSearch = debouncedItemQuery.trim();
+  const [searchedItems, setSearchedItems] = useState<RepairAssetOption[] | null>(null);
+  const [searchedItemsFor, setSearchedItemsFor] = useState("");
+  const searchingItems =
+    trimmedItemSearch !== "" && searchedItemsFor !== trimmedItemSearch;
+  const mergeRepairOptions = (
+    prev: RepairAssetOption[],
+    next: RepairAssetOption[]
+  ) => {
+    if (next.length === 0) return prev;
+    const seen = new Set(prev.map((a) => a.id));
+    const merged = [...prev];
+    for (const a of next) {
+      if (!seen.has(a.id)) {
+        seen.add(a.id);
+        merged.push(a);
+      }
+    }
+    return merged;
+  };
   const [assetId, setAssetId] = useState("");
   const [employeeId, setEmployeeId] = useState("");
   const [repairDate, setRepairDate] = useState(todayISO());
@@ -199,12 +224,41 @@ export default function PersonnelRepairsPage() {
 
   useEffect(() => {
     if ((dialogOpen || editOpen) && employees.length === 0) {
-      void getRepairFormOptions().then((opts) => {
+      void getRepairFormOptions({}).then((opts) => {
         setEmployees(opts.employees);
-        setAssets(opts.assets);
+        setAssets((prev) => mergeRepairOptions(prev, opts.assets));
       });
     }
   }, [dialogOpen, editOpen, employees.length]);
+
+  useEffect(() => {
+    if (!dialogOpen && !editOpen) return;
+    const q = debouncedItemQuery.trim();
+    if (q === "" || q === searchedItemsFor) return;
+    let live = true;
+    void getRepairFormOptions({ q })
+      .then((opts) => {
+        if (!live) return;
+        setSearchedItems(opts.assets);
+        setSearchedItemsFor(q);
+        setAssets((prev) => mergeRepairOptions(prev, opts.assets));
+      })
+      .catch(() => {
+        if (live) setSearchedItemsFor(q);
+      });
+    return () => {
+      live = false;
+    };
+  }, [dialogOpen, editOpen, debouncedItemQuery, searchedItemsFor]);
+
+  // Empty query → default window; pending query → previous results stay
+  // visible (no flash of wrong options while the next window loads).
+  const visibleAssets =
+    trimmedItemSearch === "" ? assets : (searchedItems ?? assets);
+  const lookupAssets =
+    searchedItems && searchedItems.length > 0
+      ? mergeRepairOptions(assets, searchedItems)
+      : assets;
 
   // Server already filtered + paged.
   const visible = rows;
@@ -375,7 +429,7 @@ export default function PersonnelRepairsPage() {
     }
   }
 
-  const pickedAsset = assets.find((a) => a.id === assetId) ?? null;
+  const pickedAsset = lookupAssets.find((a) => a.id === assetId) ?? null;
 
   const costNum = cost.trim() === "" ? null : Number(cost);
   const canSubmit =
@@ -682,6 +736,19 @@ export default function PersonnelRepairsPage() {
 
           <div className={rep.formGrid}>
             <div className={`${rep.field} ${rep.span2}`}>
+              <Label htmlFor="rep-item-search">Search items</Label>
+              <Input
+                id="rep-item-search"
+                aria-label="Search items"
+                value={itemQuery}
+                onChange={(e) => setItemQuery(e.target.value)}
+                placeholder="Type to search assets…"
+              />
+              {searchingItems ? (
+                <p className="text-xs text-zinc-500">Searching…</p>
+              ) : null}
+            </div>
+            <div className={`${rep.field} ${rep.span2}`}>
               <Label htmlFor="rep-asset">
                 Asset <span className="text-red-600">*</span>
               </Label>
@@ -693,7 +760,7 @@ export default function PersonnelRepairsPage() {
                   <SelectValue placeholder="Select asset" />
                 </SelectTrigger>
                 <SelectContent>
-                  {assets.map((a) => (
+                  {visibleAssets.map((a) => (
                     <SelectItem key={a.id} value={a.id}>
                       {a.label}
                     </SelectItem>

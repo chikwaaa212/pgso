@@ -208,5 +208,10 @@ export async function completeMyProfile(
   }
 
   revalidatePath('/employee')
+  // Narrow bust: the dashboard greeting caches this profile's name fields.
+  // (Role/status are untouched here, so the role caches stay valid.)
+  await import('@/lib/personnel-cache')
+    .then((m) => m.bustCachePrefixes(['employee:dashboard']))
+    .catch(() => {})
   return { success: true }
 }

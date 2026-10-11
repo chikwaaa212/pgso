@@ -1,6 +1,5 @@
 import { getDashboardStats } from "@/app/personnel/inspections/actions";
 import { getDepartmentOptions } from "@/app/personnel/department/actions";
-import { createClient } from "@/lib/supabase/server";
 import { cacheKey, withCache } from "@/lib/personnel-cache";
 import prisma from "@/lib/prisma";
 import { PersonnelNavbar } from "@/components/personnel/PersonnelNavbar";
@@ -42,11 +41,10 @@ async function getSidebarUser(): Promise<{ name: string; detail: string; office:
     } | null;
     let email: string | undefined;
     if (!profile?.full_name?.trim()) {
-      const supabase = await createClient();
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      email = user?.email?.trim() || undefined;
+      // Memoized + claims-first: shares the request's Auth verification
+      // instead of paying for a second getUser() round-trip.
+      const { getSessionIdentity } = await import("@/lib/personnel-scope");
+      email = ((await getSessionIdentity()).email ?? undefined) || undefined;
     }
     const name =
       profile?.full_name?.trim() || email || fallback.name;

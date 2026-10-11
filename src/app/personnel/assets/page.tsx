@@ -1,8 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
+import { PAGE_SIZE, CACHE_TTL } from "@/lib/constants";
 import { Eye, QrCode, Search, Send } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -24,11 +26,12 @@ import {
 } from "@/components/ui/select";
 import { getAssetFilterOptions, getUnifiedAssetsPage, type UnifiedAssetRow } from "./actions";
 import { AddColumnDialog } from "./custom-columns";
-import { AddAssetDialog, ImportAssetsDialog } from "./asset-dialogs";
+import { AddAssetDialog, ImportAssetsDialog, type AssetMutationEvent } from "./asset-dialogs";
 import { IssuanceEvaluateDialog } from "@/components/personnel/IssuanceDialog";
-import { FIXED_PAGE_SIZE } from "@/components/personnel/TablePager";
+import { Pagination } from "@/components/ui/pagination";
 import { useCachedAction } from "@/hooks/use-cached-action";
-import { CLIENT_CACHE_KEYS, bustClientCache } from "@/lib/client-cache";
+import { CLIENT_CACHE_KEYS, bustClientCache, getClientCache, setClientCache } from "@/lib/client-cache";
+import { patchRowInPage, prependRowToPage, removeRowFromPage } from "@/lib/list-patch";
 import AssetsLoading from "./loading";
 import styles from "../dashboard/page.module.css";
 import assetStyles from "./page.module.css";
@@ -58,41 +61,62 @@ const SOURCE_FILTERS = [
   { value: "stock", label: "Stock" },
 ] as const;
 
-function pageWindow(current: number, total: number) {
-  const start = Math.max(1, Math.min(current - 2, total - 4));
-  const end = Math.min(total, start + 4);
-  const pages: number[] = [];
-  for (let p = Math.max(1, end - 4); p <= end; p++) pages.push(p);
-  return { pages: pages.filter((p) => p >= start), start };
-}
-
 export default function PersonnelAssetsPage() {
-  const [query, setQuery] = useState("");
-  const debouncedQuery = useDebouncedValue(query, 250);
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
+  const [query, setQuery] = useState(searchParams.get("q") ?? "");
+  const debouncedQuery = useDebouncedValue(query, 300);
   const searching = query.trim() !== debouncedQuery.trim();
-  const [statusFilter, setStatusFilter] = useState("all");
-  const [sourceFilter, setSourceFilter] = useState("all");
-  const [conditionFilter, setConditionFilter] = useState("all");
-  const [unitFilter, setUnitFilter] = useState("all");
-  const [assetTypeFilter, setAssetTypeFilter] = useState("all");
-  // Fixed 20 rows/page (no selector) — the server returns only this window.
-  const pageSize = FIXED_PAGE_SIZE;
-  const [page, setPage] = useState(1);
+  const [statusFilter, setStatusFilter] = useState(searchParams.get("status") ?? "all");
+  const [sourceFilter, setSourceFilter] = useState(searchParams.get("source") ?? "all");
+  const [conditionFilter, setConditionFilter] = useState(searchParams.get("condition") ?? "all");
+  const [unitFilter, setUnitFilter] = useState(searchParams.get("unit") ?? "all");
+  const [assetTypeFilter, setAssetTypeFilter] = useState(searchParams.get("category") ?? "all");
+  const pageSize = PAGE_SIZE;
+  const [page, setPage] = useState(Math.max(1, Number(searchParams.get("page")) || 1));
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [issuanceOpen, setIssuanceOpen] = useState(false);
   const [presetAssetId, setPresetAssetId] = useState<string | null>(null);
   const [qrRow, setQrRow] = useState<UnifiedAssetRow | null>(null);
 
   // Server-filtered registry window: search + all 5 filters + page run in
-  // the DB layer; QR + custom bags hydrate for the visible 20 only.
-  // Back-navigation still paints instantly from the client SWR cache.
+  // the DB layer; QR + custom bags hydrate for the visible 15 only.
+  // Back-navigation paints instantly from cache; URL holds page/filters.
+  const setUrl = useCallback(
+    (next: Record<string, string | null>) => {
+      const params = new URLSearchParams(searchParams.toString());
+      for (const [k, v] of Object.entries(next)) {
+        if (v === null || v === "" || v === "all") params.delete(k);
+        else params.set(k, v);
+      }
+      router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+    },
+    [searchParams, router, pathname]
+  );
+
+  useEffect(() => {
+    setUrl({
+      page: page === 1 ? null : String(page),
+      q: debouncedQuery || null,
+      status: statusFilter,
+      source: sourceFilter,
+      condition: conditionFilter,
+      unit: unitFilter,
+      category: assetTypeFilter,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, debouncedQuery, statusFilter, sourceFilter, conditionFilter, unitFilter, assetTypeFilter]);
+
   const {
     data: paged,
     loading,
     isValidating,
+    error,
     refresh: refreshSnapshot,
+    mutate: mutatePaged,
   } = useCachedAction(
-    `${CLIENT_CACHE_KEYS.assets}:${page}:${debouncedQuery}:${statusFilter}:${sourceFilter}:${conditionFilter}:${unitFilter}:${assetTypeFilter}`,
+    `pgso:assets:unified:${page}:${pageSize}:${debouncedQuery}:${statusFilter}:${sourceFilter}:${conditionFilter}:${unitFilter}:${assetTypeFilter}`,
     () =>
       getUnifiedAssetsPage({
         page,
@@ -103,10 +127,29 @@ export default function PersonnelAssetsPage() {
         unit: unitFilter,
         category: assetTypeFilter,
       }),
-    { staleTime: 60_000 }
+    { staleTime: CACHE_TTL.countsMs }
   );
   const rows = useMemo(() => paged?.rows ?? [], [paged]);
   const total = paged?.total ?? 0;
+
+  // Prefetch next page.
+  useEffect(() => {
+    if (!paged || total <= page * pageSize) return;
+    const nextKey = `pgso:assets:unified:${page + 1}:${pageSize}:${debouncedQuery}:${statusFilter}:${sourceFilter}:${conditionFilter}:${unitFilter}:${assetTypeFilter}`;
+    if (getClientCache(nextKey)) return;
+    const t = setTimeout(() => {
+      void getUnifiedAssetsPage({
+        page: page + 1,
+        q: debouncedQuery,
+        status: statusFilter,
+        source: sourceFilter,
+        condition: conditionFilter,
+        unit: unitFilter,
+        category: assetTypeFilter,
+      }).then((fresh) => setClientCache(nextKey, fresh)).catch(() => {});
+    }, 400);
+    return () => clearTimeout(t);
+  }, [paged, total, page, pageSize, debouncedQuery, statusFilter, sourceFilter, conditionFilter, unitFilter, assetTypeFilter]);
   // Bounded dropdown options from the server (the page window no longer
   // contains every value).
   const { data: filterOptions } = useCachedAction(
@@ -156,13 +199,69 @@ export default function PersonnelAssetsPage() {
     unitFilter !== "all" ||
     assetTypeFilter !== "all";
 
+  // Claimable position: the new row provably belongs on screen only on
+  // unfiltered page 1 (server sort could place it anywhere otherwise).
+  const canClaimPosition = page === 1 && !hasActiveFilters;
+
+  /**
+   * Optimistic create lifecycle (no refetch): prepend the temp row on
+   * submit, reconcile with the server record on success, roll back on
+   * failure. Filtered/deep pages fall back to refresh (position unknown).
+   */
+  const handleAssetCreateEvent = useCallback(
+    (e: AssetMutationEvent) => {
+      if (e.phase === "start") {
+        if (!canClaimPosition) return;
+        mutatePaged((prev) => (prev ? prependRowToPage(prev, e.temp) : prev));
+        return;
+      }
+      if (e.phase === "success" && e.record) {
+        bustClientCache([
+          CLIENT_CACHE_KEYS.dashboard,
+          CLIENT_CACHE_KEYS.issuances,
+          CLIENT_CACHE_KEYS.logs,
+        ]);
+        mutatePaged((prev) => {
+          if (!prev) return prev;
+          const rows = (prev as { rows?: { id: string }[] }).rows ?? [];
+          if (rows.some((r) => r.id === e.tempId)) {
+            return patchRowInPage(prev, e.tempId, {
+              ...e.temp,
+              id: e.record!.id,
+              account_code: e.record!.account_code ?? e.temp.account_code,
+              article: e.record!.article ?? e.temp.article,
+            } as Record<string, unknown>);
+          }
+          if (canClaimPosition) {
+            return prependRowToPage(prev, {
+              ...e.temp,
+              id: e.record!.id,
+            } as (typeof rows)[number] & { id: string });
+          }
+          // Position unknown under filters/deep pages — refetch to reveal.
+          refreshSnapshot();
+          return prev;
+        });
+        return;
+      }
+      // error → roll back the temp row (no-op when never inserted).
+      mutatePaged((prev) => (prev ? removeRowFromPage(prev, e.tempId) : prev));
+    },
+    [canClaimPosition, mutatePaged, refreshSnapshot]
+  );
+
+  const bustSiblings = useCallback(() => {
+    bustClientCache([
+      CLIENT_CACHE_KEYS.dashboard,
+      CLIENT_CACHE_KEYS.issuances,
+      CLIENT_CACHE_KEYS.logs,
+    ]);
+  }, []);
+
   // Server already filtered + paged — visible is the page window.
-  const filtered = rows;
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
-  const safePage = Math.min(page, pageCount);
-  const start = (safePage - 1) * pageSize;
-  const visible = filtered;
-  const { pages } = pageWindow(safePage, pageCount);
+  const safePage = Math.min(Math.max(1, page), pageCount);
+  const visible = rows;
 
   const selectedRow = rows.find((r) => r.id === selectedId) ?? null;
   const selectedAssignable =
@@ -207,7 +306,8 @@ export default function PersonnelAssetsPage() {
           </Button>
           <AddAssetDialog
             categories={categories}
-            onSuccess={reload}
+            onSuccess={bustSiblings}
+            onMutationEvent={handleAssetCreateEvent}
             triggerClassName="h-8 gap-2 rounded-[4px] px-3.5 text-xs font-semibold"
           />
           <ImportAssetsDialog
@@ -569,48 +669,14 @@ export default function PersonnelAssetsPage() {
               </table>
             </div>
 
-            <div className={styles.pager}>
-              <span className={styles.pagerInfo}>
-                Showing {total === 0 ? 0 : start + 1}–
-                {Math.min(start + pageSize, total)} of{" "}
-                {total}
-              </span>
-              <div className={styles.pagerControls}>
-                <button
-                  type="button"
-                  className={styles.pageBtn}
-                  disabled={safePage === 1}
-                  onClick={() => setPage(safePage - 1)}
-                  aria-label="Previous page"
-                >
-                  ‹
-                </button>
-                {pages.map((p) => (
-                  <button
-                    key={p}
-                    type="button"
-                    className={styles.pageBtn}
-                    data-active={p === safePage}
-                    onClick={() => setPage(p)}
-                    aria-label={`Page ${p}`}
-                    aria-current={p === safePage ? "page" : undefined}
-                  >
-                    {p}
-                  </button>
-                ))}
-                <button
-                  type="button"
-                  className={styles.pageBtn}
-                  disabled={safePage === pageCount}
-                  onClick={() => setPage(safePage + 1)}
-                  aria-label="Next page"
-                >
-                  ›
-                </button>
-              </div>
-            </div>
+            <Pagination total={total} page={safePage} onPageChange={setPage} id="assets" />
           </>
         )}
+        {error && rows.length === 0 && !loading ? (
+          <div className={styles.emptyState} role="alert">
+            <p className={styles.panelSub}>Failed to load assets. Please try again.</p>
+          </div>
+        ) : null}
       </Card>
 
       <Dialog

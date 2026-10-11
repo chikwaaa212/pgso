@@ -4,6 +4,7 @@ import prisma from '@/lib/prisma'
 import { getPersonnelScope } from '@/lib/personnel-scope'
 import {
   getInspectionsList,
+  getInspectionsPage,
   getDeliveryForInspection,
   getInspectionHistory,
   getIarRecords,
@@ -13,9 +14,9 @@ import {
   type IarRecordRow,
 } from '@/app/personnel/inspections/actions'
 import { getDeliveryDetails, type DeliveryDetails } from '@/app/personnel/deliveries/actions'
-import { getInventoryItems, type InventoryRow } from '@/app/personnel/inventory/actions'
+import { getInventoryItems, getInventoryPage, type InventoryRow } from '@/app/personnel/inventory/actions'
 import {
-  getAllUnifiedAssets,
+  getUnifiedAssetsPage,
   getUnifiedAsset,
   getAsset,
   getStock,
@@ -29,22 +30,21 @@ import {
 import {
   getIssuances,
   getIssuance,
-  type IssuanceRecordRow,
+  getIssuancesPage,
   type IssuanceDetail,
 } from '@/app/personnel/issuances/actions'
 import { getCompletedRequestIssues, getPublicIssues, type PublicIssueLine } from '@/app/personnel/issues/actions'
 import { getRequests, type RequestRow } from '@/app/personnel/requests/actions'
-import { getRepairs, getRepair, type RepairRow } from '@/app/personnel/repairs/actions'
+import { getRepairs, getRepair, getRepairsPage, type RepairRow } from '@/app/personnel/repairs/actions'
 import {
-  getDeliveryDocuments,
-  getAllIarReports,
+  getDeliveryDocumentsPage,
+  getIarReportsPage,
   getViewedDocKeys,
   type DeliveryDocumentRow,
+  type DocumentsTab,
   type IarReportRow,
 } from '@/app/personnel/documents/actions'
 import {
-  getParReports,
-  getIcsReports,
   type IssuanceRecordRow as IssuanceRow,
 } from '@/app/personnel/issuances/actions'
 
@@ -86,10 +86,21 @@ export async function browseDeliveries(): Promise<BrowseDeliveryRow[]> {
   const { withScopedCache } = await import('@/lib/personnel-cache')
   return withScopedCache('super-admin:deliveries-list', 30, async () => {
   try {
+    // Lean select (list only renders these + item_count + logged_by) —
+    // avoids shipping full delivery rows over the server-action boundary.
     const rows = await prisma.delivery.findMany({
       orderBy: { created_at: 'desc' },
       take: 500,
-      include: { _count: { select: { items: true } } },
+      select: {
+        id: true,
+        supplier: true,
+        po_reference: true,
+        date_delivered: true,
+        delivery_status: true,
+        inspection_status: true,
+        received_by: true,
+        _count: { select: { items: true } },
+      },
     })
     const ids = [...new Set(rows.map((d) => d.received_by).filter(Boolean))] as string[]
     let names = new Map<string, string>()
@@ -208,21 +219,6 @@ export async function browseInventory(): Promise<InventoryRow[]> {
   })
 }
 
-export async function browseAssets(): Promise<UnifiedAssetRow[]> {
-  if (!(await allowed())) return []
-  // Same caching as the personnel unified-assets list (60s global —
-  // shared registry pool, not per-user data). Auth stays outside.
-  const { withCache, cacheKey } = await import('@/lib/personnel-cache')
-  return withCache(cacheKey('super-admin:assets-list'), 60, async () => {
-  try {
-    return await getAllUnifiedAssets()
-  } catch (e) {
-    console.error('[browseAssets]', e)
-    return []
-  }
-  })
-}
-
 export async function browseAsset(id: string): Promise<UnifiedAssetRow | null> {
   if (!(await allowed())) return null
   try {
@@ -332,11 +328,13 @@ export async function browseRequests(): Promise<BrowseRequestRow[]> {
     // filed it is captured in the audit log (request:create → reference_id).
     let filerByRequest = new Map<string, string>()
     try {
-      // Bounded: audit_logs grows without bound; latest 5k covers years of filings.
+      // Bounded to 500 (was 5000): the cached list itself holds ≤500 rows, so
+      // scanning 10x more audit rows only grew the payload without changing
+      // the rendered table. Index (action, created_at) covers this filter.
       const audits = await prisma.auditLog.findMany({
         where: { action: 'request:create' },
         orderBy: { created_at: 'desc' },
-        take: 5000,
+        take: 500,
         select: { user_id: true, details: true },
       })
       for (const a of audits) {
@@ -420,22 +418,43 @@ export async function browseDocumentHub(): Promise<DocumentHubCounts> {
   }
   if (!(await allowed())) return zeros
   try {
-    const [deliveries, inspections, stocks, assets, repairs, iarRecords, parDocs, icsDocs] =
-      await Promise.all([
-        prisma.delivery.count().catch(() => 0),
-        prisma.inspection.count().catch(() => 0),
-        prisma.inventoryItem.count().catch(() => 0),
-        prisma.asset.count().catch(() => 0),
-        prisma.repair.count().catch(() => 0),
-        prisma.iarRecord.count().catch(() => 0),
-        prisma.$queryRaw<Array<{ count: bigint }>>`SELECT COUNT(*)::bigint AS count FROM issuance_records WHERE doc_type = 'PAR'`
-          .then((r) => Number(r[0]?.count ?? 0))
-          .catch(() => 0),
-        prisma.$queryRaw<Array<{ count: bigint }>>`SELECT COUNT(*)::bigint AS count FROM issuance_records WHERE doc_type = 'ICS'`
-          .then((r) => Number(r[0]?.count ?? 0))
-          .catch(() => 0),
-      ])
-    return { deliveries, inspections, stocks, assets, repairs, iarRecords, parDocs, icsDocs }
+    // Single round-trip (was 8 sequential/parallel round-trips): each COUNT
+    // costs a full pooler RTT (~2s from far regions), so fan-out was the
+    // dominant cost, not the COUNTs themselves (all indexed, ms-scale in DB).
+    const rows = await prisma.$queryRaw<
+      Array<{
+        deliveries: bigint
+        inspections: bigint
+        stocks: bigint
+        assets: bigint
+        repairs: bigint
+        iar_records: bigint
+        par_docs: bigint
+        ics_docs: bigint
+      }>
+    >`
+      SELECT
+        (SELECT COUNT(*) FROM deliveries)::bigint AS deliveries,
+        (SELECT COUNT(*) FROM inspections)::bigint AS inspections,
+        (SELECT COUNT(*) FROM inventory)::bigint AS stocks,
+        (SELECT COUNT(*) FROM assets)::bigint AS assets,
+        (SELECT COUNT(*) FROM repairs)::bigint AS repairs,
+        (SELECT COUNT(*) FROM iar_records)::bigint AS iar_records,
+        (SELECT COUNT(*) FROM issuance_records WHERE doc_type = 'PAR')::bigint AS par_docs,
+        (SELECT COUNT(*) FROM issuance_records WHERE doc_type = 'ICS')::bigint AS ics_docs
+    `.catch(() => null)
+    if (!rows || rows.length === 0) return zeros
+    const r = rows[0]
+    return {
+      deliveries: Number(r.deliveries ?? 0),
+      inspections: Number(r.inspections ?? 0),
+      stocks: Number(r.stocks ?? 0),
+      assets: Number(r.assets ?? 0),
+      repairs: Number(r.repairs ?? 0),
+      iarRecords: Number(r.iar_records ?? 0),
+      parDocs: Number(r.par_docs ?? 0),
+      icsDocs: Number(r.ics_docs ?? 0),
+    }
   } catch (e) {
     console.error('[browseDocumentHub]', e)
     return zeros
@@ -463,52 +482,7 @@ export type BrowseDeliveryDocumentRow = DeliveryDocumentRow & {
   logged_by: string | null
 }
 
-export async function browseDeliveryDocuments(): Promise<BrowseDeliveryDocumentRow[]> {
-  if (!(await allowed())) return []
-  try {
-    const rows = await getDeliveryDocuments()
-    const deliveries = await prisma.delivery
-      .findMany({
-        where: { id: { in: rows.map((r) => r.delivery_id) } },
-        select: { id: true, received_by: true },
-      })
-      .catch(() => [] as { id: string; received_by: string }[])
-    const byId = new Map(deliveries.map((d) => [d.id, d.received_by]))
-    const names = await resolveProfileNames([...byId.values()])
-    return rows.map((r) => {
-      const userId = byId.get(r.delivery_id)
-      return {
-        ...r,
-        logged_by: (userId ? names.get(userId) : undefined) ?? null,
-      }
-    })
-  } catch (e) {
-    console.error('[browseDeliveryDocuments]', e)
-    return []
-  }
-}
-
 export type BrowseIarReportRow = IarReportRow & { logged_by: string | null }
-
-export async function browseIarReports(): Promise<BrowseIarReportRow[]> {
-  if (!(await allowed())) return []
-  try {
-    const rows = await getAllIarReports()
-    const names = await resolveProfileNames(
-      rows.map((r) => r.inspector_id).filter((v): v is string => Boolean(v))
-    )
-    return rows.map((r) => ({
-      ...r,
-      logged_by:
-        (r.inspector_id ? names.get(r.inspector_id) : undefined) ??
-        r.inspector_name ??
-        null,
-    }))
-  } catch (e) {
-    console.error('[browseIarReports]', e)
-    return []
-  }
-}
 
 export type BrowseIssuanceRow = IssuanceRow & { logged_by: string | null }
 
@@ -520,26 +494,6 @@ async function withIssuanceLoggers(rows: IssuanceRow[]): Promise<BrowseIssuanceR
     ...r,
     logged_by: (r.created_by ? names.get(r.created_by) : undefined) ?? null,
   }))
-}
-
-export async function browseParReports(): Promise<BrowseIssuanceRow[]> {
-  if (!(await allowed())) return []
-  try {
-    return await withIssuanceLoggers(await getParReports())
-  } catch (e) {
-    console.error('[browseParReports]', e)
-    return []
-  }
-}
-
-export async function browseIcsReports(): Promise<BrowseIssuanceRow[]> {
-  if (!(await allowed())) return []
-  try {
-    return await withIssuanceLoggers(await getIcsReports())
-  } catch (e) {
-    console.error('[browseIcsReports]', e)
-    return []
-  }
 }
 
 export async function browseDeliveryForInspection(
@@ -583,4 +537,116 @@ export async function browseViewedDocKeys(): Promise<string[]> {
   } catch {
     return []
   }
+}
+
+// ─── Document-center per-tab windows (server pagination, PAGE_SIZE = 15) ────
+// Replaces the old 8×500 full-list snapshot + client filter: each visit
+// fetches ONE 15-row window for the ACTIVE tab (plus cached counts), with
+// the same Browse* row shapes (logged_by preserved) the tables render.
+
+export type AdminDocumentsTab = DocumentsTab;
+
+export interface AdminDocumentsTabPage {
+  rows: unknown[]
+  data: unknown[]
+  total: number
+  page: number
+  pageSize: number
+  totalPages: number
+}
+
+export async function getAdminDocumentsTabPage(
+  tab: AdminDocumentsTab,
+  opts: { page?: number; q?: string } = {}
+): Promise<AdminDocumentsTabPage> {
+  if (!(await allowed())) {
+    return { rows: [], data: [], total: 0, page: 1, pageSize: 15, totalPages: 1 }
+  }
+  const { withScopedCache } = await import('@/lib/personnel-cache')
+  const { PAGE_SIZE } = await import('@/lib/constants')
+  const { parsePage, parseQuery, pageResponse } = await import('@/lib/paged')
+  const page = parsePage(opts.page)
+  const q = parseQuery(opts.q)
+  const pageSize = PAGE_SIZE
+  const envelope = <T>(rows: T[], total: number): AdminDocumentsTabPage => {
+    const e = pageResponse(rows, total, page)
+    return { rows: e.rows, data: e.data, total: e.total, page: e.page, pageSize: e.pageSize, totalPages: e.totalPages }
+  }
+  return withScopedCache('super-admin:documents-tab', 30, async () => {
+    try {
+      switch (tab) {
+        case 'delivery': {
+          const r = await getDeliveryDocumentsPage({ page, pageSize, q })
+          const received = await prisma.delivery
+            .findMany({
+              where: { id: { in: r.rows.map((d) => d.delivery_id) } },
+              select: { id: true, received_by: true },
+            })
+            .catch(() => [] as { id: string; received_by: string }[])
+          const byId = new Map(received.map((d) => [d.id, d.received_by]))
+          const names = await resolveProfileNames([...byId.values()])
+          const rows: BrowseDeliveryDocumentRow[] = r.rows.map((d) => {
+            const userId = byId.get(d.delivery_id)
+            return { ...d, logged_by: (userId ? names.get(userId) : undefined) ?? null }
+          })
+          return envelope(rows, r.total)
+        }
+        case 'inspection': {
+          const r = await getInspectionsPage({ page, pageSize, q, status: 'inspected' })
+          const names = await resolveProfileNames(
+            r.rows.map((d) => d.inspector_id).filter((v): v is string => Boolean(v))
+          )
+          const rows = r.rows
+            .filter((d) => d.inspection_status !== 'pending')
+            .map((d) => ({
+              ...d,
+              logged_by:
+                (d.inspector_id ? names.get(d.inspector_id) : undefined) ??
+                d.inspector_name ??
+                null,
+            }))
+          return envelope(rows, r.total)
+        }
+        case 'stocks': {
+          const r = await getInventoryPage({ page, pageSize, q })
+          return envelope(r.rows, r.total)
+        }
+        case 'assets': {
+          const r = await getUnifiedAssetsPage({ page, q, slim: true })
+          return envelope(r.rows, r.total)
+        }
+        case 'repairs': {
+          const r = await getRepairsPage({ page, pageSize, q, status: 'completed' })
+          return envelope(r.rows, r.total)
+        }
+        case 'iar': {
+          const r = await getIarReportsPage({ page, pageSize, q })
+          const names = await resolveProfileNames(
+            r.rows.map((d) => d.inspector_id).filter((v): v is string => Boolean(v))
+          )
+          const rows: BrowseIarReportRow[] = r.rows.map((d) => ({
+            ...d,
+            logged_by:
+              (d.inspector_id ? names.get(d.inspector_id) : undefined) ??
+              d.inspector_name ??
+              null,
+          }))
+          return envelope(rows, r.total)
+        }
+        case 'par':
+        case 'ics': {
+          const r = await getIssuancesPage({
+            page,
+            pageSize,
+            q,
+            docType: tab === 'par' ? 'PAR' : 'ICS',
+          })
+          return envelope(await withIssuanceLoggers(r.rows), r.total)
+        }
+      }
+    } catch (e) {
+      console.error('[getAdminDocumentsTabPage]', e)
+      return { rows: [], data: [], total: 0, page: 1, pageSize, totalPages: 1 }
+    }
+  }, { tab, page, pageSize, q })
 }

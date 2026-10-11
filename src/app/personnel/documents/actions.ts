@@ -3,11 +3,6 @@
 import prisma from '@/lib/prisma'
 import { getPersonnelScope } from '@/lib/personnel-scope'
 import { VIEWED_DOC_TYPES } from './document-types'
-import { getInspectionsList, type UnifiedInspectionRow } from '../inspections/actions'
-import { getInventoryItems, type InventoryRow } from '../inventory/actions'
-import { getAllUnifiedAssets, type UnifiedAssetRow } from '../assets/actions'
-import { getRepairs, type RepairRow } from '../repairs/actions'
-import { getParAndIcsReports, type IssuanceRecordRow } from '../issuances/actions'
 
 // ─── Viewed receipts ─────────────────────────────────────────────────────────
 // Tracks which document receipts each user opened so sidebar badges count
@@ -89,12 +84,6 @@ export interface DeliveryDocumentRow {
   created_at: string | null
 }
 
-/** Every logged delivery — the same receipt record shown on Deliveries. */
-export async function getDeliveryDocuments(): Promise<DeliveryDocumentRow[]> {
-  const { rows } = await getDeliveryDocumentsPage({ page: 1, pageSize: 500 })
-  return rows
-}
-
 export interface DeliveryDocsPageOpts {
   page?: number
   pageSize?: number
@@ -103,15 +92,18 @@ export interface DeliveryDocsPageOpts {
 
 export async function getDeliveryDocumentsPage(
   opts: DeliveryDocsPageOpts = {}
-): Promise<{ rows: DeliveryDocumentRow[]; total: number }> {
+): Promise<{ rows: DeliveryDocumentRow[]; data: DeliveryDocumentRow[]; total: number; page: number; pageSize: number; totalPages: number }> {
   const { withScopedCache } = await import('@/lib/personnel-cache')
-  const page = Math.floor(Number(opts.page)) >= 1 ? Math.min(Math.floor(Number(opts.page)), 1000) : 1
-  const pageSize = 20
-  const q = (opts.q ?? '').trim().slice(0, 120)
+  const { PAGE_SIZE } = await import('@/lib/constants')
+  const { parsePage, parseQuery, clampPage, totalPagesFor } = await import('@/lib/paged')
+  const page = parsePage(opts.page)
+  const rawSize = Math.floor(Number(opts.pageSize))
+  const pageSize = Number.isFinite(rawSize) ? Math.min(Math.max(rawSize, 1), 100) : PAGE_SIZE
+  const q = parseQuery(opts.q)
   return withScopedCache('personnel:delivery-documents', 30, async () => {
     try {
       const scope = await getPersonnelScope()
-      if (scope.isEmpty) return { rows: [], total: 0 }
+      if (scope.isEmpty) return { rows: [], data: [], total: 0, page: 1, pageSize, totalPages: 1 }
       const where: Record<string, unknown> = scope.isSuperAdmin ? {} : { received_by: scope.userId! }
       if (q) {
         ;(where as Record<string, unknown>).OR = [
@@ -140,9 +132,8 @@ export async function getDeliveryDocumentsPage(
           },
         }),
       ])
-      return {
-        total,
-        rows: deliveries.map((d) => ({
+      const safePage = clampPage(page, Math.max(1, total))
+      const mapped = deliveries.map((d) => ({
           delivery_id: d.id,
           ref: d.id.slice(0, 8).toUpperCase(),
           supplier: d.supplier,
@@ -152,13 +143,20 @@ export async function getDeliveryDocumentsPage(
           inspection_status: d.inspection_status,
           item_count: d._count.items,
           created_at: d.created_at?.toISOString() ?? null,
-        })),
+        }))
+      return {
+        total,
+        rows: mapped,
+        data: mapped,
+        page: safePage,
+        pageSize,
+        totalPages: totalPagesFor(total, pageSize),
       }
     } catch (e) {
       console.error('[getDeliveryDocuments]', e)
-      return { rows: [], total: 0 }
+      return { rows: [], data: [], total: 0, page: 1, pageSize, totalPages: 1 }
     }
-  }, { page, q })
+  }, { page, pageSize, q })
 }
 
 // ─── IAR reports (all generated / attached documentation) ───────────────────
@@ -179,56 +177,6 @@ export interface IarReportRow {
   created_at: string | null
 }
 
-export interface DocumentsSnapshot {
-  deliveries: DeliveryDocumentRow[]
-  inspections: UnifiedInspectionRow[]
-  stocks: InventoryRow[]
-  /** QR payloads blanked — the documents tables/receipts never render them. */
-  assets: UnifiedAssetRow[]
-  repairs: RepairRow[]
-  iars: IarReportRow[]
-  pars: IssuanceRecordRow[]
-  icss: IssuanceRecordRow[]
-  viewedKeys: string[]
-}
-
-/**
- * Single round-trip for the documents page (all 8 tabs + viewed keys),
- * cached client-side under CLIENT_CACHE_KEYS.documents like the
- * dashboard / deliveries / inspections / stocks / assets pages.
- */
-export async function getDocumentsSnapshot(): Promise<DocumentsSnapshot> {
-  const { withScopedCache } = await import('@/lib/personnel-cache')
-  return withScopedCache('personnel:documents-snapshot', 30, async () => {
-    // Single issuance round-trip for PAR+ICS (was two full downloads).
-    const [d, i, s, a, rep, r, pc, v] = await Promise.all([
-      getDeliveryDocuments(),
-      getInspectionsList(),
-      getInventoryItems(),
-      getAllUnifiedAssets(),
-      getRepairs(),
-      getAllIarReports(),
-      getParAndIcsReports(),
-      getViewedDocKeys(),
-    ])
-    return {
-      deliveries: d,
-      inspections: i,
-      stocks: s,
-      assets: a.map((row) => ({ ...row, qr_data_url: '' })),
-      repairs: rep,
-      iars: r,
-      pars: pc.pars,
-      icss: pc.icss,
-      viewedKeys: v,
-    }
-  })
-}
-export async function getAllIarReports(): Promise<IarReportRow[]> {
-  const { rows } = await getIarReportsPage({ page: 1, pageSize: 500 })
-  return rows
-}
-
 export type DocumentsTab =
   | 'delivery'
   | 'inspection'
@@ -240,16 +188,25 @@ export type DocumentsTab =
   | 'ics'
 
 /**
- * Per-tab page window (fixed 20): only the ACTIVE tab fetches — the old
- * snapshot fired all 8 readers on every visit. Each tab reuses its list
- * page's server-paged reader; `total` drives the pager.
+ * Per-tab page window (PAGE_SIZE = 15): only the ACTIVE tab fetches.
+ * Each tab reuses its list page's server-paged reader; `total` drives the pager.
  */
 export async function getDocumentsTabPage(
   tab: DocumentsTab,
   opts: { page?: number; q?: string } = {}
-): Promise<{ rows: unknown[]; total: number }> {
-  const page = Math.floor(Number(opts.page)) >= 1 ? Math.min(Math.floor(Number(opts.page)), 1000) : 1
-  const q = (opts.q ?? '').trim().slice(0, 120)
+): Promise<{ rows: unknown[]; data: unknown[]; total: number; page: number; pageSize: number; totalPages: number }> {
+  const { parsePage, parseQuery } = await import('@/lib/paged')
+  const { PAGE_SIZE } = await import('@/lib/constants')
+  const page = parsePage(opts.page)
+  const q = parseQuery(opts.q)
+  const passthrough = (r: { rows: unknown[]; total: number; page?: number; totalPages?: number }) => ({
+    rows: r.rows,
+    data: (r as { data?: unknown[] }).data ?? r.rows,
+    total: r.total,
+    page: r.page ?? page,
+    pageSize: PAGE_SIZE,
+    totalPages: r.totalPages ?? Math.max(1, Math.ceil(r.total / PAGE_SIZE)),
+  })
   switch (tab) {
     case 'delivery': {
       return getDeliveryDocumentsPage({ page, q })
@@ -257,11 +214,11 @@ export async function getDocumentsTabPage(
     case 'inspection': {
       // Documents shows only inspected deliveries (history receipts exist).
       const { getInspectionsPage } = await import('../inspections/actions')
-      return getInspectionsPage({ page, pageSize: 20, q, status: 'inspected' })
+      return passthrough(await getInspectionsPage({ page, pageSize: PAGE_SIZE, q, status: 'inspected' }))
     }
     case 'stocks': {
       const { getInventoryPage } = await import('../inventory/actions')
-      return getInventoryPage({ page, pageSize: 20, q })
+      return passthrough(await getInventoryPage({ page, pageSize: PAGE_SIZE, q }))
     }
     case 'assets': {
       const { getUnifiedAssetsPage } = await import('../assets/actions')
@@ -270,20 +227,20 @@ export async function getDocumentsTabPage(
     case 'repairs': {
       // Documents shows completed repairs only (same as before).
       const { getRepairsPage } = await import('../repairs/actions')
-      return getRepairsPage({ page, pageSize: 20, q, status: 'completed' })
+      return passthrough(await getRepairsPage({ page, pageSize: PAGE_SIZE, q, status: 'completed' }))
     }
     case 'iar': {
       return getIarReportsPage({ page, q })
     }
     case 'par': {
       const { getIssuancesPage } = await import('../issuances/actions')
-      const { rows, total } = await getIssuancesPage({ page, pageSize: 20, q, docType: 'PAR' })
-      return { rows, total }
+      const r = await getIssuancesPage({ page, pageSize: PAGE_SIZE, q, docType: 'PAR' })
+      return passthrough(r)
     }
     case 'ics': {
       const { getIssuancesPage } = await import('../issuances/actions')
-      const { rows, total } = await getIssuancesPage({ page, pageSize: 20, q, docType: 'ICS' })
-      return { rows, total }
+      const r = await getIssuancesPage({ page, pageSize: PAGE_SIZE, q, docType: 'ICS' })
+      return passthrough(r)
     }
   }
 }
@@ -390,16 +347,19 @@ export interface IarReportsPageOpts {
 
 export async function getIarReportsPage(
   opts: IarReportsPageOpts = {}
-): Promise<{ rows: IarReportRow[]; total: number }> {
+): Promise<{ rows: IarReportRow[]; data: IarReportRow[]; total: number; page: number; pageSize: number; totalPages: number }> {
   const { withScopedCache } = await import('@/lib/personnel-cache')
-  const page = Math.floor(Number(opts.page)) >= 1 ? Math.min(Math.floor(Number(opts.page)), 1000) : 1
-  const pageSize = 20
-  const q = (opts.q ?? '').trim().slice(0, 120)
+  const { PAGE_SIZE } = await import('@/lib/constants')
+  const { parsePage, parseQuery, clampPage, totalPagesFor } = await import('@/lib/paged')
+  const page = parsePage(opts.page)
+  const rawSize = Math.floor(Number(opts.pageSize))
+  const pageSize = Number.isFinite(rawSize) ? Math.min(Math.max(rawSize, 1), 100) : PAGE_SIZE
+  const q = parseQuery(opts.q)
   return withScopedCache('personnel:iar-reports', 30, async () => {
   try {
     // Own-data only for personnel; super_admin sees all.
     const scope = await getPersonnelScope()
-    if (scope.isEmpty) return { rows: [], total: 0 }
+    if (scope.isEmpty) return { rows: [], data: [], total: 0, page: 1, pageSize, totalPages: 1 }
     const baseWhere = scope.isSuperAdmin
       ? {}
       : {
@@ -452,9 +412,7 @@ export async function getIarReportsPage(
       }),
     ])
 
-    return {
-      total,
-      rows: rows.map((r) => ({
+    const mapped = rows.map((r) => ({
         id: r.id,
         kind: r.kind,
         iar_no: r.iar_no,
@@ -468,11 +426,19 @@ export async function getIarReportsPage(
         inspection_result: r.inspection.result,
         inspection_date: r.inspection.inspection_date.toISOString().slice(0, 10),
         created_at: r.created_at?.toISOString() ?? null,
-      })),
+      }))
+    const safePage = clampPage(page, Math.max(1, total))
+    return {
+      total,
+      rows: mapped,
+      data: mapped,
+      page: safePage,
+      pageSize,
+      totalPages: totalPagesFor(total, pageSize),
     }
   } catch (e) {
     console.error('[getAllIarReports]', e)
-    return { rows: [], total: 0 }
+    return { rows: [], data: [], total: 0, page: 1, pageSize, totalPages: 1 }
   }
-  }, { page, q })
+  }, { page, pageSize, q })
 }

@@ -8,18 +8,38 @@ import {
   setClientCache,
 } from '@/lib/client-cache'
 
+import { defaultsFor, type DataType } from '@/lib/query-keys'
+
 interface UseCachedActionOptions {
   /**
    * Freshness window. A cached payload younger than this paints instantly
    * with no network at all; older payloads still paint instantly but
-   * trigger a silent background refetch. Defaults to 60s.
+   * trigger a silent background refetch. Defaults to 60s (or the
+   * per-`dataType` default when `dataType` is given without `staleTime`).
    */
   staleTime?: number
   /**
    * Absolute ceiling — payloads older than this are ignored and the hook
-   * behaves like a cold start (skeleton). Defaults to 10 minutes.
+   * behaves like a cold start (skeleton). Defaults to 10 minutes (or the
+   * per-`dataType` default when `dataType` is given without `maxAge`).
    */
   maxAge?: number
+  /**
+   * Per-data-type preset (`static` 30min / `slow` 3min / `live` 20s +
+   * focus refetch / `sensitive` 30s, never persisted). Explicit
+   * `staleTime`/`maxAge`/`refetchOnFocus` override the preset.
+   */
+  dataType?: DataType
+  /**
+   * Refetch stale data when the tab regains focus. Defaults to the
+   * `dataType` preset (`live`/`sensitive` true, else false).
+   */
+  refetchOnFocus?: boolean
+  /**
+   * Keep the previous key's data visible while a new key (e.g. next page)
+   * loads — no skeleton flicker on pagination/filter changes. Defaults true.
+   */
+  keepPreviousData?: boolean
 }
 
 interface UseCachedActionResult<T> {
@@ -31,6 +51,13 @@ interface UseCachedActionResult<T> {
   error: string
   /** Force a fresh fetch now (used after writes); keeps old data visible. */
   refresh: () => void
+  /**
+   * SWR-style local mutation: replace the current payload (and the stored
+   * cache entry) WITHOUT fetching. Used for optimistic updates — patch on
+   * submit, roll back on failure, reconcile with the mutation response's
+   * `record` on success. Never throws.
+   */
+  mutate: (next: T | ((prev: T | undefined) => T | undefined)) => void
 }
 
 // Dedupes concurrent fetches for the same key (StrictMode double-mount,
@@ -51,7 +78,11 @@ export function useCachedAction<T>(
   fetcher: () => Promise<T>,
   options: UseCachedActionOptions = {}
 ): UseCachedActionResult<T> {
-  const { staleTime = 60_000, maxAge = 10 * 60_000 } = options
+  const preset = options.dataType ? defaultsFor(options.dataType) : null
+  const staleTime = options.staleTime ?? preset?.staleTime ?? 60_000
+  const maxAge = options.maxAge ?? preset?.maxAge ?? 10 * 60_000
+  const refetchOnFocus = options.refetchOnFocus ?? preset?.refetchOnFocus ?? false
+  const keepPreviousData = options.keepPreviousData ?? true
 
   // NOTE: initial state is intentionally SSR-safe (loading=true, data=undefined).
   // Reading sessionStorage/memory during useState would make the first client
@@ -66,17 +97,28 @@ export function useCachedAction<T>(
   const [error, setError] = useState('')
   const mounted = useRef(true)
   const fetcherRef = useRef(fetcher)
+  const keyRef = useRef(key)
+  const prevDataRef = useRef<T | undefined>(undefined)
 
   // Keep the latest fetcher without touching refs during render.
   useEffect(() => {
     fetcherRef.current = fetcher
   }, [fetcher])
 
+  // Latest key for the stale-run guard below (effects may touch refs).
+  useEffect(() => {
+    keyRef.current = key
+  }, [key])
+
   const run = useCallback(
     (force: boolean) => {
+      // Capture the key for this run — if the query changes while the fetch
+      // is in flight, the stale response is ignored (cancels logically:
+      // superseded runs never paint, so fast paging cannot show stale pages).
+      const runKey = key
       let cached: ReturnType<typeof getClientCache<T>> = null
       try {
-        cached = getClientCache<T>(key)
+        cached = getClientCache<T>(runKey)
       } catch {
         cached = null
       }
@@ -89,37 +131,50 @@ export function useCachedAction<T>(
         setData(cached.data)
         setLoading(false)
         if (!force && age <= staleTime) {
-          // Fresh — skip the network entirely.
+          // Fresh — skip the network entirely (dedupes in-flight + warm hits).
           return
         }
         // Stale — fall through to silent background revalidation below.
+      } else if (keepPreviousData && prevDataRef.current !== undefined) {
+        // Pagination / filter change with no cache for the new key: keep the
+        // previous page's data on screen (placeholderData equivalent) and
+        // mark validating instead of flashing a skeleton. Cold starts with
+        // truly no data still show the skeleton via initial `loading=true`.
+        setLoading(false)
       } else {
         // Cold start — keep the skeleton visible while the first fetch runs.
+        // Only clear to skeleton if this run is still current (prevents
+        // flicker when a stale run finishes after a newer key mounted).
         setLoading(true)
       }
       setIsValidating(true)
       setError('')
-      let promise = inflight.get(key) as Promise<T> | undefined
+      let promise = inflight.get(runKey) as Promise<T> | undefined
       if (!promise) {
         promise = fetcherRef.current() as Promise<T>
-        inflight.set(key, promise)
+        inflight.set(runKey, promise)
         const cleanup = () => {
-          if (inflight.get(key) === promise) inflight.delete(key)
+          if (inflight.get(runKey) === promise) inflight.delete(runKey)
         }
         void (promise as Promise<T>).then(cleanup, cleanup)
       }
       void promise.then(
         (fresh) => {
           if (!mounted.current) return
-          setClientCache(key, fresh)
+          // Ignore stale runs: query changed while fetching (superseded
+          // requests are cancelled logically — they never paint).
+          if (keyRef.current !== runKey) return
+          setClientCache(runKey, fresh)
+          prevDataRef.current = fresh
           setData(fresh)
           setLoading(false)
           setIsValidating(false)
         },
         (e) => {
           if (!mounted.current) return
+          if (keyRef.current !== runKey) return
           // Keep stale data on screen; only cold starts surface the error.
-          if (!hasUsableCache) {
+          if (!hasUsableCache && prevDataRef.current === undefined) {
             setError(
               e instanceof Error ? e.message : 'Failed to load. Please try again.'
             )
@@ -129,7 +184,7 @@ export function useCachedAction<T>(
         }
       )
     },
-    [key, maxAge, staleTime]
+    [key, maxAge, staleTime, keepPreviousData]
   )
 
   useEffect(() => {
@@ -156,9 +211,62 @@ export function useCachedAction<T>(
     return () => window.removeEventListener(CACHE_BUSTED_EVENT, onBusted)
   }, [key, run])
 
+  // Live data: refetch stale payloads when the tab regains focus.
+  useEffect(() => {
+    if (!refetchOnFocus) return
+    let lastFocus = 0
+    const onFocus = () => {
+      const now = Date.now()
+      if (now - lastFocus < 5_000) return // throttle focus storms
+      lastFocus = now
+      try {
+        const cached = getClientCache<T>(keyRef.current)
+        const age = cached ? now - cached.fetchedAt : Infinity
+        if (age > staleTime) run(false)
+      } catch {
+        /* ignore */
+      }
+    }
+    window.addEventListener('focus', onFocus)
+    const onVis = () => {
+      if (document.visibilityState === 'visible') onFocus()
+    }
+    document.addEventListener('visibilitychange', onVis)
+    return () => {
+      window.removeEventListener('focus', onFocus)
+      document.removeEventListener('visibilitychange', onVis)
+    }
+  }, [refetchOnFocus, staleTime, run])
+
   const refresh = useCallback(() => run(true), [run])
 
-  return { data, loading, isValidating, error, refresh }
+  const mutate = useCallback(
+    (next: T | ((prev: T | undefined) => T | undefined)) => {
+      try {
+        setData((prev) => {
+          const fresh =
+            typeof next === 'function'
+              ? (next as (p: T | undefined) => T | undefined)(prev)
+              : next
+          if (fresh === undefined) return prev
+          prevDataRef.current = fresh
+          if (mounted.current) {
+            try {
+              setClientCache(key, fresh)
+            } catch {
+              // memory write failure must not break the paint
+            }
+          }
+          return fresh
+        })
+      } catch {
+        // Local patch must never crash the page.
+      }
+    },
+    [key]
+  )
+
+  return { data, loading, isValidating, error, refresh, mutate }
 }
 
 export { bustClientCache }

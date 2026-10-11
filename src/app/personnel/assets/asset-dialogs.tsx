@@ -26,6 +26,7 @@ import {
   importAssetsFromExcel,
   type CreateAssetState,
   type ImportAssetsState,
+  type UnifiedAssetRow,
 } from "./actions";
 import { useMasterData } from "@/hooks/use-master-data";
 import { DatePicker } from "@/components/ui/date-picker";
@@ -128,13 +129,93 @@ function OptionSelect({  name,
   );
 }
 
+export interface AssetMutationEvent {
+  phase: "start" | "success" | "error";
+  /** Optimistic row (start) / reconcile base (settle). Never sent to the server. */
+  temp: UnifiedAssetRow;
+  tempId: string;
+  /** Server record on success (carries the real id). */
+  record?: { id: string; account_code: string | null; article: string | null };
+  error?: string;
+}
+
+/**
+ * Build the optimistic row for a create submit (pure, instant, <100ms).
+ * Fields mirror the lean table columns; anything unknown renders "—" and
+ * converges on the next revalidation. The temp id never collides with UUIDs.
+ */
+export function buildOptimisticAssetRow(formData: FormData): UnifiedAssetRow {
+  const get = (k: string) => {
+    const v = formData.get(k);
+    const s = v === null || v === undefined ? "" : String(v).trim();
+    return s === "" ? null : s.slice(0, 500);
+  };
+  const numOrNull = (k: string) => {
+    const v = formData.get(k);
+    if (v === null || v === undefined || String(v).trim() === "") return null;
+    const n = Number(String(v));
+    return Number.isNaN(n) ? null : Math.trunc(n);
+  };
+  const tempId = `optimistic-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  return {
+    id: tempId,
+    source: "asset",
+    account_code: get("account_code"),
+    identifier: get("identifier"),
+    account_title: get("account_title"),
+    account_name: get("account_name"),
+    category: get("category"),
+    article: get("article"),
+    quantity: numOrNull("quantity") ?? 1,
+    unit: get("unit"),
+    description: get("description"),
+    date_acquired: get("date_acquired"),
+    location: get("location"),
+    total_cost: get("total_cost") != null ? Number(get("total_cost")) : null,
+    remarks: get("remarks"),
+    condition: get("condition") ?? "serviceable",
+    unit_cost: get("unit_cost") != null ? Number(get("unit_cost")) : null,
+    end_user: get("end_user"),
+    brand: get("brand"),
+    cylinders: numOrNull("cylinders"),
+    engine_displacement: get("engine_displacement"),
+    fuel_type: get("fuel_type"),
+    engine_number: get("engine_number"),
+    chassis_number: get("chassis_number"),
+    color: get("color"),
+    plate_number: get("plate_number"),
+    fund: get("fund"),
+    status: get("status") ?? "available",
+    dv_tracking_number: get("dv_tracking_number"),
+    supplier_payee: get("supplier_payee"),
+    account_name_charge: get("account_name_charge"),
+    account_number: get("account_number"),
+    obr_number: get("obr_number"),
+    dv_number: get("dv_number"),
+    date_received: get("date_received"),
+    created_at: new Date().toISOString(),
+    qr_code: get("qr_code"),
+    assigned_to: null,
+    qr_data_url: "",
+    custom_fields: {},
+  };
+}
+
 export function AddAssetDialog({
   categories,
   onSuccess,
+  onMutationEvent,
   triggerClassName,
 }: {
   categories: string[];
   onSuccess?: () => void;
+  /**
+   * Optimistic lifecycle: `start` (temp row to prepend) → `success`
+   * (server record to reconcile) / `error` (roll back the temp row).
+   * The dialog still toasts + closes/resets itself; the parent patches
+   * its cached window without a refetch.
+   */
+  onMutationEvent?: (e: AssetMutationEvent) => void;
   /** Extra classes for the trigger so header actions match Stocks/Dashboard sizing. */
   triggerClassName?: string;
 }) {
@@ -169,6 +250,8 @@ export function AddAssetDialog({
       setError("Pick an ACCOUNT CODE from Master Data.");
       return;
     }
+    const temp = buildOptimisticAssetRow(formData);
+    onMutationEvent?.({ phase: "start", temp, tempId: temp.id });
     startTransition(async () => {
       const res: CreateAssetState = await createAsset({} as CreateAssetState, formData);
       if (res.success) {
@@ -179,9 +262,18 @@ export function AddAssetDialog({
         setDateAcquired(undefined);
         setDateReceived(undefined);
         setOpen(false);
+        onMutationEvent?.({
+          phase: "success",
+          temp,
+          tempId: temp.id,
+          record: res.record as AssetMutationEvent["record"],
+        });
         onSuccess?.();
       } else {
-        setError(res.error ?? "Failed to add the asset.");
+        const msg = res.error ?? "Failed to add the asset.";
+        setError(msg);
+        toast({ title: "Error", description: msg, variant: "error" });
+        onMutationEvent?.({ phase: "error", temp, tempId: temp.id, error: msg });
       }
     });
   }

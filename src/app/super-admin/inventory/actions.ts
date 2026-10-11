@@ -8,6 +8,8 @@ import { writeAuditLog } from '@/lib/audit'
 export interface ThresholdState {
   success?: boolean
   error?: string
+  /** Saved record — lets the client patch cache without refetch. */
+  record?: { id: string; reorder_threshold: number | null }
 }
 
 /**
@@ -66,7 +68,7 @@ export async function setReorderThreshold(
     revalidatePath('/super-admin/inventory')
     revalidatePath('/personnel/inventory')
     revalidatePath('/personnel/dashboard')
-    return { success: true }
+    return { success: true, record: { id: itemId, reorder_threshold: threshold } }
   } catch (e) {
     console.error('[setReorderThreshold]', e)
     return { error: 'Failed to update the threshold. Please try again.' }

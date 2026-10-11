@@ -298,8 +298,8 @@ export default function EmployeeAssetsPage() {
               <a
                 href={
                   viewingIsIcs
-                    ? `/api/personnel/issuances/${viewingDoc.id}/ics-xlsx`
-                    : `/api/personnel/issuances/${viewingDoc.id}/par-xlsx`
+                    ? `/api/employee/issuances/${viewingDoc.id}/ics-xlsx`
+                    : `/api/employee/issuances/${viewingDoc.id}/par-xlsx`
                 }
                 download
                 className={styles.inspectLinkSecondary}

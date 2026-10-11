@@ -6,7 +6,7 @@ import {
 } from "@/components/employee/CompleteProfileOverlay";
 import { needsProfileCompletion } from "@/lib/profile-completion";
 import { getActiveDepartments } from "@/lib/master-data";
-import { createClient } from "@/lib/supabase/server";
+import { getSessionIdentity } from "@/lib/personnel-scope";
 import prisma from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
@@ -39,13 +39,10 @@ async function getSidebarUser(): Promise<ShellUser> {
     } satisfies ProfileOverlayInitial,
     departments: [] as { id: string; name: string }[],
   };
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const { userId, email } = await getSessionIdentity();
   // Defense-in-depth behind middleware: never render the shell to anyone
   // who is not an active employee.
-  if (!user) redirect("/login");
+  if (!userId) redirect("/login");
 
   // New profile-completion columns require migration 25. If the DB hasn't
   // been updated yet (P2022), fall back to the legacy columns so the shell
@@ -67,7 +64,7 @@ async function getSidebarUser(): Promise<ShellUser> {
   } | null = null;
   try {
     profile = await prisma.profile.findUnique({
-      where: { id: user.id },
+      where: { id: userId },
       select: {
         full_name: true,
         role: true,
@@ -90,7 +87,7 @@ async function getSidebarUser(): Promise<ShellUser> {
     console.error("[employee-layout:migration-25-missing] run migration 25 in Supabase", e);
     profile = await prisma.profile
       .findUnique({
-        where: { id: user.id },
+        where: { id: userId },
         select: { full_name: true, role: true, status: true, position: true, office: true },
       })
       .catch(() => null);
@@ -99,7 +96,7 @@ async function getSidebarUser(): Promise<ShellUser> {
     redirect("/login");
   }
   const name =
-    profile?.full_name?.trim() || user.email?.trim() || fallback.name;
+    profile?.full_name?.trim() || email?.trim() || fallback.name;
   const position = profile?.position?.trim();
   const office = profile?.office?.trim();
   const detail = [position, office].filter(Boolean).join(" · ") || "Employee";
@@ -126,7 +123,7 @@ async function getSidebarUser(): Promise<ShellUser> {
   return {
     name,
     detail,
-    email: user.email ?? null,
+    email,
     needsCompletion,
     initial: {
       prefix: profile.prefix?.trim() ?? "",

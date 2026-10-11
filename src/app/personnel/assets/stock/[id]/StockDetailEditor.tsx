@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -8,6 +8,7 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/components/ui/toaster";
+import { patchRowInPage } from "@/lib/list-patch";
 import { updateStock, type EditState, type StockRow } from "../../actions";
 import styles from "../../../dashboard/page.module.css";
 import assetStyles from "../../page.module.css";
@@ -168,8 +169,26 @@ export function StockDetailEditor({
   const { toast } = useToast();
   const [isEditing, setIsEditing] = useState(false);
   const [isPending, startTransition] = useTransition();
+  // Optimistic overlay: submitted values paint instantly (<100ms feel);
+  // rolled back on failure, kept on success. Cleared on record change.
+  const [optimistic, setOptimistic] = useState<Record<string, string | null> | null>(null);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- clear stale optimistic overlay on record change
+    setOptimistic(null);
+  }, [stock.id]);
+  const displayed = useMemo(
+    () => (optimistic ? ({ ...stock, ...optimistic } as StockRow) : stock),
+    [stock, optimistic]
+  );
 
   const handleSubmit = (formData: FormData) => {
+    const overrides: Record<string, string | null> = {};
+    for (const [k, v] of formData.entries()) {
+      if (k === "id") continue;
+      const s = typeof v === "string" ? v.trim() : "";
+      overrides[k] = s === "" ? null : s.slice(0, 500);
+    }
+    setOptimistic(overrides);
     startTransition(async () => {
       const result: EditState = await updateStock({} as EditState, formData);
       if (result.success) {
@@ -179,11 +198,17 @@ export function StockDetailEditor({
           variant: "success",
         });
         setIsEditing(false);
-        void import('@/lib/client-cache').then((m) =>
-          m.bustClientCache(['pgso:client:assets-snapshot', 'pgso:client:inventory-items'])
+        // Patch every cached registry window holding this row (union windows
+        // carry stock rows too) — no refetch.
+        void import("@/lib/client-cache").then((m) =>
+          m.patchClientCache(["pgso:assets:unified", "pgso:admin-assets:unified"], (data) =>
+            patchRowInPage(data, stock.id, overrides)
+          )
         );
       }
       if (result.error) {
+        // Roll back the optimistic overlay to server truth.
+        setOptimistic(null);
         toast({
           title: "Error",
           description: result.error,
@@ -196,14 +221,14 @@ export function StockDetailEditor({
   return (
     <section className={styles.section}>
       <p className={styles.crumb}>
-        {crumbBase} / {stock.item_name ?? stock.id}
+        {crumbBase} / {displayed.item_name ?? displayed.id}
       </p>
 
       <div className={styles.headerRow}>
         <div>
           <h1 className={styles.title}>Stock Detail</h1>
           <p className={styles.subtitle}>
-            {stock.item_name ?? "Item"} — {stock.account_code ?? "—"}
+            {displayed.item_name ?? "Item"} — {displayed.account_code ?? "—"}
           </p>
         </div>
         <div className={styles.actions}>
@@ -240,10 +265,10 @@ export function StockDetailEditor({
       <Card className={styles.panel}>
         {isEditing ? (
           <form action={handleSubmit}>
-            <input type="hidden" name="id" value={stock.id} />
+            <input type="hidden" name="id" value={displayed.id} />
             <div className={assetStyles.detailFields}>
               {EDIT_FIELDS.map((f) => (
-                <EditField key={f.key} field={f} stock={stock} />
+                <EditField key={f.key} field={f} stock={displayed} />
               ))}
               {READONLY_FIELDS.map((f) => (
                 <ReadOnlyField key={f.key} field={f} stock={stock} />
@@ -278,13 +303,13 @@ export function StockDetailEditor({
           </form>
         ) : (
           <div className={assetStyles.detailGrid}>
-            <QrCard stock={stock} />
+            <QrCard stock={displayed} />
             <div className={assetStyles.detailFields}>
               {EDIT_FIELDS.map((f) => (
-                <ReadOnlyField key={f.key} field={f} stock={stock} />
+                <ReadOnlyField key={f.key} field={f} stock={displayed} />
               ))}
               {READONLY_FIELDS.map((f) => (
-                <ReadOnlyField key={f.key} field={f} stock={stock} />
+                <ReadOnlyField key={f.key} field={f} stock={displayed} />
               ))}
             </div>
           </div>

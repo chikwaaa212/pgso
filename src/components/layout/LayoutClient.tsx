@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import "@/lib/gsap-register";
 import { Header } from "@/components/layout/header";
 import { Footer } from "@/components/layout/footer";
+import { ClientCacheManager } from "@/components/ClientCacheManager";
 import { ToastProvider } from "@/components/ui/toaster";
 import { Toaster } from "@/components/ui/sonner";
 import styles from "./LayoutClient.module.css";
@@ -42,6 +43,7 @@ export function LayoutClient({ children }: { children: React.ReactNode }) {
 
   return (
     <ToastProvider>
+      <ClientCacheManager />
       <div className={styles.root}>
         {hideHeader ? null : <Header />}
         <main className={styles.main}>{children}</main>

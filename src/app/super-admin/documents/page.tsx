@@ -1,28 +1,32 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
+import { PAGE_SIZE } from "@/lib/constants";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import {
-  browseDeliveryDocuments,
-  browseIarReports,
-  browseViewedDocKeys,
-  browseInspections,
-  browseInventory,
-  browseAssets,
-  browseRepairs,
-  browseParReports,
-  browseIcsReports,
   browseDelivery,
   browseDeliveryForInspection,
   browseInspectionHistory,
   browseIarRecords,
   browseIssuance,
+  browseViewedDocKeys,
+  getAdminDocumentsTabPage,
+  type AdminDocumentsTab,
+  type BrowseDeliveryDocumentRow,
   type BrowseIarReportRow,
   type BrowseIssuanceRow,
 } from "../browse/actions";
+import {
+  getDocumentsCounts,
+} from "@/app/personnel/documents/actions";
+import type { UnifiedInspectionRow } from "@/app/personnel/inspections/actions";
+import type { InventoryRow } from "@/app/personnel/inventory/actions";
+import type { UnifiedAssetRow } from "@/app/personnel/assets/actions";
+import type { RepairRow } from "@/app/personnel/repairs/actions";
 import type { IssuanceDetail } from "@/app/personnel/issuances/actions";
 import type { DeliveryDetails } from "@/app/personnel/deliveries/actions";
 import type {
@@ -40,11 +44,18 @@ import { ParReportSheet } from "@/app/personnel/documents/par-report";
 import { IcsReportSheet } from "@/app/personnel/documents/ics-report";
 import { ReceiptOverlay } from "@/app/personnel/documents/receipt-overlay";
 import receipt from "@/app/personnel/inspections/components/receipt.module.css";
-import { TablePager } from "@/components/personnel/TablePager";
+import { Pagination } from "@/components/ui/pagination";
+import {
+  DataTableSkeleton,
+  PagerSkeleton,
+} from "@/components/personnel/skeletons";
 import { ReceiptLoading } from "@/components/personnel/ReceiptLoading";
-import { usePageSize } from "@/hooks/use-page-size";
 import { useCachedAction } from "@/hooks/use-cached-action";
-import { CLIENT_CACHE_KEYS } from "@/lib/client-cache";
+import {
+  CLIENT_CACHE_KEYS,
+  getClientCache,
+  setClientCache,
+} from "@/lib/client-cache";
 import { useReceipt } from "@/hooks/use-receipt";
 import DocumentsLoading from "./loading";
 import styles from "@/app/personnel/dashboard/page.module.css";
@@ -129,58 +140,122 @@ export default function SuperAdminDocumentsPage() {
 
 function SuperAdminDocumentsContent() {
   const searchParams = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
   const initialTab = isTab(searchParams.get("tab"))
     ? (searchParams.get("tab") as Tab)
     : "delivery";
+  const initialPage = Math.max(1, Number(searchParams.get("page")) || 1);
+  const initialQ = searchParams.get("q") ?? "";
 
   const [tab, setTab] = useState<Tab>(initialTab);
-  const [query, setQuery] = useState("");
-  // Cached snapshot (all 8 tabs + viewed keys): back-navigation paints
-  // instantly from memory / sessionStorage and only revalidates silently
-  // when stale — same SWR pattern as the personnel documents page.
-  const { data: snapshot, loading } = useCachedAction(
-    CLIENT_CACHE_KEYS.adminDocuments,
+  const [query, setQuery] = useState(initialQ);
+  const debouncedQuery = useDebouncedValue(query, 300);
+  // Fixed page size shared across Record Keeper + Registrar lists.
+  const pageSize = PAGE_SIZE;
+  const [page, setPage] = useState(initialPage);
+
+  const setUrl = useCallback(
+    (next: Record<string, string | null>) => {
+      const params = new URLSearchParams(searchParams.toString());
+      for (const [k, v] of Object.entries(next)) {
+        if (v === null || v === "") params.delete(k);
+        else params.set(k, v);
+      }
+      router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+    },
+    [searchParams, router, pathname]
+  );
+
+  // Keep URL in sync (refresh + back/forward work). Callers reset to page 1
+  // when tab/search change via resetDocPages below.
+  useEffect(() => {
+    setUrl({
+      tab: tab === "delivery" ? null : tab,
+      page: page === 1 ? null : String(page),
+      q: debouncedQuery || null,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, page, debouncedQuery]);
+
+  // Server-paginated tab window (PAGE_SIZE = 15): only the ACTIVE tab
+  // fetches — one 15-row window + cached counts, never the 8×500 snapshot.
+  // The hook keeps the previous key's payload while the new key loads; rows
+  // are trusted only when stamped for the CURRENT tab.
+  const {
+    data: tabPayload,
+    loading,
+    error,
+  } = useCachedAction(
+    `${CLIENT_CACHE_KEYS.adminDocuments}:${tab}:${page}:${pageSize}:${debouncedQuery}`,
     () =>
-      Promise.all([
-        browseDeliveryDocuments(),
-        browseInspections(),
-        browseInventory(),
-        browseAssets(),
-        browseRepairs(),
-        browseIarReports(),
-        browseParReports(),
-        browseIcsReports(),
-        browseViewedDocKeys(),
-      ]).then(([d, i, s, a, rep, r, p, c, v]) => ({
-        deliveries: d,
-        inspections: i,
-        stocks: s,
-        assets: a,
-        repairs: rep,
-        iars: r,
-        pars: p,
-        icss: c,
-        viewedKeys: v,
-      })),
+      getAdminDocumentsTabPage(tab as AdminDocumentsTab, { page, q: debouncedQuery }).then(
+        (res) => ({ ...res, _tab: tab })
+      ),
     { staleTime: 60_000 }
   );
-  const deliveries = useMemo(() => snapshot?.deliveries ?? [], [snapshot]);
-  const inspections = useMemo(() => snapshot?.inspections ?? [], [snapshot]);
-  const stocks = useMemo(() => snapshot?.stocks ?? [], [snapshot]);
-  const assets = useMemo(() => snapshot?.assets ?? [], [snapshot]);
-  const repairs = useMemo(() => snapshot?.repairs ?? [], [snapshot]);
-  const iars = useMemo(() => snapshot?.iars ?? [], [snapshot]);
-  const pars = useMemo(() => snapshot?.pars ?? [], [snapshot]);
-  const icss = useMemo(() => snapshot?.icss ?? [], [snapshot]);
+  const tabData =
+    tabPayload && (tabPayload as { _tab?: string })._tab === tab ? tabPayload : undefined;
+  // Cheap per-tab totals for the header counts (no row payloads).
+  const { data: countsData } = useCachedAction(
+    `${CLIENT_CACHE_KEYS.adminDocuments}-counts`,
+    getDocumentsCounts,
+    { staleTime: 60_000 }
+  );
+  // Per-tab rows: only the active tab has data. The server already searched
+  // + paged — the DB window IS the page (same pattern as personnel docs).
+  const windowRows = useMemo(() => (tabData?.rows ?? []) as unknown[], [tabData]);
+  const tabTotal = tabData?.total ?? 0;
+  const deliveries = useMemo(
+    () => (tab === "delivery" ? (windowRows as BrowseDeliveryDocumentRow[]) : []),
+    [tab, windowRows]
+  );
+  const inspections = useMemo(
+    () => (
+      tab === "inspection"
+        ? (windowRows as (UnifiedInspectionRow & { logged_by: string | null })[])
+        : []
+    ),
+    [tab, windowRows]
+  );
+  const stocks = useMemo(
+    () => (tab === "stocks" ? (windowRows as InventoryRow[]) : []),
+    [tab, windowRows]
+  );
+  const assets = useMemo(
+    () => (tab === "assets" ? (windowRows as UnifiedAssetRow[]) : []),
+    [tab, windowRows]
+  );
+  const repairs = useMemo(
+    () => (tab === "repairs" ? (windowRows as RepairRow[]) : []),
+    [tab, windowRows]
+  );
+  const iars = useMemo(
+    () => (tab === "iar" ? (windowRows as BrowseIarReportRow[]) : []),
+    [tab, windowRows]
+  );
+  const pars = useMemo(
+    () => (tab === "par" ? (windowRows as BrowseIssuanceRow[]) : []),
+    [tab, windowRows]
+  );
+  const icss = useMemo(
+    () => (tab === "ics" ? (windowRows as BrowseIssuanceRow[]) : []),
+    [tab, windowRows]
+  );
+  const { data: viewedKeysData } = useCachedAction(
+    `${CLIENT_CACHE_KEYS.adminDocuments}-viewed`,
+    browseViewedDocKeys,
+    { staleTime: 60_000 }
+  );
   const [viewedKeys, setViewedKeys] = useState<Set<string>>(new Set());
-  // Sync viewed keys from the snapshot after hydration (local marks apply
+  // Sync viewed keys from the server after hydration (local marks apply
   // instantly via markViewed; the server copy wins on refetch).
   useEffect(() => {
-    if (snapshot) {
+    if (viewedKeysData) {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional post-hydration sync of cached state
-      setViewedKeys(new Set(snapshot.viewedKeys));
+      setViewedKeys(new Set(viewedKeysData));
     }
-  }, [snapshot]);
+  }, [viewedKeysData]);
   const deliveryR = useReceipt<DeliveryDetails>();
   const inspectionR = useReceipt<{
     delivery: DeliveryForInspection;
@@ -220,212 +295,39 @@ function SuperAdminDocumentsContent() {
     setViewedKeys((prev) => new Set(prev).add(key));
   }
 
-  const q = query.trim().toLowerCase();
-  const hay = (parts: (string | null | undefined)[]) =>
-    parts.filter(Boolean).join(" ").toLowerCase().includes(q);
-
-  const deliveryRows = useMemo(
-    () =>
-      q === ""
-        ? deliveries
-        : deliveries.filter((d) =>
-            hay([
-              d.ref,
-              d.supplier,
-              d.po_reference,
-              d.delivery_status,
-              d.inspection_status,
-              d.logged_by,
-            ])
-          ),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [deliveries, query]
-  );
-
-  const inspectionRows = useMemo(
-    () =>
-      q === ""
-        ? inspections
-        : inspections.filter((d) =>
-            hay([
-              d.delivery_ref,
-              d.supplier,
-              d.po_reference,
-              d.inspector_name,
-              d.result,
-              d.inspection_status,
-              d.logged_by,
-            ])
-          ),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [inspections, query]
-  );
-
-  const stockRows = useMemo(
-    () =>
-      q === ""
-        ? stocks
-        : stocks.filter((r) =>
-            hay([r.item_name, r.account_code, r.location, r.unit])
-          ),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [stocks, query]
-  );
-
-  const assetRows = useMemo(
-    () =>
-      q === ""
-        ? assets
-        : assets.filter((a) =>
-            hay([
-              a.account_code,
-              a.qr_code,
-              a.category,
-              a.article,
-              a.description,
-              a.location,
-              a.status,
-            ])
-          ),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [assets, query]
-  );
-
-  const iarRows = useMemo(
-    () =>
-      q === ""
-        ? iars
-        : iars.filter((r) =>
-            hay([
-              r.iar_no,
-              r.delivery_ref,
-              r.supplier,
-              r.po_reference,
-              r.inspector_name,
-              r.inspection_result,
-              r.kind,
-              r.logged_by,
-            ])
-          ),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [iars, query]
-  );
-
-  const completedRepairs = useMemo(
-    () => repairs.filter((r) => r.status === "completed"),
-    [repairs]
-  );
-
-  const issuanceHay = (r: BrowseIssuanceRow) =>
-    hay([r.doc_no, r.employee_name, r.item_label, r.doc_type, r.logged_by]);
-
-  const parRows = useMemo(
-    () => (q === "" ? pars : pars.filter(issuanceHay)),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [pars, query]
-  );
-
-  const icsRows = useMemo(
-    () => (q === "" ? icss : icss.filter(issuanceHay)),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [icss, query]
-  );
-
-  const repairRows = useMemo(
-    () =>
-      q === ""
-        ? completedRepairs
-        : completedRepairs.filter((r) =>
-            hay([
-              r.asset_label,
-              r.account_code,
-              r.account_title,
-              r.asset_type,
-              r.reporter_name,
-              r.technician,
-              r.description,
-            ])
-          ),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [completedRepairs, query]
-  );
-
-  const [deliveryPageSize, setDeliveryPageSize] = usePageSize(
-    "pgso:admin:docs-delivery",
-    10
-  );
-  const [deliveryPage, setDeliveryPage] = useState(1);
-  const [inspectionPageSize, setInspectionPageSize] = usePageSize(
-    "pgso:admin:docs-inspection",
-    10
-  );
-  const [inspectionPage, setInspectionPage] = useState(1);
-  const [stockPageSize, setStockPageSize] = usePageSize(
-    "pgso:admin:docs-stocks",
-    10
-  );
-  const [stockPage, setStockPage] = useState(1);
-  const [assetPageSize, setAssetPageSize] = usePageSize(
-    "pgso:admin:docs-assets",
-    10
-  );
-  const [assetPage, setAssetPage] = useState(1);
-  const [repairPageSize, setRepairPageSize] = usePageSize(
-    "pgso:admin:docs-repairs",
-    10
-  );
-  const [repairPage, setRepairPage] = useState(1);
-  const [iarPageSize, setIarPageSize] = usePageSize("pgso:admin:docs-iar", 10);
-  const [iarPage, setIarPage] = useState(1);
-  const [parPageSize, setParPageSize] = usePageSize("pgso:admin:docs-par", 10);
-  const [parPage, setParPage] = useState(1);
-  const [icsPageSize, setIcsPageSize] = usePageSize("pgso:admin:docs-ics", 10);
-  const [icsPage, setIcsPage] = useState(1);
+  // Server already searched + paged each tab — these are identity aliases
+  // keeping the section render code unchanged. The DB window IS the page.
+  const deliveryRows = deliveries;
+  const inspectionRows = inspections;
+  const stockRows = stocks;
+  const assetRows = assets;
+  // Server returns completed repairs only (same as the old client filter).
+  const completedRepairs = repairs;
+  const iarRows = iars;
+  const parRows = pars;
+  const icsRows = icss;
+  const repairRows = completedRepairs;
 
   function resetDocPages() {
-    setDeliveryPage(1);
-    setInspectionPage(1);
-    setStockPage(1);
-    setAssetPage(1);
-    setRepairPage(1);
-    setIarPage(1);
-    setParPage(1);
-    setIcsPage(1);
+    setPage(1);
   }
 
-  function paginate<T>(rows: T[], page: number, pageSize: number) {
-    const pageCount = Math.max(1, Math.ceil(rows.length / pageSize));
-    const safePage = Math.min(Math.max(1, page), pageCount);
-    return {
-      safePage,
-      visible: rows.slice(
-        (safePage - 1) * pageSize,
-        (safePage - 1) * pageSize + pageSize
-      ),
-    };
-  }
-
+  // Server totals for the header counts (cheap, no row payloads).
   const counts: Record<Tab, number> = {
-    delivery: deliveries.length,
-    inspection: inspections.length,
-    stocks: stocks.length,
-    assets: assets.length,
-    repairs: completedRepairs.length,
-    iar: iars.length,
-    par: pars.length,
-    ics: icss.length,
+    delivery: countsData?.delivery ?? 0,
+    inspection: countsData?.inspection ?? 0,
+    stocks: countsData?.stocks ?? 0,
+    assets: countsData?.assets ?? 0,
+    repairs: countsData?.repairs ?? 0,
+    iar: countsData?.iar ?? 0,
+    par: countsData?.par ?? 0,
+    ics: countsData?.ics ?? 0,
   };
 
-  const shown: Record<Tab, number> = {
-    delivery: deliveryRows.length,
-    inspection: inspectionRows.length,
-    stocks: stockRows.length,
-    assets: assetRows.length,
-    repairs: repairRows.length,
-    iar: iarRows.length,
-    par: parRows.length,
-    ics: icsRows.length,
-  };
+  // Filtered total for the active tab comes from its page query; the pager
+  // clamps to it and the window rows render directly.
+  const pageCount = Math.max(1, Math.ceil(tabTotal / pageSize));
+  const safePage = Math.min(Math.max(1, page), pageCount);
 
   const searchPlaceholder: Record<Tab, string> = {
     delivery: "Search ref, supplier, PO, status…",
@@ -444,18 +346,14 @@ function SuperAdminDocumentsContent() {
     [inspectionRows]
   );
 
-  const deliveryPaging = paginate(deliveryRows, deliveryPage, deliveryPageSize);
-  const inspectionPaging = paginate(
-    inspectedRows,
-    inspectionPage,
-    inspectionPageSize
-  );
-  const stockPaging = paginate(stockRows, stockPage, stockPageSize);
-  const assetPaging = paginate(assetRows, assetPage, assetPageSize);
-  const repairPaging = paginate(repairRows, repairPage, repairPageSize);
-  const iarPaging = paginate(iarRows, iarPage, iarPageSize);
-  const parPaging = paginate(parRows, parPage, parPageSize);
-  const icsPaging = paginate(icsRows, icsPage, icsPageSize);
+  const deliveryPaging = { safePage, visible: deliveryRows };
+  const inspectionPaging = { safePage, visible: inspectedRows };
+  const stockPaging = { safePage, visible: stockRows };
+  const assetPaging = { safePage, visible: assetRows };
+  const repairPaging = { safePage, visible: repairRows };
+  const iarPaging = { safePage, visible: iarRows };
+  const parPaging = { safePage, visible: parRows };
+  const icsPaging = { safePage, visible: icsRows };
 
   function openDeliveryReceipt(deliveryId: string) {
     markViewed("delivery", deliveryId);
@@ -530,7 +428,26 @@ function SuperAdminDocumentsContent() {
   const selectedRepair =
     completedRepairs.find((r) => r.id === selectedRepairId) ?? null;
 
-  if (loading) {
+  // Cold for THIS tab (no rows stamped for it yet): the table region shows a
+  // skeleton while header/tabs/search stay put. Warm refetches keep stale
+  // rows visible. Tab switches revalidate silently via per-tab cache keys.
+  const cold = loading && windowRows.length === 0;
+
+  // Prefetch next page while the user views the current one (no flicker).
+  useEffect(() => {
+    if (!tabData || tabTotal <= page * pageSize) return;
+    const nextKey = `${CLIENT_CACHE_KEYS.adminDocuments}:${tab}:${page + 1}:${pageSize}:${debouncedQuery}`;
+    if (getClientCache(nextKey)) return;
+    const t = setTimeout(() => {
+      void getAdminDocumentsTabPage(tab as AdminDocumentsTab, { page: page + 1, q: debouncedQuery })
+        .then((fresh) => setClientCache(nextKey, { ...fresh, _tab: tab }))
+        .catch(() => {});
+    }, 400);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, page, debouncedQuery, tabData]);
+
+  if (cold && !countsData) {
     return <DocumentsLoading />;
   }
 
@@ -541,7 +458,7 @@ function SuperAdminDocumentsContent() {
         <div>
           <h1 className={styles.title}>Documents</h1>
           <p className={styles.subtitle}>
-            {shown[tab]} of {counts[tab]}{" "}
+            {tabTotal} of {counts[tab]}{" "}
             {counts[tab] === 1 ? "record" : "records"} shown · every document
             from all personnel
           </p>
@@ -580,8 +497,25 @@ function SuperAdminDocumentsContent() {
           />
         </div>
 
+        {error ? (
+          <div className={styles.emptyState} role="alert">
+            <p className={styles.panelSub}>
+              Failed to load documents. Please try again.
+            </p>
+          </div>
+        ) : null}
+
         {tab === "delivery" &&
-          (deliveryRows.length === 0 ? (
+          (cold ? (
+            <>
+              <DataTableSkeleton
+                headers={["Ref", "Supplier", "PO ref", "Date delivered", "Items", "Logged By", "Delivery", "Inspection", "Receipt"]}
+                cols={9}
+                label="Loading delivery documents"
+              />
+              <PagerSkeleton />
+            </>
+          ) : deliveryRows.length === 0 ? (
             <div className={styles.emptyState}>
               <p className={styles.panelSub}>
                 No delivery receipts match your search.
@@ -649,13 +583,11 @@ function SuperAdminDocumentsContent() {
                 </div>
               ))}
             {tab === "delivery" && deliveryRows.length > 0 ? (
-              <TablePager
+              <Pagination
                 id="admin-docs-delivery"
-                total={deliveryRows.length}
-                pageSize={deliveryPageSize}
+                total={tabTotal}
                 page={deliveryPaging.safePage}
-                onPageSizeChange={setDeliveryPageSize}
-                onPageChange={setDeliveryPage}
+                onPageChange={setPage}
               />
             ) : null}
 
@@ -678,7 +610,16 @@ function SuperAdminDocumentsContent() {
             </ReceiptOverlay>
 
             {tab === "inspection" &&
-              (inspectedRows.length === 0 ? (
+              (cold ? (
+                <>
+                  <DataTableSkeleton
+                    headers={["Delivery ref", "Supplier", "PO ref", "Inspector", "Logged By", "Date inspected", "Result", "History receipt"]}
+                    cols={8}
+                    label="Loading inspection documents"
+                  />
+                  <PagerSkeleton />
+                </>
+              ) : inspectedRows.length === 0 ? (
                 <div className={styles.emptyState}>
                   <p className={styles.panelSub}>
                     No inspection history receipts match your search.
@@ -739,13 +680,11 @@ function SuperAdminDocumentsContent() {
                 </div>
               ))}
             {tab === "inspection" && inspectedRows.length > 0 ? (
-              <TablePager
+              <Pagination
                 id="admin-docs-inspection"
-                total={inspectedRows.length}
-                pageSize={inspectionPageSize}
+                total={tabTotal}
                 page={inspectionPaging.safePage}
-                onPageSizeChange={setInspectionPageSize}
-                onPageChange={setInspectionPage}
+                onPageChange={setPage}
               />
             ) : null}
 
@@ -782,7 +721,16 @@ function SuperAdminDocumentsContent() {
             </ReceiptOverlay>
 
             {tab === "stocks" &&
-              (stockRows.length === 0 ? (
+              (cold ? (
+                <>
+                  <DataTableSkeleton
+                    headers={["Item", "Account code", "Quantity", "Unit", "Location", "Receipt"]}
+                    cols={6}
+                    label="Loading stock documents"
+                  />
+                  <PagerSkeleton />
+                </>
+              ) : stockRows.length === 0 ? (
                 <div className={styles.emptyState}>
                   <p className={styles.panelSub}>
                     No stock records match your search.
@@ -830,13 +778,11 @@ function SuperAdminDocumentsContent() {
                 </div>
               ))}
             {tab === "stocks" && stockRows.length > 0 ? (
-              <TablePager
+              <Pagination
                 id="admin-docs-stocks"
-                total={stockRows.length}
-                pageSize={stockPageSize}
+                total={tabTotal}
                 page={stockPaging.safePage}
-                onPageSizeChange={setStockPageSize}
-                onPageChange={setStockPage}
+                onPageChange={setPage}
               />
             ) : null}
 
@@ -853,7 +799,16 @@ function SuperAdminDocumentsContent() {
             </ReceiptOverlay>
 
             {tab === "assets" &&
-              (assetRows.length === 0 ? (
+              (cold ? (
+                <>
+                  <DataTableSkeleton
+                    headers={["Property no.", "Account code", "Article", "Description", "Qty.", "Location", "Status", "Receipt", "Details"]}
+                    cols={9}
+                    label="Loading asset documents"
+                  />
+                  <PagerSkeleton />
+                </>
+              ) : assetRows.length === 0 ? (
                 <div className={styles.emptyState}>
                   <p className={styles.panelSub}>
                     No asset records match your search.
@@ -921,13 +876,11 @@ function SuperAdminDocumentsContent() {
                 </div>
               ))}
             {tab === "assets" && assetRows.length > 0 ? (
-              <TablePager
+              <Pagination
                 id="admin-docs-assets"
-                total={assetRows.length}
-                pageSize={assetPageSize}
+                total={tabTotal}
                 page={assetPaging.safePage}
-                onPageSizeChange={setAssetPageSize}
-                onPageChange={setAssetPage}
+                onPageChange={setPage}
               />
             ) : null}
 
@@ -944,7 +897,16 @@ function SuperAdminDocumentsContent() {
             </ReceiptOverlay>
 
             {tab === "repairs" &&
-              (repairRows.length === 0 ? (
+              (cold ? (
+                <>
+                  <DataTableSkeleton
+                    headers={["Ticket", "Asset", "Reported by", "Logged By", "Technician", "Repair date", "Cost", "Status", "Receipt"]}
+                    cols={9}
+                    label="Loading repair documents"
+                  />
+                  <PagerSkeleton />
+                </>
+              ) : repairRows.length === 0 ? (
                 <div className={styles.emptyState}>
                   <p className={styles.panelSub}>
                     {completedRepairs.length === 0
@@ -1007,13 +969,11 @@ function SuperAdminDocumentsContent() {
                 </div>
               ))}
             {tab === "repairs" && repairRows.length > 0 ? (
-              <TablePager
+              <Pagination
                 id="admin-docs-repairs"
-                total={repairRows.length}
-                pageSize={repairPageSize}
+                total={tabTotal}
                 page={repairPaging.safePage}
-                onPageSizeChange={setRepairPageSize}
-                onPageChange={setRepairPage}
+                onPageChange={setPage}
               />
             ) : null}
 
@@ -1030,7 +990,16 @@ function SuperAdminDocumentsContent() {
             </ReceiptOverlay>
 
             {tab === "iar" &&
-              (iarRows.length === 0 ? (
+              (cold ? (
+                <>
+                  <DataTableSkeleton
+                    headers={["IAR no.", "Type", "Delivery ref", "Supplier", "Inspector", "Logged By", "Result", "Date inspected", "Generated", "Report"]}
+                    cols={10}
+                    label="Loading IAR documents"
+                  />
+                  <PagerSkeleton />
+                </>
+              ) : iarRows.length === 0 ? (
                 <div className={styles.emptyState}>
                   <p className={styles.panelSub}>
                     No IAR reports generated yet.
@@ -1102,13 +1071,11 @@ function SuperAdminDocumentsContent() {
                 </div>
               ))}
             {tab === "iar" && iarRows.length > 0 ? (
-              <TablePager
+              <Pagination
                 id="admin-docs-iar"
-                total={iarRows.length}
-                pageSize={iarPageSize}
+                total={tabTotal}
                 page={iarPaging.safePage}
-                onPageSizeChange={setIarPageSize}
-                onPageChange={setIarPage}
+                onPageChange={setPage}
               />
             ) : null}
 
@@ -1142,7 +1109,16 @@ function SuperAdminDocumentsContent() {
             </ReceiptOverlay>
 
             {tab === "par" &&
-              (parRows.length === 0 ? (
+              (cold ? (
+                <>
+                  <DataTableSkeleton
+                    headers={["PAR no.", "Employee", "Logged By", "Item", "Qty", "Total", "Date", "Generated", "Report", "Details"]}
+                    cols={10}
+                    label="Loading PAR documents"
+                  />
+                  <PagerSkeleton />
+                </>
+              ) : parRows.length === 0 ? (
                 <div className={styles.emptyState}>
                   <p className={styles.panelSub}>
                     No PAR records yet — items valued over ₱50,000 appear here
@@ -1201,13 +1177,11 @@ function SuperAdminDocumentsContent() {
                 </div>
               ))}
             {tab === "par" && parRows.length > 0 ? (
-              <TablePager
+              <Pagination
                 id="admin-docs-par"
-                total={parRows.length}
-                pageSize={parPageSize}
+                total={tabTotal}
                 page={parPaging.safePage}
-                onPageSizeChange={setParPageSize}
-                onPageChange={setParPage}
+                onPageChange={setPage}
               />
             ) : null}
 
@@ -1247,7 +1221,16 @@ function SuperAdminDocumentsContent() {
             </ReceiptOverlay>
 
             {tab === "ics" &&
-              (icsRows.length === 0 ? (
+              (cold ? (
+                <>
+                  <DataTableSkeleton
+                    headers={["ICS no.", "Employee", "Logged By", "Item", "Qty", "Total", "Date", "Generated", "Report", "Details"]}
+                    cols={10}
+                    label="Loading ICS documents"
+                  />
+                  <PagerSkeleton />
+                </>
+              ) : icsRows.length === 0 ? (
                 <div className={styles.emptyState}>
                   <p className={styles.panelSub}>
                     No ICS records yet — items valued at ₱50,000 or less appear
@@ -1306,13 +1289,11 @@ function SuperAdminDocumentsContent() {
                 </div>
               ))}
             {tab === "ics" && icsRows.length > 0 ? (
-              <TablePager
+              <Pagination
                 id="admin-docs-ics"
-                total={icsRows.length}
-                pageSize={icsPageSize}
+                total={tabTotal}
                 page={icsPaging.safePage}
-                onPageSizeChange={setIcsPageSize}
-                onPageChange={setIcsPage}
+                onPageChange={setPage}
               />
             ) : null}
 

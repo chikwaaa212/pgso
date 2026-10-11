@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/select";
 import { DatePicker } from "@/components/ui/date-picker";
 import { useToast } from "@/components/ui/toaster";
+import { patchRowInPage } from "@/lib/list-patch";
 import { updateUnifiedAsset, type AssetHistory, type EditState, type UnifiedAssetRow } from "../actions";
 import { CustomDetailSection } from "../custom-columns";
 import { AssetHistorySection } from "./asset-history";
@@ -338,6 +339,17 @@ export function AssetDetailEditor({
   const { toast } = useToast();
   const [isEditing, setIsEditing] = useState(false);
   const [isPending, startTransition] = useTransition();
+  // Optimistic overlay: submitted values paint instantly (<100ms feel);
+  // rolled back on failure, kept on success. Cleared on record change.
+  const [optimistic, setOptimistic] = useState<Record<string, string | null> | null>(null);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- clear stale optimistic overlay on record change
+    setOptimistic(null);
+  }, [asset.id]);
+  const displayed = useMemo(
+    () => (optimistic ? ({ ...asset, ...optimistic } as UnifiedAssetRow) : asset),
+    [asset, optimistic]
+  );
 
   const sections = FIELD_SECTIONS.map((s) =>
     s.fields.map((f) =>
@@ -346,6 +358,15 @@ export function AssetDetailEditor({
   );
 
   const handleSubmit = (formData: FormData) => {
+    // Snapshot submitted values as the optimistic overlay ("" → null matches
+    // the server's normalization, so the display converges on save).
+    const overrides: Record<string, string | null> = {};
+    for (const [k, v] of formData.entries()) {
+      if (k === "id" || k === "source") continue;
+      const s = typeof v === "string" ? v.trim() : "";
+      overrides[k] = s === "" ? null : s.slice(0, 500);
+    }
+    setOptimistic(overrides);
     startTransition(async () => {
       const result: EditState = await updateUnifiedAsset({} as EditState, formData);
       if (result.success) {
@@ -355,12 +376,18 @@ export function AssetDetailEditor({
           variant: "success",
         });
         setIsEditing(false);
-        // Targeted client bust (was full router.refresh()).
-        void import('@/lib/client-cache').then((m) =>
-          m.bustClientCache(['pgso:client:assets-snapshot'])
+        // Patch every cached registry window holding this row (personnel +
+        // admin lists) — no refetch. Next revalidation converges any
+        // server-side normalization (catalog title snap, unit canonicalization).
+        void import("@/lib/client-cache").then((m) =>
+          m.patchClientCache(["pgso:assets:unified", "pgso:admin-assets:unified"], (data) =>
+            patchRowInPage(data, asset.id, overrides)
+          )
         );
       }
       if (result.error) {
+        // Roll back the optimistic overlay to server truth.
+        setOptimistic(null);
         toast({
           title: "Error",
           description: result.error,
@@ -373,14 +400,14 @@ export function AssetDetailEditor({
   return (
     <section className={styles.section}>
       <p className={styles.crumb}>
-        {crumbBase} / {asset.account_code ?? asset.id}
+        {crumbBase} / {displayed.account_code ?? displayed.id}
       </p>
 
       <div className={styles.headerRow}>
         <div>
           <h1 className={styles.title}>Asset Detail</h1>
           <p className={styles.subtitle}>
-            {[asset.article ?? asset.description ?? "Asset", asset.account_code]
+            {[displayed.article ?? displayed.description ?? "Asset", displayed.account_code]
               .filter(Boolean)
               .join(" — ")}
           </p>
@@ -434,14 +461,14 @@ export function AssetDetailEditor({
                   <h3 className={assetStyles.sectionTitle}>{FIELD_SECTIONS[i].title}</h3>
                   <div className={assetStyles.detailFields}>
                     {fields.map((f) => (
-                      <EditField key={f.key} field={f} asset={asset} />
+                      <EditField key={f.key} field={f} asset={displayed} />
                     ))}
                   </div>
                 </div>
               ))}
             </form>
             <div className="mt-6">
-              <CustomDetailSection row={asset} readOnly={readOnly} editMode />
+              <CustomDetailSection row={displayed} readOnly={readOnly} editMode />
             </div>
             <div className="mt-4 flex justify-end gap-2">
               <Button
@@ -475,19 +502,19 @@ export function AssetDetailEditor({
           </>
         ) : (
           <div className={assetStyles.detailGrid}>
-            <QrCard asset={asset} />
+            <QrCard asset={displayed} />
             <div className={assetStyles.detailFields}>
               {sections.map((fields, i) => (
                 <div key={i} className="mb-6 last:mb-0">
                   <h3 className={assetStyles.sectionTitle}>{FIELD_SECTIONS[i].title}</h3>
                   <div className={assetStyles.detailFields}>
                     {fields.map((f) => (
-                      <ReadOnlyField key={f.key} field={f} asset={asset} />
+                      <ReadOnlyField key={f.key} field={f} asset={displayed} />
                     ))}
                   </div>
                 </div>
               ))}
-              <CustomDetailSection row={asset} readOnly={readOnly} />
+              <CustomDetailSection row={displayed} readOnly={readOnly} />
             </div>
           </div>
         )}
@@ -495,7 +522,7 @@ export function AssetDetailEditor({
 
       {history ? (
         <div style={{ marginTop: "1.25rem" }}>
-          <AssetHistorySection asset={asset} history={history} />
+          <AssetHistorySection asset={displayed} history={history} />
         </div>
       ) : null}
     </section>

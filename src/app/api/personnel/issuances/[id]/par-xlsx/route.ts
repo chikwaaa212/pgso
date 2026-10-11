@@ -1,6 +1,9 @@
 import { getIssuance } from "@/app/personnel/issuances/actions";
 import { buildParWorkbook } from "@/lib/par-excel";
 import { denyIssuanceDownload } from "../guard";
+import { createClient } from "@/lib/supabase/server";
+import prisma from "@/lib/prisma";
+import { PERSONNEL_API_ROLES, isUuid, resolveApiAccess } from "@/lib/api-guard";
 
 export const runtime = "nodejs";
 
@@ -25,11 +28,37 @@ function fileName(part: string) {
 }
 
 // GET /api/personnel/issuances/:id/par-xlsx — filled Appendix 71 PAR workbook.
+// Guard order: UUID → 401 (anonymous) → 403 (wrong role) → 404 (not found /
+// not mine / wrong type). Row-level isolation comes from the scoped
+// getIssuance lookup below (created_by = caller for personnel, all rows for
+// super_admin) — see ../guard.ts.
 export async function GET(
   _req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
+  if (!isUuid(id)) {
+    return new Response("PAR record not found.", { status: 404 });
+  }
+  try {
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    const profile = user
+      ? await prisma.profile
+          .findUnique({ where: { id: user.id }, select: { role: true, status: true } })
+          .catch(() => null)
+      : null;
+    const access = resolveApiAccess(
+      { userId: user?.id ?? null, role: profile?.role ?? null, status: profile?.status ?? null },
+      PERSONNEL_API_ROLES
+    );
+    if (access === 401) return new Response("Unauthorized.", { status: 401 });
+    if (access === 403) return new Response("Forbidden.", { status: 403 });
+  } catch {
+    return new Response("Unauthorized.", { status: 401 });
+  }
   const r = await getIssuance(id);
   if (!r || r.doc_type !== "PAR") {
     return new Response("PAR record not found.", { status: 404 });

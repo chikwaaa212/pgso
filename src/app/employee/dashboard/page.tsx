@@ -1,28 +1,38 @@
 import Image from 'next/image'
 import Link from 'next/link'
-import { createClient } from '@/lib/supabase/server'
+import { getSessionIdentity } from '@/lib/personnel-scope'
+import { cacheKey, withCache } from '@/lib/personnel-cache'
 import prisma from '@/lib/prisma'
 import { Card } from '@/components/ui/card'
 import styles from './page.module.css'
 
 export default async function EmployeeDashboard() {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  // Memoized identity shared with the layout (one Auth verification per
+  // request instead of two) — claims-first, getUser fallback.
+  const { userId, email } = await getSessionIdentity()
 
   let displayName = 'Employee'
   let contextLine: string | null = null
-  if (user) {
+  if (userId) {
     try {
-      const profile = await prisma.profile.findUnique({
-        where: { id: user.id },
-        select: {
-          full_name: true,
-          first_name: true,
-          position: true,
-          office: true,
-          department: true,
-        },
-      })
+      // Per-employee read-through (60s): greeting rows are never shared
+      // across users (u:userId in the key). Busted by profile completion
+      // edits (see employee/profile-actions.ts).
+      const profile = await withCache(
+        cacheKey('employee:dashboard', { u: userId }),
+        60,
+        async () =>
+          prisma.profile.findUnique({
+            where: { id: userId },
+            select: {
+              full_name: true,
+              first_name: true,
+              position: true,
+              office: true,
+              department: true,
+            },
+          })
+      )
       const firstName = profile?.first_name?.trim()
       const fullName = profile?.full_name?.trim()
       displayName = firstName || fullName || 'Employee'
@@ -38,7 +48,7 @@ export default async function EmployeeDashboard() {
       <p className={styles.crumb}>Employee / Dashboard</p>
       <h1 className={styles.title}>Welcome, {displayName}</h1>
       <p className={styles.subtitle}>
-        Signed in as {user?.email}{contextLine ? ` · ${contextLine}` : ''}
+        Signed in as {email}{contextLine ? ` · ${contextLine}` : ''}
       </p>
 
       <div className={styles.grid}>

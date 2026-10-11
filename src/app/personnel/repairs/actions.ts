@@ -62,18 +62,23 @@ function assetLabel(a: {
   return bits.length > 0 ? bits.join(' — ').slice(0, 80) : 'Asset'
 }
 
-/** Slim asset labels for repairs (no QR / custom-bag cost of getAllUnifiedAssets). */
-async function getRepairLabelMap(): Promise<
+/** Slim asset labels for the current window only (never full-table scans). */
+async function getRepairLabelMap(
+  assetIds: string[]
+): Promise<
   Map<string, { label: string; account_code: string | null; account_title: string | null; category: string | null }>
 > {
+  const ids = [...new Set(assetIds.filter(Boolean))]
+  if (ids.length === 0) return new Map()
   const [assetRows, stockRows] = await Promise.all([
     prisma.asset
       .findMany({
+        where: { id: { in: ids } },
         select: { id: true, qr_code: true, account_code: true, article: true, description: true, account_title: true, account_name: true, category: true },
       })
       .catch(() => [] as { id: string; qr_code: string | null; account_code: string | null; article: string | null; description: string | null; account_title: string | null; account_name: string | null; category: string | null }[]),
     prisma.inventoryItem
-      .findMany({ select: { id: true, item_name: true, account_code: true, category: true } })
+      .findMany({ where: { id: { in: ids } }, select: { id: true, item_name: true, account_code: true, category: true } })
       .catch(() => [] as { id: string; item_name: string; account_code: string | null; category: string | null }[]),
   ])
   const map = new Map<string, { label: string; account_code: string | null; account_title: string | null; category: string | null }>()
@@ -210,7 +215,7 @@ export async function getRepairsPage(
       reporterIds.length > 0
         ? prisma.profile.findMany({ where: { id: { in: reporterIds } }, select: { id: true, full_name: true } })
         : Promise.resolve([] as { id: string; full_name: string | null }[]),
-      getRepairLabelMap(),
+      getRepairLabelMap(repairRows.map((r) => r.asset_id)),
     ])
 
     const names = new Map(profiles.map((p) => [p.id, p.full_name ?? '—']))
@@ -291,7 +296,7 @@ export async function getRepair(id: string): Promise<RepairRow | null> {
     if (!found) return null
     const [profiles, labelMap] = await Promise.all([
       prisma.profile.findMany({ where: { id: { in: [found.reported_by] } }, select: { id: true, full_name: true } }).catch(() => []),
-      getRepairLabelMap(),
+      getRepairLabelMap([found.asset_id]),
     ])
     const a = labelMap.get(found.asset_id)
     const name = profiles[0]?.full_name ?? 'Unknown employee'
@@ -327,13 +332,29 @@ export async function getRepair(id: string): Promise<RepairRow | null> {
   }
 }
 
-export async function getRepairFormOptions(): Promise<{
+export async function getRepairFormOptions(
+  opts: { q?: string } = {}
+): Promise<{
   assets: RepairAssetOption[]
   employees: RepairEmployeeOption[]
 }> {
+  const q = String(opts.q ?? '').trim().slice(0, 60)
   const { withCache, cacheKey } = await import('@/lib/personnel-cache')
-  return withCache(cacheKey('personnel:repair-form-options'), 60, async () => {
+  const { PAGE_SIZE } = await import('@/lib/constants')
+  return withCache(cacheKey('personnel:repair-form-options', { q }), 60, async () => {
   try {
+    // Server-searched PAGE_SIZE window (was a 500-row take per dialog open).
+    const assetWhere =
+      q !== ''
+        ? {
+            OR: [
+              { article: { contains: q, mode: 'insensitive' as const } },
+              { description: { contains: q, mode: 'insensitive' as const } },
+              { account_code: { contains: q, mode: 'insensitive' as const } },
+              { qr_code: { contains: q, mode: 'insensitive' as const } },
+            ],
+          }
+        : {}
     const [profiles, assetRows] = await Promise.all([
       prisma.profile.findMany({
         where: { status: 'active', role: 'employee' },
@@ -343,8 +364,9 @@ export async function getRepairFormOptions(): Promise<{
       // Slim pick-list: labels only, no QR / custom-bag fan-out.
       prisma.asset
         .findMany({
+          where: assetWhere,
           orderBy: { created_at: 'desc' },
-          take: 500,
+          take: PAGE_SIZE,
           select: {
             id: true,
             qr_code: true,

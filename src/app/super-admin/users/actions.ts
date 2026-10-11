@@ -233,6 +233,10 @@ export async function approveEmployee(targetId: string): Promise<{ ok: boolean; 
       where: { id: targetId },
       data: { status: 'active' },
     })
+    const { bustRoleCache } = await import('@/lib/personnel-scope')
+    bustRoleCache(targetId)
+    const { bustMiddlewareRoleCache } = await import('@/lib/personnel-cache')
+    void bustMiddlewareRoleCache(targetId).catch(() => {})
     await writeAuditLog({
       userId: actorId,
       action: 'users:approve_employee',
@@ -261,6 +265,10 @@ export async function rejectEmployee(targetId: string): Promise<{ ok: boolean; e
       where: { id: targetId },
       data: { status: 'inactive' },
     })
+    const { bustRoleCache } = await import('@/lib/personnel-scope')
+    bustRoleCache(targetId)
+    const { bustMiddlewareRoleCache } = await import('@/lib/personnel-cache')
+    void bustMiddlewareRoleCache(targetId).catch(() => {})
     // NOTE: auth.admin.signOut() takes a JWT, not a user ID, so it cannot
     // revoke this session. No replacement call exists server-side; the
     // middleware profile-status check signs the account out on its next
@@ -293,6 +301,10 @@ export async function setUserActive(
       where: { id: targetId },
       data: { status: active ? 'active' : 'inactive' },
     })
+    const { bustRoleCache } = await import('@/lib/personnel-scope')
+    bustRoleCache(targetId)
+    const { bustMiddlewareRoleCache } = await import('@/lib/personnel-cache')
+    void bustMiddlewareRoleCache(targetId).catch(() => {})
     // NOTE: auth.admin.signOut() takes a JWT, not a user ID, so it cannot
     // revoke this session — the middleware profile-status check signs the
     // account out on its next request instead. The status flip above is the

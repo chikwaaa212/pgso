@@ -28,6 +28,9 @@ model Profile {
   profile_completed    Boolean   @default(false)
   profile_completed_at DateTime? @db.Timestamptz
 
+  @@index([role])
+  @@index([status])
+  @@index([role, status])
   @@map("profiles")
 }
 
@@ -73,6 +76,13 @@ model Asset {
   documents                Document[]
   custom_fields            Json?     @db.JsonB
 
+  @@index([status])
+  @@index([category])
+  @@index([account_code])
+  @@index([assigned_to])
+  @@index([created_at(sort: Desc)])
+  @@index([status, created_at(sort: Desc)])
+  @@index([account_code, status])
   @@map("assets")
 }
 
@@ -97,6 +107,13 @@ model Delivery {
   iar_records       IarRecord[]
   documents         Document[]
 
+  @@index([received_by])
+  @@index([supplier])
+  @@index([po_reference])
+  @@index([delivery_status])
+  @@index([inspection_status])
+  @@index([created_at(sort: Desc)])
+  @@index([received_by, created_at(sort: Desc)])
   @@map("deliveries")
 }
 
@@ -139,6 +156,11 @@ model Inspection {
   iar_records     IarRecord[]
   documents       Document[]
 
+  @@index([delivery_id])
+  @@index([inspector_id])
+  @@index([result])
+  @@index([inspection_date(sort: Desc)])
+  @@index([created_at(sort: Desc)])
   @@map("inspections")
 }
 
@@ -160,6 +182,9 @@ model IarRecord {
 
   @@index([delivery_id])
   @@index([inspection_id])
+  @@index([kind])
+  @@index([iar_no])
+  @@index([created_at(sort: Desc)])
   @@map("iar_records")
 }
 
@@ -179,6 +204,11 @@ model InventoryItem {
   documents        Document[]
   custom_fields    Json?     @db.JsonB
 
+  @@index([item_name])
+  @@index([account_code])
+  @@index([category])
+  @@index([delivery_kind])
+  @@index([quantity])
   @@map("inventory")
 }
 
@@ -205,6 +235,10 @@ model Repair {
   created_by   String?   @db.Uuid
   created_at   DateTime? @default(now()) @db.Timestamptz
 
+  @@index([asset_id])
+  @@index([status])
+  @@index([created_by])
+  @@index([created_at(sort: Desc)])
   @@map("repairs")
 }
 
@@ -229,6 +263,15 @@ model Document {
   approved_by        String?  @db.Uuid
   created_at         DateTime? @default(now()) @db.Timestamptz
 
+  @@index([related_asset_id])
+  @@index([related_inventory_id])
+  @@index([related_delivery_id])
+  @@index([related_inspection_id])
+  @@index([related_iar_record_id])
+  @@index([status])
+  @@index([document_type])
+  @@index([prepared_by])
+  @@index([created_at(sort: Desc)])
   @@map("documents")
 }
 
@@ -245,6 +288,12 @@ model Request {
   items          RequestItem[]
 
   @@index([recipient_id])
+  @@index([employee_id])
+  @@index([status])
+  @@index([request_type])
+  @@index([date_requested(sort: Desc)])
+  @@index([status, date_requested(sort: Desc)])
+  @@index([recipient_id, status])
   @@map("requests")
 }
 
@@ -270,6 +319,11 @@ model AuditLog {
   details    Json?
   created_at DateTime? @default(now()) @db.Timestamptz
 
+  @@index([user_id])
+  @@index([module])
+  @@index([action])
+  @@index([created_at(sort: Desc)])
+  @@index([action, created_at(sort: Desc)])
   @@map("audit_logs")
 }
 
@@ -319,6 +373,9 @@ model IssuanceRecord {
   @@index([asset_id])
   @@index([inventory_id])
   @@index([request_id])
+  @@index([created_by])
+  @@index([created_at(sort: Desc)])
+  @@index([doc_type, created_at(sort: Desc)])
   @@map("issuance_records")
 }
 
@@ -361,14 +418,76 @@ model AccountCatalog {
 }
 
 model PpmpFile {
-  id           String    @id @default(uuid()) @db.Uuid
-  filename     String    @db.VarChar
-  storage_path String    @db.Text
-  file_size    Int?
-  mime_type    String?   @db.VarChar
-  created_by   String    @db.Uuid
-  created_at   DateTime? @default(now()) @db.Timestamptz
+  id                 String    @id @default(uuid()) @db.Uuid
+  filename           String    @db.VarChar
+  storage_path       String    @db.Text
+  file_size          Int?
+  mime_type          String?   @db.VarChar
+  created_by         String    @db.Uuid
+  created_at         DateTime? @default(now()) @db.Timestamptz
+  // P1 vault fix: content hash (dedup + cache key + audit), fiscal-year
+  // hint, parse summary, lifecycle status. All nullable/defaulted so
+  // legacy rows (metadata-only, no backing bytes) stay valid.
+  file_hash          String?   @db.Text
+  fiscal_year        Int?
+  fiscal_year_source String?   @db.VarChar(20)
+  row_count          Int?
+  sheet_meta         Json?     @db.JsonB
+  status             String?   @default("ready") @db.VarChar(20)
+  updated_at         DateTime? @updatedAt @db.Timestamptz
 
   @@index([created_by])
+  @@index([file_hash])
   @@map("ppmp_files")
+}
+
+model PpmpAnalyticsConfig {
+  version              Int       @id
+  qty_increase_pct     Float     @default(25)
+  cost_increase_pct    Float     @default(30)
+  anomaly_z            Float     @default(2.0)
+  trend_epsilon_pct    Float     @default(5)
+  forecast_min_history Int       @default(3)
+  smoothing_alpha      Float     @default(0.5)
+  updated_by           String?   @db.Uuid
+  updated_at           DateTime? @default(now()) @db.Timestamptz
+
+  @@map("ppmp_analytics_config")
+}
+
+model PpmpAnalysisSession {
+  id             String    @id @default(uuid()) @db.Uuid
+  user_id        String    @db.Uuid
+  preset         String?   @db.VarChar(40)
+  filters        Json?     @db.JsonB
+  file_ids       Json      @db.JsonB
+  file_hashes    Json      @db.JsonB
+  parser_version String    @default("v1") @db.VarChar(20)
+  config_version Int?
+  stage          String    @default("queued") @db.VarChar(40)
+  status         String    @default("running") @db.VarChar(20)
+  error_code     String?   @db.VarChar(60)
+  created_at     DateTime? @default(now()) @db.Timestamptz
+  completed_at   DateTime? @db.Timestamptz
+
+  @@index([user_id, created_at(sort: Desc)])
+  @@map("ppmp_analysis_sessions")
+}
+
+model PpmpAnalysisResult {
+  session_id      String    @id @db.Uuid
+  overview        Json      @db.JsonB
+  quarterly       Json?     @db.JsonB
+  file_insights   Json?     @db.JsonB
+  yoy             Json      @db.JsonB
+  trends          Json      @db.JsonB
+  anomalies       Json      @db.JsonB
+  costs           Json      @db.JsonB
+  forecasts       Json      @db.JsonB
+  recommendations Json      @db.JsonB
+  limitations     Json      @db.JsonB
+  config          Json      @db.JsonB
+  created_at      DateTime? @default(now()) @db.Timestamptz
+
+  @@map("ppmp_analysis_results")
 }

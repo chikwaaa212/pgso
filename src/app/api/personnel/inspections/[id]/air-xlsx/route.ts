@@ -1,6 +1,8 @@
 import { createClient } from "@/lib/supabase/server";
+import prisma from "@/lib/prisma";
 import { getDeliveryForInspection } from "@/app/personnel/inspections/actions";
 import { buildAirWorkbook } from "@/lib/air-excel";
+import { PERSONNEL_API_ROLES, isUuid, resolveApiAccess } from "@/lib/api-guard";
 
 export const runtime = "nodejs";
 
@@ -23,24 +25,43 @@ function fileName(part: string) {
 }
 
 // GET /api/personnel/inspections/:id/air-xlsx?entity=…&department=…&…
+// Guard order: UUID → 401 (anonymous) → 403 (wrong role: personnel/
+// super_admin only, active) → 404 (not found / not mine). Ownership is
+// enforced inside getDeliveryForInspection (fail-closed via notFound()).
 export async function GET(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
+  if (!isUuid(id)) {
+    return new Response("Record not found.", { status: 404 });
+  }
   const q = new URL(req.url).searchParams;
   try {
     const supabase = await createClient();
     const {
       data: { user },
     } = await supabase.auth.getUser();
-    // Ownership is enforced inside getDeliveryForInspection (fail-closed);
-    // this gate keeps signed-out callers on a 401 instead of a 404.
-    if (!user) return new Response("Unauthorized.", { status: 401 });
+    const profile = user
+      ? await prisma.profile
+          .findUnique({ where: { id: user.id }, select: { role: true, status: true } })
+          .catch(() => null)
+      : null;
+    const access = resolveApiAccess(
+      { userId: user?.id ?? null, role: profile?.role ?? null, status: profile?.status ?? null },
+      PERSONNEL_API_ROLES
+    );
+    if (access === 401) return new Response("Unauthorized.", { status: 401 });
+    if (access === 403) return new Response("Forbidden.", { status: 403 });
   } catch {
     return new Response("Unauthorized.", { status: 401 });
   }
-  const delivery = await getDeliveryForInspection(id);
+  let delivery: Awaited<ReturnType<typeof getDeliveryForInspection>>;
+  try {
+    delivery = await getDeliveryForInspection(id);
+  } catch {
+    return new Response("Record not found.", { status: 404 });
+  }
   const inspection = delivery.inspection_data;
   const ref = delivery.id.slice(0, 8).toUpperCase();
 

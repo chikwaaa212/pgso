@@ -1,7 +1,8 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { Suspense, useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
+import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -35,7 +36,8 @@ import {
 import { TablePager, FIXED_PAGE_SIZE } from '@/components/personnel/TablePager'
 import { useDebouncedValue } from '@/hooks/use-debounced-value'
 import { useCachedAction } from '@/hooks/use-cached-action'
-import { CLIENT_CACHE_KEYS, bustClientCache } from '@/lib/client-cache'
+import { CLIENT_CACHE_KEYS, bustClientCache, patchClientCache } from '@/lib/client-cache'
+import { patchRowInPage, prependRowToPage } from '@/lib/list-patch'
 import { useMasterData } from '@/hooks/use-master-data'
 import styles from '../dashboard/page.module.css'
 import air from '../inspections/air-section.module.css'
@@ -92,25 +94,61 @@ const EMPTY_DRAFT: Draft = {
   location: '',
 }
 
-export default function PersonnelInventoryPage() {
-  const [query, setQuery] = useState('')
-  const [kind, setKind] = useState<'all' | 'stock' | 'asset'>('all')
-  const [accountCode, setAccountCode] = useState('all')
-  const [level, setLevel] = useState('all')
-  // Fixed 20 rows/page (no selector) — the DB returns only this window.
+function PersonnelInventoryContent() {
+  const searchParams = useSearchParams()
+  const router = useRouter()
+  const pathname = usePathname()
+  const [query, setQuery] = useState(searchParams.get('q') ?? '')
+  const [kind, setKind] = useState<'all' | 'stock' | 'asset'>(() => {
+    const v = searchParams.get('kind')
+    return v === 'stock' || v === 'asset' ? v : 'all'
+  })
+  const [accountCode, setAccountCode] = useState(
+    searchParams.get('accountCode') ?? 'all'
+  )
+  const [level, setLevel] = useState(searchParams.get('level') ?? 'all')
+  // Fixed 15 rows/page (no selector) — the DB returns only this window.
   const pageSize = FIXED_PAGE_SIZE
-  const [page, setPage] = useState(1)
+  const [page, setPage] = useState(
+    Math.max(1, Number(searchParams.get('page')) || 1)
+  )
   // Debounced server search — the DB query fires only after typing pauses.
-  const debouncedQuery = useDebouncedValue(query, 250)
+  const debouncedQuery = useDebouncedValue(query, 300)
   const searching = query.trim() !== debouncedQuery.trim()
+
+  // URL persistence: page/search/filters survive reload + back-navigation.
+  const setUrl = useCallback(
+    (next: Record<string, string | null>) => {
+      const params = new URLSearchParams(searchParams.toString())
+      for (const [k, v] of Object.entries(next)) {
+        if (v === null || v === '' || v === 'all') params.delete(k)
+        else params.set(k, v)
+      }
+      router.replace(`${pathname}?${params.toString()}`, { scroll: false })
+    },
+    [searchParams, router, pathname]
+  )
+
+  useEffect(() => {
+    setUrl({
+      page: page === 1 ? null : String(page),
+      q: debouncedQuery || null,
+      kind,
+      accountCode,
+      level,
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, debouncedQuery, kind, accountCode, level])
   // Server-paged stocks: search/kind/code/level/page all filter in the DB.
   const {
     data: pageData,
     loading,
     isValidating,
+    error: pageError,
     refresh: refreshRows,
+    mutate: mutateRows,
   } = useCachedAction(
-    `${CLIENT_CACHE_KEYS.inventory}:${page}:${debouncedQuery}:${kind}:${accountCode}:${level}`,
+    `${CLIENT_CACHE_KEYS.inventory}:${page}:${pageSize}:${debouncedQuery}:${kind}:${accountCode}:${level}`,
     () =>
       getInventoryPage({
         page,
@@ -179,6 +217,44 @@ export default function PersonnelInventoryPage() {
     if (saving) return
     setSaving(true)
     setError('')
+    const qty = Number(draft.quantity)
+    const cost = draft.unit_cost.trim() === '' ? null : Number(draft.unit_cost)
+    const claimed = page === 1 && query.trim() === '' && kind === 'all' && accountCode === 'all' && level === 'all'
+    const snapshot = pageData
+    let tempId: string | undefined
+    // Optimistic: paint the save instantly (<100ms feel), roll back on
+    // failure, reconcile with the server record on success — no refetch.
+    if (draft.id) {
+      const updateId: string = draft.id
+      mutateRows((p) =>
+        p
+          ? patchRowInPage(p, updateId, {
+              item_name: draft.item_name.trim(),
+              account_code: draft.account_code.trim() || null,
+              quantity: qty,
+              unit: draft.unit.trim() || null,
+              unit_cost: cost,
+              location: draft.location.trim() || null,
+            })
+          : p
+      )
+    } else if (claimed) {
+      tempId = `optimistic-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+      const temp = {
+        id: tempId,
+        item_name: draft.item_name.trim(),
+        account_code: draft.account_code.trim() || null,
+        delivery_kind: null,
+        category: null,
+        quantity: qty,
+        unit: draft.unit.trim() || null,
+        unit_cost: cost,
+        reorder_threshold: null,
+        location: draft.location.trim() || null,
+        account_title: null,
+      }
+      mutateRows((p) => (p ? prependRowToPage(p, temp as (typeof rows)[number]) : p))
+    }
     try {
       const res = await saveInventoryItem({
         id: draft.id,
@@ -193,11 +269,64 @@ export default function PersonnelInventoryPage() {
       if (!res.success) {
         const msg = res.error ?? 'Failed to save the stock item.'
         setError(msg)
+        // Roll back to server truth.
+        mutateRows(() => snapshot)
         toast.error(msg, { duration: 2000, closeButton: true })
         return
       }
+      const record = res.record as
+        | {
+            id: string
+            item_name: string
+            account_code: string | null
+            quantity: number
+            unit: string | null
+            unit_cost: unknown
+            location: string | null
+          }
+        | undefined
+      if (draft.id && record) {
+        const reconciled = {
+          item_name: record.item_name,
+          account_code: record.account_code,
+          quantity: record.quantity,
+          unit: record.unit,
+          unit_cost: record.unit_cost != null ? Number(record.unit_cost) : null,
+          location: record.location,
+        }
+        mutateRows((p) => (p ? patchRowInPage(p, record.id, reconciled) : p))
+        patchClientCache(CLIENT_CACHE_KEYS.adminInventory, (d) =>
+          patchRowInPage(d, record.id, reconciled)
+        )
+      } else if (!draft.id && record) {
+        if (tempId) {
+          const createdId = tempId
+          mutateRows((p) =>
+            p
+              ? patchRowInPage(p, createdId, {
+                  ...{
+                    item_name: record.item_name,
+                    account_code: record.account_code,
+                    quantity: record.quantity,
+                    unit: record.unit,
+                    unit_cost: record.unit_cost != null ? Number(record.unit_cost) : null,
+                    location: record.location,
+                  },
+                  id: record.id,
+                })
+              : p
+          )
+        } else {
+          refreshRows()
+        }
+        bustClientCache(CLIENT_CACHE_KEYS.adminInventory)
+      } else {
+        refreshRows()
+      }
       setDialogOpen(false)
-      reload()
+      // Own write — drop the dashboard snapshot (low-stock card) so its
+      // next visit refetches. This list stays patched (no skeleton flash).
+      bustClientCache(CLIENT_CACHE_KEYS.dashboard)
       toast.success('Stock item saved successfully.', {
         duration: 2000,
         closeButton: true,
@@ -205,6 +334,7 @@ export default function PersonnelInventoryPage() {
     } catch {
       const msg = 'Failed to save the stock item. Please try again.'
       setError(msg)
+      mutateRows(() => snapshot)
       toast.error(msg, { duration: 2000, closeButton: true })
     } finally {
       setSaving(false)
@@ -442,19 +572,7 @@ export default function PersonnelInventoryPage() {
                 <span className="block h-3 w-36 animate-pulse rounded bg-navy-100" />
               </span>
               <div className={styles.pagerControls}>
-                <span className={styles.pageSizeWrap}>
-                  <span>Rows</span>
-                  <span className="h-8 w-[5.5rem] animate-pulse rounded-md bg-navy-100" />
-                </span>
-                <span className={styles.pageBtn} aria-hidden="true">
-                  ‹
-                </span>
-                <span className={styles.pageBtn} data-active="true">
-                  1
-                </span>
-                <span className={styles.pageBtn} aria-hidden="true">
-                  ›
-                </span>
+                <span className="block h-8 w-48 animate-pulse rounded-md bg-navy-100" />
               </div>
             </div>
           </>
@@ -511,7 +629,13 @@ export default function PersonnelInventoryPage() {
           </Select>
         </div>
 
-        {visible.length === 0 ? (
+        {pageError && rows.length === 0 && !loading ? (
+          <div className={styles.emptyState} role="alert">
+            <p className={styles.panelSub}>
+              Failed to load inventory. Please try again.
+            </p>
+          </div>
+        ) : visible.length === 0 ? (
           <div className={styles.emptyState}>
             <p className={styles.panelSub}>
               {total === 0
@@ -886,5 +1010,25 @@ export default function PersonnelInventoryPage() {
         </DialogContent>
       </Dialog>
     </section>
+  )
+}
+
+export default function PersonnelInventoryPage() {
+  return (
+    <Suspense
+      fallback={
+        <section className={styles.section}>
+          <p className={styles.crumb}>Personnel / Inventory</p>
+          <div className={styles.headerRow}>
+            <div>
+              <h1 className={styles.title}>Stocks</h1>
+              <p className={styles.subtitle}>Loading inventory…</p>
+            </div>
+          </div>
+        </section>
+      }
+    >
+      <PersonnelInventoryContent />
+    </Suspense>
   )
 }

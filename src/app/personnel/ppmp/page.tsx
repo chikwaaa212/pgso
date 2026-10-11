@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -31,6 +32,7 @@ export default function PpmpPage() {
   const [fileName, setFileName] = useState("");
   const formRef = useRef<HTMLFormElement>(null);
   const { toast } = useToast();
+  const router = useRouter();
 
   function submit(formData: FormData) {
     setResult(null);
@@ -61,6 +63,16 @@ export default function PpmpPage() {
         </p>
         <Button type="button" className="mt-4" onClick={() => setOpen(true)}>
           Import Excel
+        </Button>
+      </Card>
+
+      <Card className="mt-4 p-6">
+        <h2 className="text-lg font-semibold">PPMP Analytics</h2>
+        <p className="text-sm text-zinc-600 mt-1">
+          Select uploaded workbooks, validate their structure, and compare them across fiscal years.
+        </p>
+        <Button type="button" className="mt-4" onClick={() => router.push("/personnel/ppmp/analytics")}>
+          Open analytics
         </Button>
       </Card>
 

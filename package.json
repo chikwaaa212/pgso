@@ -9,7 +9,7 @@
     "start": "next start",
     "postinstall": "prisma generate",
     "lint": "eslint",
-    "test": "node --test src/__tests__/*.test.ts",
+    "test": "node --test --import ./src/__tests__/server-only-shim.mjs src/__tests__/*.test.ts",
     "seed:assets": "tsx scripts/seed-assets.ts",
     "seed:requests-repairs": "npx -y tsx scripts/seed-requests-repairs.ts",
     "seed:demo-20": "tsx --env-file=.env.local scripts/seed-demo-20.ts",

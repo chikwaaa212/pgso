@@ -5,8 +5,7 @@ import { getPersonnelScope } from '@/lib/personnel-scope'
 
 // ─── Extended counts for the full operations overview ───────────────────────
 
-export interface OperationsStats {
-  totalDeliveries: number
+export interface OperationsStats {  totalDeliveries: number
   pendingInspections: number
   completedInspections: number
   totalItems: number
@@ -19,43 +18,6 @@ export interface OperationsStats {
   totalAssets: number
   totalStockSkus: number
   totalIssuances: number
-}
-
-async function countIssuances(ownerId?: string | null, scopeAll?: boolean): Promise<number> {
-  try {
-    if (ownerId && !scopeAll) {
-      const rows = await prisma.$queryRaw<Array<{ count: bigint }>>`
-        SELECT COUNT(*)::bigint AS count FROM issuance_records WHERE created_by = ${ownerId}::uuid`
-      return Number(rows[0]?.count ?? 0)
-    }
-    const rows = await prisma.$queryRaw<Array<{ count: bigint }>>`
-      SELECT COUNT(*)::bigint AS count FROM issuance_records`
-    return Number(rows[0]?.count ?? 0)
-  } catch {
-    return 0
-  }
-}
-
-async function countMyRepairsByStatus(
-  ownerId: string | null,
-  status: string,
-  scopeAll?: boolean
-): Promise<number> {
-  if (!ownerId) return 0
-  try {
-    if (scopeAll) return await prisma.repair.count({ where: { status } })
-    // Strict own-data (created_by = me, no legacy-NULL fallback) — matches
-    // getRepairs() behind the repairs page so the badge never exceeds what
-    // the login user actually sees.
-    const rows = await prisma.$queryRaw<Array<{ count: bigint }>>`
-      SELECT COUNT(*)::bigint AS count FROM repairs
-      WHERE status = ${status} AND created_by = ${ownerId}::uuid`
-    return Number(rows[0]?.count ?? 0)
-  } catch {
-    // Column missing (migration not applied yet) → fail closed for
-    // personnel: returning the global queue would leak other users' tickets.
-    return 0
-  }
 }
 
 export async function getOperationsStats(
@@ -87,57 +49,81 @@ export async function getOperationsStats(
     const scope = scopeOverride ?? (await getPersonnelScope())
     if (scope.isEmpty || !scope.userId) return zeros
     const me = scope.userId
-    const myDeliveryFilter = scope.isSuperAdmin ? {} : { received_by: me }
-    const myInspectionFilter = scope.isSuperAdmin ? {} : { inspector_id: me }
     // Requests badge/cards match the personnel inbox exactly (strict
     // recipient_id = me — same filter as getRequests({ forRecipient: true })
     // behind the requests page). Super admin keeps the global queue count.
-    const myRequestFilter = scope.isSuperAdmin
-      ? { status: 'pending' }
-      : { status: 'pending', recipient_id: me }
+    // (Enforced in the combined COUNT below; the old per-query filter consts
+    // were removed with the fan-out.)
     const { getDashboardStats } = await import('../inspections/actions')
-    // Two sequential batches (was one 11-way fan-out): the dashboard shares
-    // one pooler connection pool with the layout's own stats queries.
-    // totalDocuments joins the second batch instead of a third serial hop.
-    const [
-      totalDeliveries,
-      pendingInspections,
-      completedInspections,
-      totalItems,
-      pendingRequests,
-      pendingRepairs,
-    ] = await Promise.all([
-      prisma.delivery.count({ where: myDeliveryFilter }),
-      prisma.delivery.count({ where: { ...myDeliveryFilter, inspection_status: 'pending' } }),
-      prisma.inspection.count({ where: myInspectionFilter }),
-      prisma.deliveryItem.count({ where: { delivery: myDeliveryFilter } }),
-      prisma.request.count({ where: myRequestFilter }),
-      countMyRepairsByStatus(me, 'pending', scope.isSuperAdmin),
-    ])
-    const [
-      inProgressRepairs,
-      totalAssets,
-      totalStockSkus,
-      totalIssuances,
-      out,
-      low,
-      totalDocuments,
-    ] = await Promise.all([
-      countMyRepairsByStatus(me, 'in_progress', scope.isSuperAdmin),
-      prisma.asset.count().catch(() => 0),
-      prisma.inventoryItem.count().catch(() => 0),
-      countIssuances(me, scope.isSuperAdmin),
-      // Count in the DB instead of downloading every stock row to tally in JS.
-      prisma.inventoryItem.count({ where: { quantity: { lte: 0 } } }).catch(() => 0),
-      prisma.$queryRaw<Array<{ count: bigint }>>`
-        SELECT COUNT(*)::bigint AS count FROM inventory
-        WHERE quantity > 0 AND reorder_threshold IS NOT NULL AND quantity <= reorder_threshold`
-        .then((r) => Number(r[0]?.count ?? 0))
-        .catch(() => 0),
+    // Single combined COUNT query (was two sequential Promise.all batches =
+    // 13 round-trips). Each COUNT costs a full pooler RTT from far regions
+    // while executing in ms in-DB, so fan-out was the dominant cost — same
+    // lesson as browseDocumentHub (8 RTT → 1). Filters are identical to the
+    // per-query versions they replace (own-data for personnel, global for
+    // super_admin); only the batching changed, never the scoping.
+    interface OpsCounts {
+      total_deliveries: bigint
+      pending_inspections: bigint
+      completed_inspections: bigint
+      total_items: bigint
+      pending_requests: bigint
+      pending_repairs: bigint
+      in_progress_repairs: bigint
+      total_assets: bigint
+      total_skus: bigint
+      total_issuances: bigint
+      out_count: bigint
+      low_count: bigint
+    }
+    const countsQuery = scope.isSuperAdmin
+      ? prisma.$queryRaw<OpsCounts[]>`
+        SELECT
+          (SELECT COUNT(*) FROM deliveries)::bigint AS total_deliveries,
+          (SELECT COUNT(*) FROM deliveries WHERE inspection_status = 'pending')::bigint AS pending_inspections,
+          (SELECT COUNT(*) FROM inspections)::bigint AS completed_inspections,
+          (SELECT COUNT(*) FROM delivery_items)::bigint AS total_items,
+          (SELECT COUNT(*) FROM requests WHERE status = 'pending')::bigint AS pending_requests,
+          (SELECT COUNT(*) FROM repairs WHERE status = 'pending')::bigint AS pending_repairs,
+          (SELECT COUNT(*) FROM repairs WHERE status = 'in_progress')::bigint AS in_progress_repairs,
+          (SELECT COUNT(*) FROM assets)::bigint AS total_assets,
+          (SELECT COUNT(*) FROM inventory)::bigint AS total_skus,
+          (SELECT COUNT(*) FROM issuance_records)::bigint AS total_issuances,
+          (SELECT COUNT(*) FROM inventory WHERE quantity <= 0)::bigint AS out_count,
+          (SELECT COUNT(*) FROM inventory WHERE quantity > 0 AND reorder_threshold IS NOT NULL AND quantity <= reorder_threshold)::bigint AS low_count`
+      : prisma.$queryRaw<OpsCounts[]>`
+        SELECT
+          (SELECT COUNT(*) FROM deliveries WHERE received_by = ${me}::uuid)::bigint AS total_deliveries,
+          (SELECT COUNT(*) FROM deliveries WHERE received_by = ${me}::uuid AND inspection_status = 'pending')::bigint AS pending_inspections,
+          (SELECT COUNT(*) FROM inspections WHERE inspector_id = ${me}::uuid)::bigint AS completed_inspections,
+          (SELECT COUNT(*) FROM delivery_items di JOIN deliveries d ON d.id = di.delivery_id WHERE d.received_by = ${me}::uuid)::bigint AS total_items,
+          (SELECT COUNT(*) FROM requests WHERE status = 'pending' AND recipient_id = ${me}::uuid)::bigint AS pending_requests,
+          (SELECT COUNT(*) FROM repairs WHERE status = 'pending' AND created_by = ${me}::uuid)::bigint AS pending_repairs,
+          (SELECT COUNT(*) FROM repairs WHERE status = 'in_progress' AND created_by = ${me}::uuid)::bigint AS in_progress_repairs,
+          (SELECT COUNT(*) FROM assets)::bigint AS total_assets,
+          (SELECT COUNT(*) FROM inventory)::bigint AS total_skus,
+          (SELECT COUNT(*) FROM issuance_records WHERE created_by = ${me}::uuid)::bigint AS total_issuances,
+          (SELECT COUNT(*) FROM inventory WHERE quantity <= 0)::bigint AS out_count,
+          (SELECT COUNT(*) FROM inventory WHERE quantity > 0 AND reorder_threshold IS NOT NULL AND quantity <= reorder_threshold)::bigint AS low_count`
+    const [countRows, totalDocuments] = await Promise.all([
+      countsQuery.catch(() => null),
       // Same "unviewed documents" notion as the sidebar badge so the
       // dashboard card and the nav stay in sync — same scope, no re-lookup.
       getDashboardStats(scope).then((s) => s.totalDocuments).catch(() => 0),
     ])
+    if (!countRows || countRows.length === 0) return zeros
+    const c = countRows[0]
+    const totalDeliveries = Number(c.total_deliveries ?? 0)
+    const pendingInspections = Number(c.pending_inspections ?? 0)
+    const completedInspections = Number(c.completed_inspections ?? 0)
+    const totalItems = Number(c.total_items ?? 0)
+    const pendingRequests = Number(c.pending_requests ?? 0)
+    const pendingRepairs = Number(c.pending_repairs ?? 0)
+    const inProgressRepairs = Number(c.in_progress_repairs ?? 0)
+    const totalAssets = Number(c.total_assets ?? 0)
+    const totalStockSkus = Number(c.total_skus ?? 0)
+    const totalIssuances = Number(c.total_issuances ?? 0)
+    const out = Number(c.out_count ?? 0)
+    const low = Number(c.low_count ?? 0)
 
     return {
       totalDeliveries,

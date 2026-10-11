@@ -2,6 +2,8 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   /* config options here */
+  // Explicit gzip/brotli compression for list payloads (default on, pinned).
+  compress: true,
   // Server-action uploads (PPMP / asset / catalog Excel imports accept up
   // to 10 MB files) exceed the 1 MB default action payload limit.
   experimental: {

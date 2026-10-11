@@ -117,8 +117,17 @@ export async function addPersonnelEmployee(
   // Personnel stat stays stale for 60s, which looks like the submit failed
   // and invites a double-submit (which then waits on the idempotency poll).
   try {
-    const { bustSuperAdminScopes } = await import('@/lib/personnel-cache')
+    const { bustSuperAdminScopes, bustMiddlewareRoleCache } = await import('@/lib/personnel-cache')
     await bustSuperAdminScopes(['dashboard'])
+    // Role write (upsert sets role+status): clear any cached role entry for
+    // the target so the first login never reads a stale role/status. The id
+    // is fresh, so this is normally a no-op — kept as insurance for the
+    // upsert-update branch (retried create over a lingering profile row).
+    if (newUserId) {
+      const { bustRoleCache } = await import('@/lib/personnel-scope')
+      bustRoleCache(newUserId)
+      await bustMiddlewareRoleCache(newUserId).catch(() => {})
+    }
   } catch {
     // best-effort: a stale cache must not fail an already-created account
   }

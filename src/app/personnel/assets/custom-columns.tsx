@@ -51,10 +51,11 @@ export function useCustomFields() {
     data: fields,
     loading,
     refresh,
+    mutate,
   } = useCachedAction(CLIENT_CACHE_KEYS.assetCustomFields, getCustomFields, {
     staleTime: 300_000,
   });
-  return { fields: fields ?? [], loadingFields: loading, refreshFields: refresh };
+  return { fields: fields ?? [], loadingFields: loading, refreshFields: refresh, mutateFields: mutate };
 }
 
 function bustAssetCaches() {
@@ -102,7 +103,7 @@ export function AddColumnDialog({
   const [adding, setAdding] = useState(false);
   const [deletingKey, setDeletingKey] = useState<string | null>(null);
   const [confirmKey, setConfirmKey] = useState<string | null>(null);
-  const { fields, refreshFields } = useCustomFields();
+  const { fields, refreshFields, mutateFields } = useCustomFields();
   const busy = adding || deletingKey !== null;
 
   function reset() {
@@ -116,11 +117,21 @@ export function AddColumnDialog({
     if (adding || !label.trim()) return;
     setAdding(true);
     setError("");
+    // Optimistic: paint the column immediately; roll back on failure,
+    // reconcile with the server key (slug may gain a numeric suffix).
+    const tempKey = `optimistic-${Date.now().toString(36)}`;
+    const optimisticDef: CustomFieldDef = { key: tempKey, label: label.trim(), type: fieldType };
+    mutateFields((prev) => [...(prev ?? []), optimisticDef]);
     try {
       const res = await createCustomField({ label, field_type: fieldType });
       if (res.success) {
         reset();
         setOpen(false);
+        mutateFields((prev) =>
+          (prev ?? []).map((f) =>
+            f.key === tempKey ? { key: res.key ?? tempKey, label: optimisticDef.label, type: optimisticDef.type } : f
+          )
+        );
         refreshFields();
         onSuccess?.();
         toast.success("Column added successfully.", {
@@ -130,11 +141,13 @@ export function AddColumnDialog({
       } else {
         const msg = res.error ?? "Failed to add the column.";
         setError(msg);
+        mutateFields((prev) => (prev ?? []).filter((f) => f.key !== tempKey));
         toast.error(msg, { duration: 2000, closeButton: true });
       }
     } catch {
       const msg = "Failed to add the column. Please try again.";
       setError(msg);
+      mutateFields((prev) => (prev ?? []).filter((f) => f.key !== tempKey));
       toast.error(msg, { duration: 2000, closeButton: true });
     } finally {
       setAdding(false);
@@ -149,6 +162,9 @@ export function AddColumnDialog({
     if (deletingKey) return;
     setDeletingKey(key);
     setError("");
+    // Optimistic: drop the column immediately; restore on failure.
+    const prev = fields;
+    mutateFields((cur) => (cur ?? []).filter((f) => f.key !== key));
     try {
       const res = await deleteCustomField(key);
       if (res.success) {
@@ -162,11 +178,13 @@ export function AddColumnDialog({
       } else {
         const msg = res.error ?? "Failed to delete the column.";
         setError(msg);
+        mutateFields(prev);
         toast.error(msg, { duration: 2000, closeButton: true });
       }
     } catch {
       const msg = "Failed to delete the column. Please try again.";
       setError(msg);
+      mutateFields(prev);
       toast.error(msg, { duration: 2000, closeButton: true });
     } finally {
       setDeletingKey(null);
@@ -352,8 +370,11 @@ export function CustomCell({
         setEditing(startEditing);
         onSaved();
       } else {
+        // Roll back to server truth + failure toast (was silent).
         setFailed(true);
         setVal(raw);
+        const msg = (res as { error?: string }).error ?? "Could not save — check the value and try again.";
+        toast.error(msg, { duration: 2000, closeButton: true });
       }
     });
   }

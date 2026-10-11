@@ -129,87 +129,106 @@ export async function login(
   }
 
   try {
-    const outcome = await withIdempotency(
-      formData.get('idempotencyKey') as string,
-      'auth:login',
-      async () => {
-        const supabase = await createClient()
-        const { error } = await supabase.auth.signInWithPassword({
-          email,
-          password,
-        })
+    const tStart = Date.now()
+    let tAuth = 0
+    let tRole = 0
+    let tFlip = 0
+    // Login is naturally idempotent (signing in twice yields the same
+    // session), so it skips the idempotency-key table entirely — that table
+    // costs 3 DB round-trips per login (claim + complete + stale reclaim)
+    // for no benefit here. Writes (signup/verify) keep withIdempotency.
+    const supabase = await createClient()
+    let t0 = Date.now()
+    const { data: signInData, error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    })
+    tAuth = Date.now() - t0
 
-        if (error) {
-          // Password correct but inbox not verified yet — surface a typed
-          // state (not just text) so login can deep-link to the OTP step.
-          if ((error.message ?? '').toLowerCase().includes('email not confirmed')) {
-            throw Object.assign(
-              new Error(
-                'Please verify your email first — enter the 8-digit code we sent, then sign in.'
-              ),
-              { needsVerification: true, email }
-            )
-          }
-          throw new Error(error.message)
-        }
-
-        const { data: { user } } = await supabase.auth.getUser()
-        if (!user) {
-          throw new Error('Login failed')
-        }
-
-        const profile = await prisma.profile.findUnique({
-          where: { id: user.id },
-          select: { role: true, status: true },
-        })
-
-        if (!profile) {
-          throw new Error('Profile not found. Contact your administrator.')
-        }
-
-        if (profile.status === 'inactive') {
-          await supabase.auth.signOut()
-          throw new Error('Your account is inactive.')
-        }
-
-        // Legacy self-registrations created before self-service auto-activation
-        // used `status = pending` + admin approval. Approval is gone — flip
-        // them to active on first successful sign-in so nobody is stuck.
-        if (profile.status === 'pending') {
-          try {
-            await prisma.profile.update({
-              where: { id: user.id },
-              data: { status: 'active' },
-            })
-          } catch {
-            // best-effort: still let them in, middleware treats pending as active
-          }
-        }
-
-        return { role: profile.role, userId: user.id }
+    if (error) {
+      // Password correct but inbox not verified yet — surface a typed
+      // state (not just text) so login can deep-link to the OTP step.
+      if ((error.message ?? '').toLowerCase().includes('email not confirmed')) {
+        throw Object.assign(
+          new Error(
+            'Please verify your email first — enter the 8-digit code we sent, then sign in.'
+          ),
+          { needsVerification: true, email }
+        )
       }
-    )
-
-    // Skip the audit row when this was a duplicate-key replay of an
-    // already-logged sign-in — the first attempt already wrote it.
-    // Fire-and-forget: audit must never block the login redirect.
-    if (!outcome.duplicate) {
-      void writeAuditLog({
-        userId: outcome.result.userId,
-        action: 'auth:login',
-        module: 'auth',
-        details: {
-          purpose: 'User sign-in',
-          summary: `Signed in as ${email}`,
-        },
-      }).catch(() => {})
+      throw new Error(error.message)
     }
+
+    // Reuse the user from signInWithPassword — no extra getUser() Auth
+    // round-trip (was +1 RTT per login on the critical path).
+    const user = signInData.user
+    if (!user) {
+      throw new Error('Login failed')
+    }
+
+    t0 = Date.now()
+    const profile = await prisma.profile.findUnique({
+      where: { id: user.id },
+      select: { role: true, status: true },
+    })
+    tRole = Date.now() - t0
+
+    if (!profile) {
+      throw new Error('Profile not found. Contact your administrator.')
+    }
+
+    if (profile.status === 'inactive') {
+      await supabase.auth.signOut()
+      throw new Error('Your account is inactive.')
+    }
+
+    // Legacy self-registrations created before self-service auto-activation
+    // used `status = pending` + admin approval. Approval is gone — flip
+    // them to active on first successful sign-in so nobody is stuck.
+    if (profile.status === 'pending') {
+      t0 = Date.now()
+      try {
+        await prisma.profile.update({
+          where: { id: user.id },
+          data: { status: 'active' },
+        })
+        const { bustRoleCache } = await import('@/lib/personnel-scope')
+        bustRoleCache(user.id)
+        const { bustMiddlewareRoleCache } = await import('@/lib/personnel-cache')
+        void bustMiddlewareRoleCache(user.id).catch(() => {})
+      } catch {
+        // best-effort: still let them in, middleware treats pending as active
+      }
+      tFlip = Date.now() - t0
+    }
+
+    const role = profile.role
+    const userId = user.id
+    try {
+      if (process.env.PERF_TRACE === '1') {
+        console.log(
+          `[perf login] total ${Date.now() - tStart}ms = auth ${tAuth}ms + role ${tRole}ms + flip ${tFlip}ms`
+        )
+      }
+    } catch {
+      /* ignore */
+    }
+
+    // Fire-and-forget: audit must never block the login redirect.
+    void writeAuditLog({
+      userId,
+      action: 'auth:login',
+      module: 'auth',
+      details: {
+        purpose: 'User sign-in',
+        summary: `Signed in as ${email}`,
+      },
+    }).catch(() => {})
 
     // Guests bounced by middleware carry ?next=<protected path>.
     // Honor it only when it is same-origin AND allowed for this role —
     // otherwise fall back to the role dashboard (never an open redirect).
     const requested = safeNextParam(formData.get('next') as string | null)
-    const role = outcome.result.role
     const fallback = roleRoutes[role] || '/'
     if (requested && roleAllowsPath(role, requested)) {
       // "/" itself role-routes in middleware, so send role home directly.
@@ -441,6 +460,23 @@ export async function resendSignupOtp(
 
 export async function logout() {
   const supabase = await createClient()
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data } = await (supabase.auth as any).getClaims().catch(() => ({ data: null }))
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const sub = (data?.claims as any)?.sub as string | undefined
+    if (sub) {
+      const { bustRoleCache } = await import('@/lib/personnel-scope')
+      bustRoleCache(sub)
+      const { bustMiddlewareRoleCache } = await import('@/lib/personnel-cache')
+      await bustMiddlewareRoleCache(sub).catch(() => {})
+    } else {
+      const { bustRoleCache } = await import('@/lib/personnel-scope')
+      bustRoleCache()
+    }
+  } catch {
+    /* best-effort */
+  }
   await supabase.auth.signOut()
   redirect('/login')
 }

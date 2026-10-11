@@ -33,6 +33,7 @@ import {
   X,
 } from "lucide-react";
 import { logout } from "@/app/(auth)/auth";
+import { broadcastLogout } from "@/components/ClientCacheManager";
 import { updateMyDepartment } from "@/app/personnel/department/actions";
 import { SubmitButton } from "@/components/ui/submit-button";
 import { useToast } from "@/components/ui/toaster";
@@ -622,7 +623,7 @@ export function PersonnelNavbar({
                   </p>
                 )}
                 <div className={styles.userMenuDivider} aria-hidden="true" />
-                <form action={logout} className={styles.userMenuForm}>
+                <form action={logout} onSubmit={() => broadcastLogout()} className={styles.userMenuForm}>
                   <SubmitButton
                     variant="ghost"
                     size="sm"
@@ -751,7 +752,7 @@ export function PersonnelNavbar({
                 <span className={styles.userRole}>{userDetail}</span>
               </div>
             </div>
-            <form action={logout} className={styles.signOutForm}>
+            <form action={logout} onSubmit={() => broadcastLogout()} className={styles.signOutForm}>
               <SubmitButton
                 variant="primary"
                 size="sm"

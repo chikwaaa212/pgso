@@ -3,12 +3,14 @@
 import { revalidatePath } from 'next/cache'
 import prisma from '@/lib/prisma'
 import { requireEmployee } from '@/lib/auth-guard'
+import { cacheKey, cacheGet, cacheSet, bustCachePrefixes } from '@/lib/personnel-cache'
 import {
   createRequest,
-  getRequestFormOptions,
-  getRequests,
+  parseQtyLine,
+  type RequestLine,
   type RequestRow,
 } from '@/app/personnel/requests/actions'
+import { isTransferTo, selectIncomingIds } from '@/lib/transfer-target'
 import type { IssuanceDetail } from '@/app/personnel/issuances/actions'
 
 export interface MyAssetRow {
@@ -97,6 +99,14 @@ export async function getMyAssets(): Promise<MyAssetRow[]> {
     ;({ userId } = await requireEmployee())
   } catch {
     return []
+  }
+  // Auth first, then scoped read-through (per-employee key: never shared).
+  const ck = cacheKey('employee:my-assets', { u: userId })
+  try {
+    const hit = await cacheGet<MyAssetRow[]>(ck)
+    if (hit) return hit
+  } catch {
+    /* fall through to DB */
   }
   try {
     const [assets, docs] = await Promise.all([
@@ -271,6 +281,7 @@ export async function getMyAssets(): Promise<MyAssetRow[]> {
       })
     })
 
+    await cacheSet(ck, rows, 60).catch(() => {})
     return rows
   } catch (e) {
     console.error('[getMyAssets]', e)
@@ -285,6 +296,13 @@ export async function getMyDocs(): Promise<MyDocRow[]> {
     ;({ userId } = await requireEmployee())
   } catch {
     return []
+  }
+  const dk = cacheKey('employee:my-docs', { u: userId })
+  try {
+    const hit = await cacheGet<MyDocRow[]>(dk)
+    if (hit) return hit
+  } catch {
+    /* fall through to DB */
   }
   try {
     const docs = await prisma.issuanceRecord.findMany({
@@ -308,7 +326,7 @@ export async function getMyDocs(): Promise<MyDocRow[]> {
         [a.id, [a.qr_code ?? a.account_code, a.article, a.description].filter(Boolean).join(' — ').slice(0, 80) || 'Asset'] as const
       )
     )
-    return docs.map((d) => ({
+    const myDocs: MyDocRow[] = docs.map((d) => ({
       id: d.id,
       doc_type: d.doc_type,
       doc_no: d.doc_no,
@@ -317,9 +335,11 @@ export async function getMyDocs(): Promise<MyDocRow[]> {
       asset_label: d.asset_id ? (labels.get(d.asset_id) ?? null) : null,
       downloadHref:
         d.doc_type === 'ICS'
-          ? `/api/personnel/issuances/${d.id}/ics-xlsx`
-          : `/api/personnel/issuances/${d.id}/par-xlsx`,
+          ? `/api/employee/issuances/${d.id}/ics-xlsx`
+          : `/api/employee/issuances/${d.id}/par-xlsx`,
     }))
+    await cacheSet(dk, myDocs, 60).catch(() => {})
+    return myDocs
   } catch (e) {
     console.error('[getMyDocs]', e)
     return []
@@ -335,8 +355,9 @@ export async function getMyRequests(): Promise<RequestRow[]> {
     return []
   }
   try {
-    const all = await getRequests()
-    return all.filter((r) => r.employee_id === userId)
+    const { getRequestsPage } = await import('@/app/personnel/requests/actions')
+    const { rows } = await getRequestsPage({ employeeId: userId, page: 1, pageSize: 500 })
+    return rows
   } catch (e) {
     console.error('[getMyRequests]', e)
     return []
@@ -360,6 +381,14 @@ export async function getMyIssuanceDetail(id: string): Promise<IssuanceDetail | 
   }
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id))
     return null
+  // Auth first, then scoped read-through (30s, per-record + per-user).
+  const dk2 = cacheKey('employee:issuance-detail', { u: userId, id })
+  try {
+    const hit = await cacheGet<IssuanceDetail | null>(dk2)
+    if (hit) return hit
+  } catch {
+    /* fall through to DB */
+  }
   try {
     // Raw SQL like the personnel issuance module (works even when the
     // generated client predates the issuance_records migration).
@@ -454,7 +483,7 @@ export async function getMyIssuanceDetail(id: string): Promise<IssuanceDetail | 
       /* keep fallback label */
     }
 
-    return {
+    const detail: IssuanceDetail = {
       id: r.id,
       doc_type: r.doc_type,
       doc_no: r.doc_no,
@@ -494,6 +523,8 @@ export async function getMyIssuanceDetail(id: string): Promise<IssuanceDetail | 
           }
         : null,
     }
+    await cacheSet(dk2, detail, 30).catch(() => {})
+    return detail
   } catch (e) {
     console.error('[getMyIssuanceDetail]', e)
     return null
@@ -501,21 +532,210 @@ export async function getMyIssuanceDetail(id: string): Promise<IssuanceDetail | 
 }
 
 export interface MyAssetRequestRow extends RequestRow {
-  /** 'mine' = filed by me · 'incoming' = transfer addressed to my name. */
+  /** 'mine' = filed by me · 'incoming' reserved for scoped incoming reader. */
   direction: 'mine' | 'incoming'
 }
 
-/** First line is machine-readable: "Transfer to NAME [— LOCATION]". */
-function parseTransferTarget(description: string): string {
-  const first = description.split('\n')[0] ?? ''
-  const m = first.match(/^Transfer to (.+?)(?: — (.+))?$/)
-  return (m?.[1] ?? '').trim()
+/**
+ * Scoped incoming-transfer reader: returns ONLY transfer requests addressed
+ * exactly to the signed-in employee's full name, with minimal columns.
+ *
+ * Two bounded steps (never the whole queue):
+ *  1. Scan recent transfers with minimal columns ({id, description} only,
+ *     capped at 200) and keep exact name matches (capped at 20).
+ *  2. Enrich ONLY those IDs to full RequestRow shape (profiles + labels +
+ *     lines restricted to the matched IDs).
+ * Fail-closed: unknown name, no matches, or any error → [].
+ */
+async function getIncomingTransferRows(
+  userId: string,
+  fullName: string
+): Promise<RequestRow[]> {
+  const name = (fullName ?? '').trim()
+  if (!name) return []
+  try {
+    // Step 1 — minimal candidate scan (id + description only).
+    const candidates = await prisma.request
+      .findMany({
+        where: { request_type: 'transfer' },
+        orderBy: { date_requested: 'desc' },
+        take: 200,
+        select: { id: true, description: true },
+      })
+      .catch(() => [])
+    const ids = selectIncomingIds(candidates, name, 20).filter(
+      (id) => typeof id === 'string' && id.length > 0
+    )
+    if (ids.length === 0) return []
+
+    // Step 2 — enrich ONLY the matched IDs (minimal columns throughout).
+    const matched = await prisma.request.findMany({
+      where: { id: { in: ids } },
+      orderBy: { date_requested: 'desc' },
+      select: {
+        id: true,
+        request_type: true,
+        description: true,
+        status: true,
+        date_requested: true,
+        date_resolved: true,
+        employee_id: true,
+        recipient_id: true,
+        asset_id: true,
+      },
+    })
+    // Belt and suspenders: re-verify exact address on the enriched rows so
+    // a rename between the two queries can never leak a row.
+    const verified = matched.filter((r) => isTransferTo(r.description ?? '', name))
+    if (verified.length === 0) return []
+
+    const personIds = [
+      ...new Set(
+        verified.flatMap((r) => [r.employee_id, r.recipient_id].filter(Boolean) as string[])
+      ),
+    ]
+    const assetIds = [
+      ...new Set(verified.map((r) => r.asset_id).filter((v): v is string => !!v)),
+    ]
+    const [profiles, assetRows, stockRows, lineRows] = await Promise.all([
+      personIds.length > 0
+        ? prisma.profile
+            .findMany({
+              where: { id: { in: personIds } },
+              select: { id: true, full_name: true },
+            })
+            .catch(() => [] as { id: string; full_name: string | null }[])
+        : Promise.resolve([] as { id: string; full_name: string | null }[]),
+      assetIds.length > 0
+        ? prisma.asset
+            .findMany({
+              where: { id: { in: assetIds } },
+              select: { id: true, qr_code: true, account_code: true, article: true, description: true },
+            })
+            .catch(() => [])
+        : Promise.resolve([]),
+      assetIds.length > 0
+        ? prisma.inventoryItem
+            .findMany({
+              where: { id: { in: assetIds } },
+              select: { id: true, item_name: true, account_code: true },
+            })
+            .catch(() => [])
+        : Promise.resolve([]),
+      prisma.$queryRaw<
+        Array<{ id: string; request_id: string; asset_id: string | null; description: string; quantity: number; unit_cost: unknown }>
+      >`
+        SELECT id::text AS id, request_id::text AS request_id,
+               asset_id::text AS asset_id, description, quantity, unit_cost
+        FROM request_items WHERE request_id = ANY(${verified.map((r) => r.id)}::uuid[])
+        ORDER BY created_at ASC`.catch(() => []),
+    ])
+
+    const names = new Map(profiles.map((p) => [p.id, p.full_name ?? '—']))
+    const labels = new Map<string, { label: string; account_code: string | null }>()
+    for (const a of assetRows) {
+      const bits = [a.qr_code ?? a.account_code, a.article, a.description].filter(Boolean) as string[]
+      labels.set(a.id, {
+        label: bits.length > 0 ? bits.join(' — ').slice(0, 80) : 'Asset',
+        account_code: a.account_code,
+      })
+    }
+    for (const s of stockRows) {
+      const bits = [s.account_code, s.item_name].filter(Boolean) as string[]
+      labels.set(s.id, {
+        label: bits.length > 0 ? bits.join(' — ').slice(0, 80) : 'Asset',
+        account_code: s.account_code,
+      })
+    }
+    const lineMap = new Map<string, RequestLine[]>()
+    for (const row of lineRows) {
+      const list = lineMap.get(row.request_id) ?? []
+      const n = row.unit_cost != null ? Number(row.unit_cost) : NaN
+      list.push({
+        id: row.id,
+        asset_id: row.asset_id,
+        description: row.description ?? '',
+        quantity: row.quantity ?? 1,
+        unit_cost: Number.isFinite(n) && n >= 0 ? n : null,
+      })
+      lineMap.set(row.request_id, list)
+    }
+
+    const rows: RequestRow[] = await Promise.all(
+      verified.map(async (r) => {
+        const stored = lineMap.get(r.id) ?? []
+        const lines: RequestLine[] =
+          stored.length > 0
+            ? stored
+            : r.asset_id
+              ? [
+                  {
+                    id: '',
+                    asset_id: r.asset_id,
+                    description: '',
+                    quantity: await parseQtyLine(r.description),
+                    unit_cost: null,
+                  },
+                ]
+              : []
+        const firstLabel = (l: RequestLine): string => {
+          if (l.asset_id) {
+            const saved = labels.get(l.asset_id)?.label
+            if (saved) return l.quantity > 1 ? `${saved} ×${l.quantity}` : saved
+          }
+          const text = l.description.trim().slice(0, 80) || 'Item'
+          return l.quantity > 1 ? `${text} ×${l.quantity}` : text
+        }
+        const label =
+          lines.length > 1
+            ? `${lines.length} items — ${firstLabel(lines[0])}`
+            : lines.length === 1
+              ? firstLabel(lines[0])
+              : r.asset_id
+                ? (labels.get(r.asset_id)?.label ?? '—')
+                : null
+        const codes = new Set<string>()
+        for (const l of lines) {
+          if (l.asset_id) {
+            const code = labels.get(l.asset_id)?.account_code?.trim()
+            if (code) codes.add(code)
+          }
+        }
+        if (r.asset_id) {
+          const code = labels.get(r.asset_id)?.account_code?.trim()
+          if (code) codes.add(code)
+        }
+        return {
+          id: r.id,
+          request_type: r.request_type,
+          description: r.description,
+          status: r.status,
+          date_requested: r.date_requested?.toISOString() ?? null,
+          date_resolved: r.date_resolved?.toISOString() ?? null,
+          employee_id: r.employee_id,
+          employee_name: names.get(r.employee_id) ?? 'Unknown employee',
+          recipient_id: r.recipient_id,
+          recipient_name: r.recipient_id ? (names.get(r.recipient_id) ?? 'Unknown') : null,
+          asset_id: r.asset_id,
+          asset_label: label,
+          account_code: codes.size > 0 ? [...codes].join(', ') : null,
+          lines,
+          item_count: lines.length,
+        }
+      })
+    )
+    void userId
+    return rows
+  } catch (e) {
+    console.error('[getIncomingTransferRows]', e)
+    return []
+  }
 }
 
 /**
- * Requests to surface on My Assets: everything I filed (new assignments,
- * transfers, repairs, stock) plus transfers filed by others addressed to my
- * name. Newest first.
+ * Requests to surface on My Assets: everything I filed plus transfers
+ * others addressed exactly to my name. Newest first. Fail-closed to
+ * own + incoming rows only (never the global queue).
  */
 export async function getMyAssetRequests(): Promise<MyAssetRequestRow[]> {
   let userId = ''
@@ -524,29 +744,40 @@ export async function getMyAssetRequests(): Promise<MyAssetRequestRow[]> {
   } catch {
     return []
   }
+  const rk = cacheKey('employee:my-asset-requests', { u: userId })
   try {
-    const [profile, all] = await Promise.all([
+    const hit = await cacheGet<MyAssetRequestRow[]>(rk)
+    if (hit) return hit
+  } catch {
+    /* fall through to DB */
+  }
+  try {
+    const { getRequestsPage } = await import('@/app/personnel/requests/actions')
+    const [profile, mine] = await Promise.all([
       prisma.profile.findUnique({
         where: { id: userId },
         select: { full_name: true },
       }),
-      getRequests(),
+      getRequestsPage({ employeeId: userId, page: 1, pageSize: 500 }).then((r) => r.rows),
     ])
-    const myName = (profile?.full_name ?? '').trim().toLowerCase()
-    const rows: MyAssetRequestRow[] = []
-    for (const r of all) {
-      if (r.employee_id === userId) {
-        rows.push({ ...r, direction: 'mine' })
-      } else if (r.request_type === 'transfer' && myName) {
-        // Exact match only — substring matching leaked transfers to
-        // uninvolved employees on name collisions (e.g. "Ann" vs "Annalise").
-        const target = parseTransferTarget(r.description).toLowerCase()
-        if (target && target === myName) {
-          rows.push({ ...r, direction: 'incoming' })
-        }
-      }
+    const myName = (profile?.full_name ?? '').trim()
+    // Incoming transfers addressed exactly to me (scoped reader: ONLY those
+    // rows, minimal columns, capped at 20 — never the global queue).
+    const incoming = await getIncomingTransferRows(userId, myName)
+    const seen = new Set(mine.map((r) => r.id))
+    const merged: MyAssetRequestRow[] = [
+      ...mine.map((r) => ({ ...r, direction: 'mine' as const })),
+      ...incoming
+        .filter((r) => !seen.has(r.id))
+        .map((r) => ({ ...r, direction: 'incoming' as const })),
+    ]
+    const time = (v: string | null) => {
+      const t = v ? new Date(v).getTime() : NaN
+      return Number.isFinite(t) ? t : -1
     }
-    return rows
+    merged.sort((a, b) => time(b.date_requested) - time(a.date_requested))
+    await cacheSet(rk, merged, 30).catch(() => {})
+    return merged
   } catch (e) {
     console.error('[getMyAssetRequests]', e)
     return []
@@ -566,22 +797,100 @@ export interface MyRequestOptions {
   personnel: { id: string; label: string }[]
 }
 
-/** Asset + personnel picker options for the employee request form (requester is always self). */
-export async function getMyRequestOptions(): Promise<MyRequestOptions> {
+/** Asset + personnel picker options for the employee request form (requester is always self).
+ *
+ * Server-side search (`q`) with a small page (PAGE_SIZE per source) — never
+ * the 500-row catalog slice. Returns ONLY the fields the picker displays
+ * (id/label/disabledReason/kind/quantity/heldByMe + personnel id/label).
+ * Held assets (assigned_to = me) always come along — transfer/repair filter
+ * to them client-side, so they must survive any search.
+ */
+export async function getMyRequestOptions(
+  opts: { q?: string } = {}
+): Promise<MyRequestOptions> {
   let userId = ''
   try {
     ;({ userId } = await requireEmployee())
   } catch {
     return { assets: [], personnel: [] }
   }
+  const q = String(opts.q ?? '').trim().slice(0, 60)
+  const ok = cacheKey('employee:my-request-options', { u: userId, q })
   try {
+    const hit = await cacheGet<MyRequestOptions>(ok)
+    if (hit) return hit
+  } catch {
+    /* fall through to DB */
+  }
+  try {
+    const { PAGE_SIZE } = await import('@/lib/constants')
+    const { assetOptionDisabledReason } = await import('@/lib/asset-option')
+    const assetWhere =
+      q !== ''
+        ? {
+            OR: [
+              { article: { contains: q, mode: 'insensitive' as const } },
+              { description: { contains: q, mode: 'insensitive' as const } },
+              { account_code: { contains: q, mode: 'insensitive' as const } },
+              { qr_code: { contains: q, mode: 'insensitive' as const } },
+            ],
+          }
+        : {}
+    const stockWhere =
+      q !== ''
+        ? {
+            OR: [
+              { item_name: { contains: q, mode: 'insensitive' as const } },
+              { account_code: { contains: q, mode: 'insensitive' as const } },
+            ],
+          }
+        : {}
     // Each branch degrades independently: a transient pooler blip (P1001
     // can't-reach-database, P1017, P2024) on one query must not wipe out the
-    // branches that succeeded — e.g. the personnel picker still works when
-    // the asset catalog fetch fails. The outer catch stays as the final
-    // guard so this action never throws and never crashes the page.
-    const [{ assets }, staff, mine] = await Promise.all([
-      getRequestFormOptions().catch(() => ({ assets: [] as never[] })),
+    // branches that succeeded. The outer catch stays as the final guard so
+    // this action never throws and never crashes the page.
+    const [held, catalogAssets, catalogStocks, staff] = await Promise.all([
+      prisma.asset
+        .findMany({
+          where: { assigned_to: userId },
+          orderBy: { created_at: 'desc' },
+          take: 100,
+          select: {
+            id: true,
+            qr_code: true,
+            account_code: true,
+            article: true,
+            description: true,
+            status: true,
+            quantity: true,
+          },
+        })
+        .catch(() => []),
+      prisma.asset
+        .findMany({
+          where: assetWhere,
+          orderBy: { created_at: 'desc' },
+          take: PAGE_SIZE,
+          select: {
+            id: true,
+            qr_code: true,
+            account_code: true,
+            article: true,
+            description: true,
+            status: true,
+            quantity: true,
+            assigned_to: true,
+          },
+        })
+        .catch(() => []),
+      prisma.inventoryItem
+        .findMany({
+          where: stockWhere,
+          orderBy: { item_name: 'asc' },
+          take: PAGE_SIZE,
+          select: { id: true, item_name: true, account_code: true, quantity: true },
+        })
+        .catch(() => []),
       prisma.profile
         .findMany({
           where: { status: 'active', role: 'pgso_personnel' },
@@ -589,23 +898,68 @@ export async function getMyRequestOptions(): Promise<MyRequestOptions> {
           select: { id: true, full_name: true, position: true, office: true },
         })
         .catch(() => []),
-      prisma.asset
-        .findMany({
-          where: { assigned_to: userId },
-          select: { id: true },
-        })
-        .catch(() => []),
     ])
-    const heldIds = new Set(mine.map((m) => m.id))
-    return {
-      assets: assets.map((a) => ({
-        id: a.id,
-        label: `${a.label} · ${a.kind === 'stock' ? 'Stock' : 'Asset'}`,
-        disabledReason: a.disabledReason,
-        kind: a.kind,
-        quantity: a.quantity,
-        heldByMe: a.kind === 'asset' && heldIds.has(a.id),
-      })),
+    const heldIds = new Set(held.map((m) => m.id))
+    const labelOf = (a: {
+      qr_code: string | null
+      account_code: string | null
+      article: string | null
+      description: string | null
+    }): string => {
+      const bits = [a.qr_code ?? a.account_code, a.article, a.description].filter(
+        Boolean
+      ) as string[]
+      return bits.length > 0 ? bits.join(' — ').slice(0, 80) : 'Asset'
+    }
+    // Held first (transfer/repair source), then catalog matches, de-duplicated.
+    const seen = new Set<string>()
+    const assets: MyRequestOptions['assets'] = []
+    const pushAsset = (row: {
+      id: string
+      qr_code: string | null
+      account_code: string | null
+      article: string | null
+      description: string | null
+      status: string | null
+      quantity: number | null
+      assigned_to?: string | null
+    }) => {
+      if (seen.has(row.id)) return
+      seen.add(row.id)
+      const heldByMe = heldIds.has(row.id)
+      assets.push({
+        id: row.id,
+        label: `${labelOf(row)} · Asset`,
+        disabledReason: heldByMe
+          ? null
+          : assetOptionDisabledReason({
+              source: 'asset',
+              status: row.status,
+              quantity: row.quantity,
+              assigned_to: row.assigned_to ?? null,
+            }),
+        kind: 'asset',
+        quantity: row.quantity,
+        heldByMe,
+      })
+    }
+    for (const h of held) pushAsset({ ...h, assigned_to: userId })
+    for (const a of catalogAssets) pushAsset(a)
+    for (const s of catalogStocks) {
+      if (seen.has(s.id)) continue
+      seen.add(s.id)
+      assets.push({
+        id: s.id,
+        label: `${labelOf({ qr_code: null, account_code: s.account_code, article: s.item_name, description: null })} · Stock`,
+        disabledReason:
+          typeof s.quantity === 'number' && s.quantity <= 0 ? 'Out of stock' : null,
+        kind: 'stock',
+        quantity: s.quantity,
+        heldByMe: false,
+      })
+    }
+    const options: MyRequestOptions = {
+      assets,
       personnel: staff.map((p) => ({
         id: p.id,
         label: [p.full_name ?? 'Unnamed', [p.position, p.office].filter(Boolean).join(' · ') || null]
@@ -613,6 +967,8 @@ export async function getMyRequestOptions(): Promise<MyRequestOptions> {
           .join(' — '),
       })),
     }
+    await cacheSet(ok, options, 60).catch(() => {})
+    return options
   } catch (e) {
     console.error('[getMyRequestOptions]', e)
     return { assets: [], personnel: [] }
@@ -691,7 +1047,11 @@ export async function createMyRequest(
     itemNeeded: input.itemNeeded,
     reason: input.reason,
   })
-  if (res.success) revalidatePath('/employee/requests')
+  if (res.success) {
+    // Narrow bust: own employee snapshots + personnel request queue/badges.
+    await bustCachePrefixes(['employee:', 'personnel:request', 'personnel:dashboard']).catch(() => {})
+    revalidatePath('/employee/requests')
+  }
   return res
 }
 

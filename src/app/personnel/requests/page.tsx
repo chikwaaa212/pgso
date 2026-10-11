@@ -153,6 +153,27 @@ export default function PersonnelRequestsPage() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [employees, setEmployees] = useState<EmployeeOption[]>([]);
   const [assets, setAssets] = useState<AssetOption[]>([]);
+  // Server-side item search (small PAGE_SIZE window per open, never the
+  // 500+500-row slice): typing filters assets + stocks in the DB. Windows
+  // merge by id so a picked item stays resolvable across searches.
+  const [itemQuery, setItemQuery] = useState("");
+  const debouncedItemQuery = useDebouncedValue(itemQuery, 300);
+  const trimmedSearch = debouncedItemQuery.trim();
+  const [searched, setSearched] = useState<AssetOption[] | null>(null);
+  const [searchedFor, setSearchedFor] = useState("");
+  const searchingItems = trimmedSearch !== "" && searchedFor !== trimmedSearch;
+  const mergeOptions = (prev: AssetOption[], next: AssetOption[]) => {
+    if (next.length === 0) return prev;
+    const seen = new Set(prev.map((a) => a.id));
+    const merged = [...prev];
+    for (const a of next) {
+      if (!seen.has(a.id)) {
+        seen.add(a.id);
+        merged.push(a);
+      }
+    }
+    return merged;
+  };
   const [employeeId, setEmployeeId] = useState("");
   const [requestType, setRequestType] = useState("transfer");
   const [assetId, setAssetId] = useState("");
@@ -196,16 +217,43 @@ export default function PersonnelRequestsPage() {
 
   useEffect(() => {
     if (dialogOpen) {
-      // Prefetch on first open; subsequent opens reuse state (was lazy
-      // waterfall on every open with empty check only).
+      // Prefetch the default window on first open; subsequent opens reuse
+      // state (was a 500+500-row download on every first open).
       if (employees.length === 0) {
-        void getRequestFormOptions().then((opts) => {
+        void getRequestFormOptions({}).then((opts) => {
           setEmployees(opts.employees);
-          setAssets(opts.assets);
+          setAssets((prev) => mergeOptions(prev, opts.assets));
         });
       }
     }
   }, [dialogOpen, employees.length]);
+
+  useEffect(() => {
+    if (!dialogOpen) return;
+    const q = debouncedItemQuery.trim();
+    if (q === "" || q === searchedFor) return;
+    let live = true;
+    void getRequestFormOptions({ q })
+      .then((opts) => {
+        if (!live) return;
+        setSearched(opts.assets);
+        setSearchedFor(q);
+        setAssets((prev) => mergeOptions(prev, opts.assets));
+      })
+      .catch(() => {
+        if (live) setSearchedFor(q);
+      });
+    return () => {
+      live = false;
+    };
+  }, [dialogOpen, debouncedItemQuery, searchedFor]);
+
+  // Empty query → default window; pending query → previous results stay
+  // visible (no flash of wrong options while the next window loads).
+  // Lookups resolve against the merged pool so a picked item never vanishes.
+  const visiblePool = trimmedSearch === "" ? assets : (searched ?? assets);
+  const lookupPool =
+    searched && searched.length > 0 ? mergeOptions(assets, searched) : assets;
 
   // Server already filtered + paged — visible is the page window.
   const visible = rows;
@@ -335,7 +383,7 @@ export default function PersonnelRequestsPage() {
     try {
       const transferIsStock =
         requestType === "transfer" &&
-        (assets.find((a) => a.id === assetId)?.kind === "stock");
+        (lookupPool.find((a) => a.id === assetId)?.kind === "stock");
       const effectiveTransferTo =
         transferToMode === "select"
           ? (employees.find((e) => e.id === transferToId)?.full_name ?? "")
@@ -389,10 +437,10 @@ export default function PersonnelRequestsPage() {
   // so transfer / assignment / repair can all pick either kind.
   const assetChoices =
     requestType === "stock_replenishment"
-      ? assets.filter((a) => a.kind === "stock")
-      : assets.filter((a) => a.kind === "stock" || a.kind === "asset");
+      ? visiblePool.filter((a) => a.kind === "stock")
+      : visiblePool.filter((a) => a.kind === "stock" || a.kind === "asset");
 
-  const pickedAsset = assets.find((a) => a.id === assetId) ?? null;
+  const pickedAsset = lookupPool.find((a) => a.id === assetId) ?? null;
   const restockQtyNum = Math.floor(Number(restockQty) || 0);
   const transferQtyNum = Math.floor(Number(transferQty) || 0);
   const transferStockMax = pickedAsset?.quantity ?? 0;
@@ -401,7 +449,7 @@ export default function PersonnelRequestsPage() {
     lines.length > 0 &&
     lines.every((l) => {
       if (l.itemNeeded.trim() === "") return false;
-      const pick = assets.find((a) => a.id === l.assetId) ?? null;
+      const pick = lookupPool.find((a) => a.id === l.assetId) ?? null;
       if (pick?.disabledReason) return false;
       if (pick?.kind === "stock") {
         const q = Number(l.quantity);
@@ -647,6 +695,19 @@ export default function PersonnelRequestsPage() {
           </DialogHeader>
 
           <div className="grid gap-4 py-1 sm:grid-cols-2">
+            <div className="grid gap-1.5 sm:col-span-2">
+              <Label htmlFor="req-item-search">Search items</Label>
+              <Input
+                id="req-item-search"
+                aria-label="Search items"
+                value={itemQuery}
+                onChange={(e) => setItemQuery(e.target.value)}
+                placeholder="Type to search assets and stocks…"
+              />
+              {searchingItems ? (
+                <p className="text-xs text-zinc-500">Searching…</p>
+              ) : null}
+            </div>
             {requestType !== "stock_replenishment" ? (
             <div className="grid gap-1.5 sm:col-span-2">
               <Label htmlFor="req-employee">
@@ -786,7 +847,7 @@ export default function PersonnelRequestsPage() {
                 </Label>
                 {lines.map((line, idx) => {
                   const pick =
-                    assets.find((a) => a.id === line.assetId) ?? null;
+                    lookupPool.find((a) => a.id === line.assetId) ?? null;
                   const isStock = pick?.kind === "stock";
                   const max = pick?.quantity ?? 0;
                   return (

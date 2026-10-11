@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import Link from "next/link";
 import { X } from "lucide-react";
 import { toast } from "sonner";
@@ -15,7 +15,9 @@ import { browseInventory } from "../browse/actions";
 import { setReorderThreshold } from "./actions";
 import type { InventoryRow } from "@/app/personnel/inventory/actions";
 import { useCachedAction } from "@/hooks/use-cached-action";
-import { CLIENT_CACHE_KEYS } from "@/lib/client-cache";
+import { CLIENT_CACHE_KEYS, patchClientCache } from "@/lib/client-cache";
+import { patchRowInPage } from "@/lib/list-patch";
+import { PAGE_SIZE } from "@/lib/constants";
 import InventoryLoading from "./loading";
 import styles from "./page.module.css";
 
@@ -88,7 +90,17 @@ function recommendationFor(r: InventoryRow): { short: string; title: string; det
   };
 }
 
-function ThresholdCell({ row, onSaved }: { row: InventoryRow; onSaved: () => void }) {
+function ThresholdCell({
+  row,
+  onOptimistic,
+  onRevert,
+}: {
+  row: InventoryRow;
+  /** Paint the save instantly (parent patches caches, no refetch). */
+  onOptimistic: (id: string, threshold: number | null) => void;
+  /** Roll back to the previous value on failure. */
+  onRevert: (id: string, prev: number | null) => void;
+}) {
   const initial = row.reorder_threshold != null ? String(row.reorder_threshold) : "";
   const [val, setVal] = useState(initial);
   const [saving, setSaving] = useState(false);
@@ -97,28 +109,37 @@ function ThresholdCell({ row, onSaved }: { row: InventoryRow; onSaved: () => voi
   const dirty = val.trim() !== initial.trim();
 
   async function save() {
-    setSaving(true);
     setError("");
-    try {
-      const trimmed = val.trim();
-      let threshold: number | null = null;
-      if (trimmed !== "") {
-        const n = Number(trimmed);
-        if (!Number.isInteger(n) || n < 0) {
-          setError("Whole number ≥ 0, or empty to clear.");
-          return;
-        }
-        threshold = n;
+    const trimmed = val.trim();
+    let threshold: number | null = null;
+    if (trimmed !== "") {
+      const n = Number(trimmed);
+      if (!Number.isInteger(n) || n < 0) {
+        setError("Whole number ≥ 0, or empty to clear.");
+        return;
       }
+      threshold = n;
+    }
+    const prev = row.reorder_threshold ?? null;
+    if (threshold === prev) return;
+    // Optimistic: the row (level pill, alerts, recommendations) updates
+    // instantly via the parent cache patch; the cell remounts on the new
+    // key with the saved value shown.
+    onOptimistic(row.id, threshold);
+    setSaving(true);
+    try {
       const res = await setReorderThreshold(row.id, threshold);
       if (!res.success) {
+        onRevert(row.id, prev);
         setError(res.error ?? "Failed to save threshold.");
         toast.error("Save failed", { description: res.error ?? "Failed to save threshold.", duration: 2000, closeButton: true });
         return;
       }
+      // Reconcile with the server record (authoritative echo, no refetch).
+      onOptimistic(row.id, res.record?.reorder_threshold ?? threshold);
       toast.success("Threshold saved", { description: `${row.item_name} threshold updated.`, duration: 2000, closeButton: true });
-      onSaved();
     } catch {
+      onRevert(row.id, prev);
       setError("Failed to save threshold. Please try again.");
       toast.error("Save failed", { description: "Failed to save threshold. Please try again.", duration: 2000, closeButton: true });
     } finally {
@@ -178,14 +199,26 @@ export default function SuperAdminInventoryPage() {
   const {
     data,
     loading,
-    refresh,
     isValidating,
+    mutate: mutateRows,
   } = useCachedAction(
     CLIENT_CACHE_KEYS.adminInventory,
     browseInventory,
     { staleTime: 60_000 }
   );
   const rows = useMemo(() => data ?? [], [data]);
+
+  // Optimistic threshold saves (no refetch): patch this list + the
+  // personnel inventory windows (same row shape); roll back on failure.
+  // The cell remounts on the new `key` showing the saved value instantly.
+  const patchThreshold = useCallback(
+    (id: string, threshold: number | null) => {
+      const patch = { reorder_threshold: threshold };
+      mutateRows((prev) => (prev ? patchRowInPage(prev, id, patch) : prev));
+      patchClientCache("pgso:client:inventory-items", (d) => patchRowInPage(d, id, patch));
+    },
+    [mutateRows]
+  );
 
   // Dismissal is keyed to the alert count — closing hides this exact alert,
   // but a changed count (e.g. after saving a threshold) toasts again.
@@ -239,7 +272,8 @@ export default function SuperAdminInventoryPage() {
           <ThresholdCell
             key={`${r.id}:${r.reorder_threshold ?? ""}`}
             row={r}
-            onSaved={() => refresh()}
+            onOptimistic={(id, threshold) => patchThreshold(id, threshold)}
+            onRevert={(id, prev) => patchThreshold(id, prev)}
           />
         ),
         text: (r) => (r.reorder_threshold != null ? String(r.reorder_threshold) : ""),
@@ -262,7 +296,7 @@ export default function SuperAdminInventoryPage() {
         text: (r) => recommendationFor(r).short,
       },
     ],
-    [refresh]
+    [patchThreshold]
   );
 
   if (loading) {
@@ -343,7 +377,7 @@ export default function SuperAdminInventoryPage() {
       ) : null}
 
       <Card className={styles.panel}>
-        <BrowseTable rows={rows} columns={columns} searchPlaceholder="Search item, code, location…" pageSizeKey="pgso:admin:inventory" isValidating={isValidating} />
+        <BrowseTable rows={rows} columns={columns} searchPlaceholder="Search item, code, location…" pageSizeKey="pgso:admin:inventory" isValidating={isValidating} fixedPageSize={PAGE_SIZE} />
       </Card>
     </section>
   );

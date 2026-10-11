@@ -2,7 +2,6 @@
 
 import { randomUUID } from 'crypto'
 import prisma from '@/lib/prisma'
-import { getPersonnelScope } from '@/lib/personnel-scope'
 
 /**
  * User-defined asset columns ("custom fields").
@@ -21,20 +20,11 @@ export interface CustomFieldDef {
   type: CustomFieldType
 }
 
-export type CustomBag = Record<string, string>
+/** Re-exported for existing importers (single implementation in lib). */
+import { normalizeCustomBag, type CustomBag } from '@/lib/custom-bag'
+export type { CustomBag }
 
 const FIELD_TYPES: CustomFieldType[] = ['text', 'number', 'date']
-
-/** Signed-in personnel or super_admin id, or null (fail closed). */
-async function actorId(): Promise<string | null> {
-  try {
-    const scope = await getPersonnelScope()
-    if (scope.isEmpty || !scope.userId) return null
-    return scope.userId
-  } catch {
-    return null
-  }
-}
 
 function slugify(label: string): string {
   let s = label.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')
@@ -45,17 +35,6 @@ function slugify(label: string): string {
 
 function asType(v: unknown): CustomFieldType {
   return v === 'number' || v === 'date' ? v : 'text'
-}
-
-/** Normalize a raw JSONB bag into string values (we only ever store strings). */
-function normalizeBag(bag: unknown): CustomBag {
-  if (!bag || typeof bag !== 'object' || Array.isArray(bag)) return {}
-  const out: CustomBag = {}
-  for (const [k, v] of Object.entries(bag as Record<string, unknown>)) {
-    if (v === null || v === undefined) continue
-    out[k] = typeof v === 'string' ? v : String(v)
-  }
-  return out
 }
 
 export async function getCustomFields(): Promise<CustomFieldDef[]> {
@@ -76,9 +55,16 @@ export async function getCustomFields(): Promise<CustomFieldDef[]> {
 export async function createCustomField(input: {
   label: string
   field_type: CustomFieldType
-}): Promise<{ success?: boolean; error?: string }> {
-  const me = await actorId()
-  if (!me) return { error: 'You must be signed in.' }
+}): Promise<{ success?: boolean; error?: string; key?: string }> {
+  let me: string
+  try {
+    const { requirePersonnelScope } = await import('@/lib/personnel-scope')
+    const scope = await requirePersonnelScope()
+    me = scope.userId!
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'Not authenticated.'
+    return { error: msg.startsWith('Forbidden') ? 'Forbidden: Personnel only.' : 'You must be signed in.' }
+  }
   const label = (input.label ?? '').trim()
   if (!label) return { error: 'Column name is required.' }
   if (label.length > 80) return { error: 'Column name must be 80 characters or fewer.' }
@@ -97,7 +83,7 @@ export async function createCustomField(input: {
       VALUES (${randomUUID()}::uuid, ${key}, ${label}, ${input.field_type}, ${me}::uuid)`
     const { bustPersonnelScopes } = await import('@/lib/personnel-cache')
     await bustPersonnelScopes(['assets'])
-    return { success: true }
+    return { success: true, key }
   } catch (e) {
     console.error('[createCustomField]', e)
     return { error: 'Failed to add the column. Please try again.' }
@@ -107,8 +93,13 @@ export async function createCustomField(input: {
 export async function deleteCustomField(
   key: string
 ): Promise<{ success?: boolean; error?: string }> {
-  const me = await actorId()
-  if (!me) return { error: 'You must be signed in.' }
+  try {
+    const { requirePersonnelScope } = await import('@/lib/personnel-scope')
+    await requirePersonnelScope()
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'Not authenticated.'
+    return { error: msg.startsWith('Forbidden') ? 'Forbidden: Personnel only.' : 'You must be signed in.' }
+  }
   if (!/^[a-z0-9_]{1,60}$/.test(key)) return { error: 'Invalid column.' }
   try {
     await prisma.$executeRaw`DELETE FROM asset_custom_fields WHERE field_key = ${key}`
@@ -146,9 +137,14 @@ export async function setCustomValue(input: {
   id: string
   key: string
   value: string | null
-}): Promise<{ success?: boolean; error?: string }> {
-  const me = await actorId()
-  if (!me) return { error: 'You must be signed in.' }
+}): Promise<{ success?: boolean; error?: string; key?: string; value?: string | null }> {
+  try {
+    const { requirePersonnelScope } = await import('@/lib/personnel-scope')
+    await requirePersonnelScope()
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'Not authenticated.'
+    return { error: msg.startsWith('Forbidden') ? 'Forbidden: Personnel only.' : 'You must be signed in.' }
+  }
   if (input.source !== 'asset' && input.source !== 'stock')
     return { error: 'Invalid record.' }
   if (!input.id) return { error: 'Invalid record.' }
@@ -156,6 +152,9 @@ export async function setCustomValue(input: {
   const def = defs.find((d) => d.key === input.key)
   if (!def) return { error: 'Unknown column.' }
   const table = input.source === 'asset' ? 'assets' : 'inventory'
+  // Saved value echo — lets the client confirm the write without refetch
+  // (cleared values echo null).
+  let saved: string | null = null
   try {
     const raw = (input.value ?? '').trim()
     if (!raw) {
@@ -164,6 +163,7 @@ export async function setCustomValue(input: {
       } else {
         await prisma.$executeRaw`UPDATE inventory SET custom_fields = custom_fields - ${input.key} WHERE id = ${input.id}::uuid`
       }
+      saved = null
     } else {
       const clean = validateValue(def.type, raw)
       if (clean === null) {
@@ -181,10 +181,11 @@ export async function setCustomValue(input: {
       } else {
         await prisma.$executeRaw`UPDATE inventory SET custom_fields = jsonb_set(COALESCE(custom_fields, '{}'), ARRAY[${input.key}], to_jsonb(${clean}::text)) WHERE id = ${input.id}::uuid`
       }
+      saved = clean
     }
     const { bustPersonnelScopes } = await import('@/lib/personnel-cache')
     await bustPersonnelScopes(['assets'])
-    return { success: true }
+    return { success: true, key: input.key, value: saved }
   } catch (e) {
     console.error('[setCustomValue]', e)
     return { error: 'Failed to save the value. Please try again.' }
@@ -205,12 +206,12 @@ export async function fetchCustomBags(
     if (assetIds.length > 0) {
       const rows = await prisma.$queryRaw<Array<{ id: string; bag: unknown }>>`
         SELECT id::text AS id, custom_fields AS bag FROM assets WHERE id::text = ANY(${assetIds})`
-      for (const r of rows) out.set(`asset:${r.id}`, normalizeBag(r.bag))
+      for (const r of rows) out.set(`asset:${r.id}`, normalizeCustomBag(r.bag))
     }
     if (stockIds.length > 0) {
       const rows = await prisma.$queryRaw<Array<{ id: string; bag: unknown }>>`
         SELECT id::text AS id, custom_fields AS bag FROM inventory WHERE id::text = ANY(${stockIds})`
-      for (const r of rows) out.set(`stock:${r.id}`, normalizeBag(r.bag))
+      for (const r of rows) out.set(`stock:${r.id}`, normalizeCustomBag(r.bag))
     }
   } catch (e) {
     console.error('[fetchCustomBags]', e)
