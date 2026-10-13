@@ -69,7 +69,7 @@ export default function SuperAdminLogsPage() {
 
   return (
     <section className={styles.section}>
-      <p className={styles.crumb}>Super Admin / Logs</p>
+      <p className={styles.crumb}>Logs</p>
       <div>
         <h1 className={styles.title}>System Logs</h1>
         <p className={styles.subtitle}>

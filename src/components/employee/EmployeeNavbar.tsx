@@ -4,18 +4,15 @@ import { useEffect, useRef, useState } from "react";
 import type { ComponentType, SVGProps } from "react";
 import Image from "next/image";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import {
-  Check,
   ClipboardList,
   KeyRound,
   LayoutDashboard,
   LogOut,
   Menu,
-  Monitor,
-  Moon,
   Package,
-  Sun,
+  Pencil,
   User,
   X,
 } from "lucide-react";
@@ -23,8 +20,10 @@ import { logout } from "@/app/(auth)/auth";
 import { broadcastLogout } from "@/components/ClientCacheManager";
 import { navPrefetchProps } from "@/lib/nav-prefetch";
 import { SubmitButton } from "@/components/ui/submit-button";
+import { useToast } from "@/components/ui/toaster";
 import { ChangePasswordDialog } from "@/components/account/ChangePasswordDialog";
-import { useThemePreference, type ThemePreference } from "@/hooks/use-theme-preference";
+import { EditNameDialog } from "@/components/account/EditNameDialog";
+import { updateMyDisplayName } from "@/app/employee/profile-actions";
 import { cn } from "@/lib/utils";
 import styles from "./EmployeeNavbar.module.css";
 
@@ -34,17 +33,6 @@ interface NavLink {
   description: string;
   icon: ComponentType<SVGProps<SVGSVGElement> & { size?: number | string }>;
 }
-
-/** Appearance choices in the account menu (icon always left of the label). */
-const THEME_OPTIONS: {
-  value: ThemePreference;
-  label: string;
-  icon: ComponentType<SVGProps<SVGSVGElement> & { size?: number | string }>;
-}[] = [
-  { value: "light", label: "Light", icon: Sun },
-  { value: "dark", label: "Dark", icon: Moon },
-  { value: "system", label: "System", icon: Monitor },
-];
 
 /**
  * Top navbar for the employee portal — same header, brand, account menu,
@@ -62,13 +50,13 @@ export function EmployeeNavbar({
   userDetail?: string;
 }) {
   const pathname = usePathname();
+  const router = useRouter();
+  const { toast } = useToast();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [changePwOpen, setChangePwOpen] = useState(false);
+  const [editNameOpen, setEditNameOpen] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
-  // Appearance choice (Light / Dark / System) — remembered across visits.
-  // Menu-rows only for now: page colors stay as-is until theming lands.
-  const { theme, setTheme } = useThemePreference();
 
   const links: NavLink[] = [
     {
@@ -194,40 +182,23 @@ export function EmployeeNavbar({
                   </div>
                 </div>
                 <div className={styles.userMenuDivider} aria-hidden="true" />
-                <p className={styles.menuSectionLabel}>Settings</p>
-                <div role="group" aria-label="Appearance">
-                  {THEME_OPTIONS.map((opt) => {
-                    const OptionIcon = opt.icon;
-                    const active = theme === opt.value;
-                    return (
-                      <button
-                        key={opt.value}
-                        type="button"
-                        role="menuitemradio"
-                        aria-checked={active}
-                        data-active={active}
-                        className={styles.themeRow}
-                        onClick={() => setTheme(opt.value)}
-                      >
-                        <OptionIcon
-                          size={16}
-                          aria-hidden="true"
-                          className={styles.themeRowIcon}
-                        />
-                        <span className={styles.themeRowLabel}>{opt.label}</span>
-                        {active && (
-                          <Check
-                            size={16}
-                            aria-hidden="true"
-                            className={styles.themeRowCheck}
-                          />
-                        )}
-                      </button>
-                    );
-                  })}
-                </div>
-                <div className={styles.userMenuDivider} aria-hidden="true" />
                 <p className={styles.menuSectionLabel}>Account</p>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className={styles.themeRow}
+                  onClick={() => {
+                    setUserMenuOpen(false);
+                    setEditNameOpen(true);
+                  }}
+                >
+                  <Pencil
+                    size={16}
+                    aria-hidden="true"
+                    className={styles.themeRowIcon}
+                  />
+                  <span className={styles.themeRowLabel}>Edit name</span>
+                </button>
                 <button
                   type="button"
                   role="menuitem"
@@ -300,6 +271,17 @@ export function EmployeeNavbar({
               className={styles.sheetLink}
               onClick={() => {
                 setMobileOpen(false);
+                setEditNameOpen(true);
+              }}
+            >
+              <Pencil size={18} aria-hidden="true" />
+              Edit name
+            </button>
+            <button
+              type="button"
+              className={styles.sheetLink}
+              onClick={() => {
+                setMobileOpen(false);
                 setChangePwOpen(true);
               }}
             >
@@ -333,6 +315,20 @@ export function EmployeeNavbar({
         </div>
       )}
       <ChangePasswordDialog open={changePwOpen} onOpenChange={setChangePwOpen} />
+      <EditNameDialog
+        open={editNameOpen}
+        onOpenChange={setEditNameOpen}
+        initialName={userName}
+        onSave={updateMyDisplayName}
+        onSaved={(name) => {
+          toast({
+            title: "Name updated",
+            description: `Now showing as ${name}.`,
+            variant: "success",
+          });
+          router.refresh();
+        }}
+      />
     </header>
   );
 }

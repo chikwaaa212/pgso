@@ -52,7 +52,7 @@ export default function DeliveriesLoading() {
       aria-busy="true"
       aria-label="Loading deliveries"
     >
-      <p className={styles.crumb}>Super Admin / Deliveries</p>
+      <p className={styles.crumb}>Deliveries</p>
       <div>
         <h1 className={styles.title}>Deliveries</h1>
         <p className={styles.subtitle}>

@@ -50,7 +50,7 @@ export default function MasterDataLoading() {
       aria-busy="true"
       aria-label="Loading master data"
     >
-      <p className={styles.crumb}>Super Admin / Master Data</p>
+      <p className={styles.crumb}>Master Data</p>
       <div>
         <h1 className={styles.title}>Master Data</h1>
         <p className={styles.subtitle}>

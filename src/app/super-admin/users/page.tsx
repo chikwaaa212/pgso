@@ -29,7 +29,7 @@ function fmtDate(iso: string | null) {
 }
 
 function roleLabel(role: string) {
-  if (role === "super_admin") return "Super Admin";
+  if (role === "super_admin") return "Administrator";
   if (role === "pgso_personnel") return "Personnel";
   return "Employee";
 }
@@ -89,7 +89,7 @@ export default function SuperAdminUsersPage() {
 
   return (
     <section className={styles.section}>
-      <p className={styles.crumb}>Super Admin / Users</p>
+      <p className={styles.crumb}>Users</p>
       <div>
         <h1 className={styles.title}>Users</h1>
         <p className={styles.subtitle}>
@@ -152,7 +152,7 @@ export default function SuperAdminUsersPage() {
           <Link href="/super-admin/dashboard" style={{ textDecoration: "underline" }}>
             Dashboard → Add Personnel
           </Link>
-          . You cannot change your own account or any Super Admin here.
+          . You cannot change your own account or any Administrator here.
         </p>
         <div className={styles.searchRow}>
           <Input

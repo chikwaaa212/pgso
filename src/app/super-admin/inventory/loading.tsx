@@ -51,7 +51,7 @@ export default function InventoryLoading() {
       aria-busy="true"
       aria-label="Loading inventory"
     >
-      <p className={styles.crumb}>Super Admin / Stocks</p>
+      <p className={styles.crumb}>Stocks</p>
       <div>
         <h1 className={styles.title}>Stocks</h1>
         <p className={styles.subtitle}>
@@ -59,7 +59,7 @@ export default function InventoryLoading() {
             aria-hidden="true"
             className="inline-block h-4 w-40 animate-pulse rounded bg-navy-100 align-middle"
           />{" "}
-          stock lines · thresholds are set by Super Admin
+          stock lines · thresholds are set by the Administrator
         </p>
       </div>
 

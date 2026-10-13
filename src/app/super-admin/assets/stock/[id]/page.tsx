@@ -21,7 +21,7 @@ export default async function SuperAdminStockDetailPage({
     <StockDetailEditor
       stock={stock}
       backHref="/super-admin/assets"
-      crumbBase="Super Admin / Assets / Stocks"
+      crumbBase="Assets / Stocks"
     />
   );
 }

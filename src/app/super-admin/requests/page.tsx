@@ -204,7 +204,7 @@ export default function SuperAdminRequestsPage() {
 
   return (
     <section className={styles.section}>
-      <p className={styles.crumb}>Super Admin / Requests</p>
+      <p className={styles.crumb}>Requests</p>
       <div>
         <h1 className={styles.title}>Requests</h1>
         <p className={styles.subtitle}>

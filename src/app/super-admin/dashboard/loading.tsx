@@ -57,8 +57,8 @@ function cardStyle(): React.CSSProperties {
 export default function SuperAdminDashboardLoading() {
   return (
     <section className={styles.section} aria-busy="true" aria-label="Loading dashboard">
-      <p className={styles.crumb}>Super Admin / Dashboard</p>
-      <h1 className={styles.title}>Welcome, Super Admin</h1>
+      <p className={styles.crumb}>Dashboard</p>
+      <h1 className={styles.title}>Welcome, MARIO GENTILES</h1>
       <p className={styles.subtitle}>
         Signed in as{" "}
         <span

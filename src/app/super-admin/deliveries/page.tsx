@@ -87,7 +87,7 @@ export default function SuperAdminDeliveriesPage() {
 
   return (
     <section className={styles.section}>
-      <p className={styles.crumb}>Super Admin / Deliveries</p>
+      <p className={styles.crumb}>Deliveries</p>
       <div>
         <h1 className={styles.title}>Deliveries</h1>
         <p className={styles.subtitle}>

@@ -8,7 +8,7 @@ import { SuperAdminNavbarLoader } from "./navbar-loader";
 export const dynamic = "force-dynamic";
 
 async function getNavbarUser(): Promise<{ name: string; detail: string }> {
-  const fallback = { name: "Super Admin", detail: "Administrator" };
+  const fallback = { name: "MARIO GENTILES", detail: "Administrator" };
   // Defense-in-depth behind middleware: never render the shell to anyone
   // who is not an active super_admin. Uses the per-request memoized guard
   // so layout + page share one Auth + profile lookup.
@@ -19,7 +19,7 @@ async function getNavbarUser(): Promise<{ name: string; detail: string }> {
   const position = profile?.position?.trim();
   const office = profile?.office?.trim();
   const detail =
-    [position, office].filter(Boolean).join(" · ") || "Super Admin";
+    [position, office].filter(Boolean).join(" · ") || "Administrator";
   return { name, detail };
 }
 

@@ -314,11 +314,11 @@ export default function SuperAdminInventoryPage() {
 
   return (
     <section className={styles.section}>
-      <p className={styles.crumb}>Super Admin / Stocks</p>
+      <p className={styles.crumb}>Stocks</p>
       <div>
         <h1 className={styles.title}>Stocks</h1>
         <p className={styles.subtitle}>
-          {`${total} stock ${total === 1 ? "line" : "lines"}`} · thresholds are set by Super Admin
+          {`${total} stock ${total === 1 ? "line" : "lines"}`} · thresholds are set by the Administrator
           {isValidating ? " · updating…" : ""}
         </p>
       </div>

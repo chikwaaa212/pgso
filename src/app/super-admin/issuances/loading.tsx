@@ -41,7 +41,7 @@ export default function IssuancesLoading() {
       aria-busy="true"
       aria-label="Loading issuances"
     >
-      <p className={styles.crumb}>Super Admin / Issuances</p>
+      <p className={styles.crumb}>Issuances</p>
 
       {/* Header — same as the real page, including the view toggle */}
       <div className={styles.headerRow}>

@@ -314,7 +314,7 @@ async function guardTarget(actorId: string, targetId: string) {
     })
   if (!target) throw new Error('Account not found.')
   if (target.role === 'super_admin') {
-    throw new Error('Super Admin accounts cannot be changed here.')
+    throw new Error('Administrator accounts cannot be changed here.')
   }
   return target
 }
@@ -429,4 +429,52 @@ export async function setUserActive(
   revalidatePath('/super-admin/users')
   revalidatePath('/super-admin/dashboard')
   return { ok: true }
+}
+
+const DISPLAY_NAME_RE = /^[A-Za-zÑñÁáÉéÍíÓóÚúÜü'’.\- ]+$/
+
+/**
+ * Self-service display name for the signed-in administrator: changes the
+ * name shown in the navbar and filed-by labels. Updates
+ * `profiles.full_name` only. (The users table above manages *other*
+ * accounts — this is the admin's own name.)
+ */
+export async function updateMyDisplayName(
+  name: string
+): Promise<{ ok: boolean; error?: string; name?: string }> {
+  let actorId = ''
+  try {
+    ;({ userId: actorId } = await requireSuperAdmin())
+  } catch {
+    return { ok: false, error: 'Not authenticated.' }
+  }
+  const clean = String(name ?? '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 80)
+  if (clean.length < 2) {
+    return { ok: false, error: 'Name must be 2–80 characters.' }
+  }
+  if (!DISPLAY_NAME_RE.test(clean)) {
+    return { ok: false, error: "Letters, spaces, and . ' - only." }
+  }
+  try {
+    await prisma.profile.update({
+      where: { id: actorId },
+      data: { full_name: clean },
+    })
+    await writeAuditLog({
+      userId: actorId,
+      action: 'users:update_own_name',
+      module: 'users',
+      details: {
+        purpose: 'Self-service display name change',
+        summary: `Set display name to "${clean}"`,
+      },
+    })
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Update failed.' }
+  }
+  revalidatePath('/super-admin', 'layout')
+  return { ok: true, name: clean }
 }

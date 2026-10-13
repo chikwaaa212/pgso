@@ -30,7 +30,7 @@ export default async function SuperAdminInspectionDetailPage({
 
   return (
     <section className={sectionStyles.section}>
-      <p className={sectionStyles.crumb}>Super Admin / Inspections / {delivery.id.slice(0, 8).toUpperCase()}</p>
+      <p className={sectionStyles.crumb}>Inspections / {delivery.id.slice(0, 8).toUpperCase()}</p>
       <AdminToolbar backHref="/super-admin/inspections" backLabel="Inspections" />
       <div>
         <h1 className={sectionStyles.title}>Inspection detail</h1>

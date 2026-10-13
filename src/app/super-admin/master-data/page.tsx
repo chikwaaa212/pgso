@@ -39,7 +39,7 @@ export default function SuperAdminMasterDataPage() {
 
   return (
     <section className={styles.section}>
-      <p className={styles.crumb}>Super Admin / Master Data</p>
+      <p className={styles.crumb}>Master Data</p>
       <div>
         <h1 className={styles.title}>Master Data</h1>
         <p className={styles.subtitle}>

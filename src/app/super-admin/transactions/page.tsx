@@ -110,7 +110,7 @@ export default function SuperAdminTransactionsPage() {
 
   return (
     <section className={styles.section}>
-      <p className={styles.crumb}>Super Admin / Transactions</p>
+      <p className={styles.crumb}>Transactions</p>
       <div>
         <h1 className={styles.title}>Transactions</h1>
         <p className={styles.subtitle}>

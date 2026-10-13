@@ -62,7 +62,7 @@ export default function DocumentsLoading() {
       aria-busy="true"
       aria-label="Loading documents"
     >
-      <p className={styles.crumb}>Super Admin / Documents</p>
+      <p className={styles.crumb}>Documents</p>
       <div className={styles.headerRow}>
         <div>
           <h1 className={styles.title}>Documents</h1>

@@ -33,7 +33,7 @@ export async function addPersonnelEmployee(
     const session = await requireSuperAdmin()
     actorId = session.userId
   } catch {
-    return { error: 'Forbidden: Super Admin only.' }
+    return { error: 'Forbidden: Administrator only.' }
   }
 
   const full_name = (formData.get('full_name') as string)?.trim()

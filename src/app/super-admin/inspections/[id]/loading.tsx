@@ -7,7 +7,7 @@ import sectionStyles from "../page.module.css";
 export default function SuperAdminInspectionDetailLoading() {
   return (
     <section className={sectionStyles.section} aria-busy="true" aria-label="Loading inspection detail">
-      <p className={sectionStyles.crumb}>Super Admin / Inspections / Detail</p>
+      <p className={sectionStyles.crumb}>Inspections / Detail</p>
       <Card className={sectionStyles.panel}>
         <div aria-hidden="true" style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
           <div className="h-4 w-40 animate-pulse rounded bg-navy-100" />

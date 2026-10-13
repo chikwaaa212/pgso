@@ -215,3 +215,56 @@ export async function completeMyProfile(
     .catch(() => {})
   return { success: true }
 }
+
+/**
+ * Self-service display name: any signed-in employee can change the name
+ * shown in the navbar, greetings, and filed-by labels. Updates
+ * `profiles.full_name` only (name parts from onboarding stay as-is).
+ */
+export async function updateMyDisplayName(
+  name: string
+): Promise<{ ok: boolean; error?: string; name?: string }> {
+  let userId = ''
+  try {
+    ;({ userId } = await requireEmployee())
+  } catch {
+    return { ok: false, error: 'You must be signed in as an employee.' }
+  }
+  const clean = String(name ?? '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 80)
+  if (clean.length < 2) {
+    return { ok: false, error: 'Name must be 2–80 characters.' }
+  }
+  if (!NAME_RE.test(clean)) {
+    return { ok: false, error: "Letters, spaces, and . ' - only." }
+  }
+  try {
+    await prisma.profile.update({
+      where: { id: userId },
+      data: { full_name: clean },
+    })
+  } catch (e) {
+    console.error('[updateMyDisplayName]', e)
+    return { ok: false, error: 'Could not update your name. Please try again.' }
+  }
+  try {
+    await writeAuditLog({
+      userId,
+      action: 'profile:update_name',
+      module: 'profile',
+      details: {
+        purpose: 'Self-service display name change',
+        summary: `Set display name to "${clean}"`,
+      },
+    })
+  } catch {
+    // audit is best-effort
+  }
+  revalidatePath('/employee', 'layout')
+  await import('@/lib/personnel-cache')
+    .then((m) => m.bustCachePrefixes(['employee:dashboard']))
+    .catch(() => {})
+  return { ok: true, name: clean }
+}

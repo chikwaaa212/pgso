@@ -36,7 +36,7 @@ export async function setReplenishmentStatus(
     const session = await requireSuperAdmin()
     adminId = session.userId
   } catch {
-    return { error: 'Forbidden: Super Admin only.' }
+    return { error: 'Forbidden: Administrator only.' }
   }
 
   try {

@@ -4,12 +4,11 @@ import { useEffect, useRef, useState } from "react";
 import type { ComponentType, SVGProps } from "react";
 import Image from "next/image";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import {
   Archive,
   ArrowLeftRight,
   Boxes,
-  Check,
   ChevronDown,
   ClipboardCheck,
   ClipboardList,
@@ -20,13 +19,11 @@ import {
   LayoutDashboard,
   LogOut,
   Menu,
-  Monitor,
-  Moon,
   Package,
+  Pencil,
   ReceiptText,
   ScanLine,
   ScrollText,
-  Sun,
   TriangleAlert,
   Truck,
   User,
@@ -38,8 +35,10 @@ import { logout } from "@/app/(auth)/auth";
 import { broadcastLogout } from "@/components/ClientCacheManager";
 import { navPrefetchProps } from "@/lib/nav-prefetch";
 import { SubmitButton } from "@/components/ui/submit-button";
+import { useToast } from "@/components/ui/toaster";
 import { ChangePasswordDialog } from "@/components/account/ChangePasswordDialog";
-import { useThemePreference, type ThemePreference } from "@/hooks/use-theme-preference";
+import { EditNameDialog } from "@/components/account/EditNameDialog";
+import { updateMyDisplayName } from "@/app/super-admin/users/actions";
 import { cn } from "@/lib/utils";
 import styles from "./SuperAdminNavbar.module.css";
 
@@ -61,24 +60,13 @@ function formatBadge(count: number): string {
   return count > 99 ? "99+" : String(count);
 }
 
-/** Appearance choices in the account menu (icon always left of the label). */
-const THEME_OPTIONS: {
-  value: ThemePreference;
-  label: string;
-  icon: ComponentType<SVGProps<SVGSVGElement> & { size?: number | string }>;
-}[] = [
-  { value: "light", label: "Light", icon: Sun },
-  { value: "dark", label: "Dark", icon: Moon },
-  { value: "system", label: "System", icon: Monitor },
-];
-
 export function SuperAdminNavbar({
   pendingAccounts = 0,
   pendingInspections = 0,
   pendingRequests = 0,
   pendingRepairs = 0,
   totalDocuments = 0,
-  userName = "Super Admin",
+  userName = "MARIO GENTILES",
   userDetail = "Administrator",
 }: {
   pendingAccounts?: number;
@@ -92,15 +80,15 @@ export function SuperAdminNavbar({
   userDetail?: string;
 }) {
   const pathname = usePathname();
+  const router = useRouter();
+  const { toast } = useToast();
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [mobileSection, setMobileSection] = useState<string | null>(null);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [changePwOpen, setChangePwOpen] = useState(false);
+  const [editNameOpen, setEditNameOpen] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
-  // Appearance choice (Light / Dark / System) — remembered across visits.
-  // Menu-rows only for now: page colors stay as-is until theming lands.
-  const { theme, setTheme } = useThemePreference();
 
   const dashboard: NavLink = {
     label: "Dashboard",
@@ -293,7 +281,7 @@ export function SuperAdminNavbar({
           />
           <span className={styles.brandText}>
             <span className={styles.brandName}>PGSO-PSMS</span>
-            <span className={styles.brandSub}>Super Admin</span>
+            <span className={styles.brandSub}>Administrator</span>
           </span>
         </Link>
 
@@ -425,40 +413,23 @@ export function SuperAdminNavbar({
                   </div>
                 </div>
                 <div className={styles.userMenuDivider} aria-hidden="true" />
-                <p className={styles.menuSectionLabel}>Settings</p>
-                <div role="group" aria-label="Appearance">
-                  {THEME_OPTIONS.map((opt) => {
-                    const OptionIcon = opt.icon;
-                    const active = theme === opt.value;
-                    return (
-                      <button
-                        key={opt.value}
-                        type="button"
-                        role="menuitemradio"
-                        aria-checked={active}
-                        data-active={active}
-                        className={styles.themeRow}
-                        onClick={() => setTheme(opt.value)}
-                      >
-                        <OptionIcon
-                          size={16}
-                          aria-hidden="true"
-                          className={styles.themeRowIcon}
-                        />
-                        <span className={styles.themeRowLabel}>{opt.label}</span>
-                        {active && (
-                          <Check
-                            size={16}
-                            aria-hidden="true"
-                            className={styles.themeRowCheck}
-                          />
-                        )}
-                      </button>
-                    );
-                  })}
-                </div>
-                <div className={styles.userMenuDivider} aria-hidden="true" />
                 <p className={styles.menuSectionLabel}>Account</p>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className={styles.themeRow}
+                  onClick={() => {
+                    setUserMenuOpen(false);
+                    setEditNameOpen(true);
+                  }}
+                >
+                  <Pencil
+                    size={16}
+                    aria-hidden="true"
+                    className={styles.themeRowIcon}
+                  />
+                  <span className={styles.themeRowLabel}>Edit name</span>
+                </button>
                 <button
                   type="button"
                   role="menuitem"
@@ -583,6 +554,17 @@ export function SuperAdminNavbar({
               className={styles.sheetLink}
               onClick={() => {
                 setMobileOpen(false);
+                setEditNameOpen(true);
+              }}
+            >
+              <Pencil size={18} aria-hidden="true" />
+              Edit name
+            </button>
+            <button
+              type="button"
+              className={styles.sheetLink}
+              onClick={() => {
+                setMobileOpen(false);
                 setChangePwOpen(true);
               }}
             >
@@ -616,6 +598,20 @@ export function SuperAdminNavbar({
         </div>
       )}
       <ChangePasswordDialog open={changePwOpen} onOpenChange={setChangePwOpen} />
+      <EditNameDialog
+        open={editNameOpen}
+        onOpenChange={setEditNameOpen}
+        initialName={userName}
+        onSave={updateMyDisplayName}
+        onSaved={(name) => {
+          toast({
+            title: "Name updated",
+            description: `Now showing as ${name}.`,
+            variant: "success",
+          });
+          router.refresh();
+        }}
+      />
     </header>
   );
 }

@@ -24,7 +24,7 @@ export async function setReorderThreshold(
   try {
     session = await requireSuperAdmin()
   } catch {
-    return { error: 'Forbidden: Super Admin only.' }
+    return { error: 'Forbidden: Administrator only.' }
   }
 
   if (!itemId) return { error: 'Stock item ID is required.' }

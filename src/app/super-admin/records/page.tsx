@@ -81,7 +81,7 @@ export default function SuperAdminRecordsPage() {
 
   return (
     <section className={styles.section}>
-      <p className={styles.crumb}>Super Admin / Records</p>
+      <p className={styles.crumb}>Records</p>
       <div>
         <h1 className={styles.title}>Records</h1>
         <p className={styles.subtitle}>

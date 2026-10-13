@@ -73,7 +73,7 @@ export default function SuperAdminIssuancesPage() {
   const isIcs = doc?.doc_type === "ICS";
   return (
     <section className={styles.section}>
-      <p className={styles.crumb}>Super Admin / Issuances</p>
+      <p className={styles.crumb}>Issuances</p>
       <div className={styles.headerRow}>
         <div>
           <h1 className={styles.title}>PAR / ICS Issuances</h1>

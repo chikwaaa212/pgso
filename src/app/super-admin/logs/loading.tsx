@@ -32,7 +32,7 @@ export default function LogsLoading() {
       aria-busy="true"
       aria-label="Loading logs"
     >
-      <p className={styles.crumb}>Super Admin / Logs</p>
+      <p className={styles.crumb}>Logs</p>
       <div>
         <h1 className={styles.title}>System Logs</h1>
         <p className={styles.subtitle}>

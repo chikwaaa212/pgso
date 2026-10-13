@@ -19,7 +19,7 @@ async function getPendingAccounts(): Promise<number> {
  * page content before the redirect.
  */
 export async function SuperAdminNavbarLoader({
-  userName = "Super Admin",
+  userName = "MARIO GENTILES",
   userDetail = "Administrator",
 }: {
   userName?: string;

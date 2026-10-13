@@ -48,7 +48,7 @@ export default function UsersLoading() {
       aria-busy="true"
       aria-label="Loading users"
     >
-      <p className={styles.crumb}>Super Admin / Users</p>
+      <p className={styles.crumb}>Users</p>
       <div>
         <h1 className={styles.title}>Users</h1>
         <p className={styles.subtitle}>
@@ -68,7 +68,7 @@ export default function UsersLoading() {
           <span style={{ textDecoration: "underline" }}>
             Dashboard → Add Personnel
           </span>
-          . You cannot change your own account or any Super Admin here.
+          . You cannot change your own account or any Administrator here.
         </p>
         <div className={styles.searchRow} aria-hidden="true">
           <Input

@@ -28,7 +28,7 @@ export default async function SuperAdminAssetDetailPage({
       asset={asset}
       categories={categories}
       backHref="/super-admin/assets"
-      crumbBase="Super Admin / Assets"
+      crumbBase="Assets"
       history={history}
     />
   );

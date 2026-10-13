@@ -88,7 +88,7 @@ export default function SuperAdminIssuesPage() {
 
   return (
     <section className={styles.section}>
-      <p className={styles.crumb}>Super Admin / Issues</p>
+      <p className={styles.crumb}>Issues</p>
       <div>
         <h1 className={styles.title}>Issues</h1>
         <p className={styles.subtitle}>
