@@ -19,7 +19,7 @@ import { getPersonnelScope } from '@/lib/personnel-scope'
 import { withIdempotency } from '@/lib/idempotency'
 import { writeAuditLog } from '@/lib/audit'
 import { stockInspectionItems } from '@/lib/stock'
-import { findCatalogEntry, getActiveCatalogEntries, resolveUnitName } from '@/lib/master-data'
+import { getActiveCatalogEntries, resolveUnitName } from '@/lib/master-data'
 import type { SignupState } from '@/types'
 
 const statuses = ['complete', 'partial', 'awaiting'] as const
@@ -34,6 +34,9 @@ interface ItemInput {
   unitCost?: string | number
 }
 
+// Server-side fallback for the Generate button (the form normally fills the
+// code client-side). Kept so an empty code + explicit auto-generate request
+// still yields a provisional unique code.
 function makeProvisionalCode(kind: string): string {
   const prefix = kind === 'asset' ? 'AST' : 'STK'
   const date = new Date().toISOString().slice(0, 10).replace(/-/g, '')
@@ -63,19 +66,18 @@ export async function logDelivery(
     return { error: 'Choose whether this delivery is for Stocks or Assets.' }
   }
 
-  // Custom mode: every delivery is a NEW asset/stock, so personnel type (or
-  // auto-generate) the account code + asset type + account title freely.
-  // The catalog is suggestions-only — unknown codes are accepted and saved
-  // as-is instead of being rejected.
+  // Account code is NOT from the catalog: personnel either types it or presses
+  // Generate. Free-form identities per asset/stock (2–60 chars, limited
+  // charset). No catalog existence check, no auto-seed.
   let accountCode = accountCodeRaw || ''
   // Empty code + explicit auto-generate request → provisional unique code.
   // The form's Generate button normally fills this client-side; this is the
-  // server-side fallback so an empty code never blocks a new asset/stock.
+  // server-side fallback so an empty code never blocks a save.
   if (!accountCode && (formData.get('autoGenerateCode') as string) === '1') {
     accountCode = makeProvisionalCode(deliveryKind)
   }
   if (!accountCode) {
-    return { error: 'Account code is required — type a new code or press Generate.' }
+    return { error: 'Account code is required — type a code or press Generate.' }
   }
   if (accountCode.length < 2 || accountCode.length > 60) {
     return { error: 'Account code must be 2–60 characters.' }
@@ -84,22 +86,39 @@ export async function logDelivery(
     return { error: 'Account code may only contain letters, numbers, spaces, and - . _ /' }
   }
 
-  const assetType = assetTypeRaw || ''
-  const accountTitle = accountTitleRaw || ''
-  if (!assetType) {
-    return { error: 'Asset type is required — type it in (e.g. Machinery and Equipment).' }
+  // Asset type + account title ARE from the catalog (Super Admin Master Data):
+  // dropdowns in the form, each validated independently here. No pair-match
+  // requirement: any catalog-listed type combines with any catalog-listed
+  // title. The account code itself is free-form.
+  const assetTypeInput = (assetTypeRaw || '').trim()
+  const accountTitleInput = (accountTitleRaw || '').trim()
+  if (!assetTypeInput) {
+    return { error: 'Select an asset type from the catalog.' }
   }
-  if (assetType.length < 2 || assetType.length > 120) {
-    return { error: 'Asset type must be 2–120 characters.' }
+  if (!accountTitleInput) {
+    return { error: 'Select an account title from the catalog.' }
   }
-  if (!accountTitle) {
-    return { error: 'Account title is required — type it in (e.g. OFFICE EQUIPMENT).' }
+  // Catalog convention: titles stored uppercase.
+  const accountTitleNorm = accountTitleInput.toUpperCase()
+  const catalogEntries = await getActiveCatalogEntries()
+  if (catalogEntries.length === 0) {
+    return { error: 'No active catalog entries — ask your Super Admin to add them in Master Data.' }
   }
-  if (accountTitle.length < 2 || accountTitle.length > 120) {
-    return { error: 'Account title must be 2–120 characters.' }
+  const typeMatch = catalogEntries.find(
+    (e) => e.type.toLowerCase() === assetTypeInput.toLowerCase()
+  )
+  if (!typeMatch) {
+    return { error: 'Unknown asset type — pick one from the catalog.' }
   }
-  // Catalog convention: titles stored uppercase; keep type as typed.
-  const accountTitleNorm = accountTitle.toUpperCase()
+  const titleMatch = catalogEntries.find(
+    (e) => e.title.toUpperCase() === accountTitleNorm
+  )
+  if (!titleMatch) {
+    return { error: 'Unknown account title — pick one from the catalog.' }
+  }
+  // Canonical catalog values for storage.
+  const assetTypeCanon = typeMatch.type
+  const accountTitleCanon = titleMatch.title
 
   if (!dateSupplied || Number.isNaN(Date.parse(dateSupplied))) {
     // Waiting-for-arrival logs carry a target date instead of a received date.
@@ -184,26 +203,10 @@ export async function logDelivery(
       formData.get('idempotencyKey') as string,
       'delivery:create',
       async () => {
-        // New asset/stock → new catalog code. Seed the Master Data catalog
-        // so inventory titles, asset forms, and future suggestions stay in
-        // sync. Race-safe: unique constraint wins, duplicates are ignored.
-        try {
-          const existing = await findCatalogEntry(accountCode)
-          if (!existing) {
-            await prisma.accountCatalog.create({
-              data: {
-                account_code: accountCode,
-                account_title: accountTitleNorm,
-                asset_type: assetType,
-                description: `Auto-created from delivery PO ${poReference}`,
-                status: 'active',
-                created_by: user.id,
-              },
-            })
-          }
-        } catch (e) {
-          console.warn('[logDelivery:catalog-seed]', e)
-        }
+        // No catalog auto-seed: the account code is free-form per delivery and
+        // stays on the delivery row only. Asset type + account title were
+        // already validated independently above; store canonical catalog
+        // values.
         const delivery = await prisma.delivery.create({
           data: {
             supplier: supplierName,
@@ -216,9 +219,9 @@ export async function logDelivery(
             received_by: user.id,
             recipient_role: recipientRole,
             recipient_name: recipientName || null,
-            asset_type: assetType,
+            asset_type: assetTypeCanon,
             account_code: accountCode,
-            account_title: accountTitleNorm,
+            account_title: accountTitleCanon,
             items: {
               create: parsedItems.map((item) => ({
                 item_name: item.description,
@@ -623,12 +626,11 @@ export async function getDeliveriesPage(
 }
 
 /**
- * Chart-of-accounts suggestions for the Log delivery form, sourced from the
- * account catalog. Suggestions-only: every delivery is a NEW asset/stock, so
- * personnel may type (or auto-generate) a fresh code + custom type/title.
- * Picking a known code still auto-fills type + title as a convenience, but
- * all three fields stay editable and unknown codes are accepted — a catalog
- * entry is seeded automatically on save.
+ * Catalog options for the Log delivery form, sourced from the active account
+ * catalog. Asset type + account title are strict dropdowns, each validated
+ * independently (no pair-match required). The account code is NOT from the
+ * catalog — personnel types it or presses Generate. Codes listed here are
+ * prior history for reference only.
  */
 export async function getDeliveryFormOptions(): Promise<DeliveryFormOptions> {
   const { withCache, cacheKey } = await import('@/lib/personnel-cache')

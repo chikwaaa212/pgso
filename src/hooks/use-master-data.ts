@@ -73,6 +73,13 @@ export function useMasterData(): MasterDataState {
           if (cached) return { ...cached.data, loaded: true };
           // ETag matched but no local copy (cleared storage) — refetch plain.
           const retry = await fetch("/api/master-data", { cache: "no-store" });
+          if (retry.status === 401 || retry.status === 403) {
+            // Not signed in (or no access) — expected on public/auth pages.
+            // Fail silent with empty lists; never throw or log.
+            const stale = getClientCache<MasterDataState>(MASTER_DATA_KEY);
+            if (stale) return { ...stale.data, loaded: true };
+            return { catalog: [], units: [], loaded: true };
+          }
           if (!retry.ok) throw new Error(`HTTP ${retry.status}`);
           const json = (await retry.json()) as {
             catalog?: MasterCatalogOption[];
@@ -88,6 +95,14 @@ export function useMasterData(): MasterDataState {
           writeEtag(retry.headers.get("etag"));
           setClientCache(MASTER_DATA_KEY, next);
           return next;
+        }
+        if (res.status === 401 || res.status === 403) {
+          // Not signed in (or no access) — expected on public/auth pages and
+          // during session bootstrap. Fail silent: reuse any persisted copy,
+          // else empty lists. Never cache the empty result and never throw.
+          const stale = getClientCache<MasterDataState>(MASTER_DATA_KEY);
+          if (stale) return { ...stale.data, loaded: true };
+          return { catalog: [], units: [], loaded: true };
         }
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const json = (await res.json()) as {
@@ -130,8 +145,17 @@ export function useMasterData(): MasterDataState {
         if (!cancelled) setState(next);
       } catch (e) {
         if (!cancelled) {
-          console.error("[useMasterData]", e);
-          setState((s) => ({ ...s, loaded: true }));
+          // Auth failures are routine (signed-out / bootstrapping session) —
+          // stay silent. Only surface unexpected failures.
+          if (
+            e instanceof Error &&
+            /HTTP\s?(401|403)/.test(e.message)
+          ) {
+            setState((s) => ({ ...s, loaded: true }));
+          } else {
+            console.error("[useMasterData]", e);
+            setState((s) => ({ ...s, loaded: true }));
+          }
         }
       }
     })();
