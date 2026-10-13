@@ -13,18 +13,21 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 0.5rem;
+  flex-wrap: wrap;
+  row-gap: 0.25rem;
+  column-gap: 0.5rem;
   width: 100%;
-  padding: 0.4rem 0;
+  padding: 0.4rem 1rem;
   font-size: 0.75rem;
   font-weight: 500;
   color: var(--color-navy-700);
   background-color: rgba(245, 197, 2, 0.1);
   border-bottom: 1px solid var(--color-navy-200);
+  text-align: center;
 }
 
 .notifyText {
-  white-space: nowrap;
+  white-space: normal;
 }
 
 .notifyLink {
@@ -51,6 +54,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 1rem;
   height: 4rem;
   max-width: 80rem;
   margin-inline: auto;
@@ -72,6 +76,8 @@
 .left {
   display: flex;
   align-items: center;
+  flex-shrink: 0;
+  min-width: 0;
 }
 
 .logo {
@@ -86,10 +92,13 @@
   transform: translateX(-50%);
   display: none;
   align-items: center;
-  gap: 1.5rem;
+  gap: 1.25rem;
+  white-space: nowrap;
 }
 
-@media (min-width: 768px) {
+/* Four center links need room — keep the hamburger menu below lg so the
+   absolutely-centered group can never overlap the logo or auth buttons. */
+@media (min-width: 1024px) {
   .center {
     display: flex;
   }
@@ -112,6 +121,8 @@
   display: flex;
   align-items: center;
   gap: 0.75rem;
+  flex-shrink: 0;
+  min-width: 0;
 }
 
 .authLinks {
@@ -174,7 +185,7 @@
   background-color: var(--color-navy-100);
 }
 
-@media (min-width: 768px) {
+@media (min-width: 1024px) {
   .menuButton {
     display: none;
   }
@@ -189,13 +200,14 @@
   overflow: hidden;
 }
 
-@media (min-width: 768px) {
+@media (min-width: 1024px) {
   .mobileMenu {
     display: none;
   }
 }
 
 .mobileNav {
+  display: flex;
   flex-direction: column;
   gap: 0.75rem;
   padding: 1.5rem 1rem;

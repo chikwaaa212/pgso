@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { motion } from "framer-motion";
 import styles from "./Hero.module.css";
@@ -93,12 +94,16 @@ export function Hero() {
             >
               Explore Features
             </Button>
-            <Button
-              className={styles.secondaryButton}
+            <Link href="/scan" className={styles.secondaryButton}>
+              Scan QR — no login needed
+            </Link>
+            <button
+              type="button"
+              className={styles.ghostButton}
               onClick={() => handleScrollTo("about")}
             >
               Learn More
-            </Button>
+            </button>
           </motion.div>
         </div>
       </motion.div>

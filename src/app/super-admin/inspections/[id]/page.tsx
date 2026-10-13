@@ -25,7 +25,7 @@ export default async function SuperAdminInspectionDetailPage({
   const { id } = await params;
   const detail = await browseInspection(id);
   if (!detail) notFound();
-  const { delivery, history, iar } = detail;
+  const { delivery, history, iar, photos } = detail;
   const inspection = delivery.inspection_data;
 
   return (
@@ -81,6 +81,54 @@ export default async function SuperAdminInspectionDetailPage({
       ) : null}
 
       <Card className={sectionStyles.panel}>
+        <h2 className={sectionStyles.panelTitle}>Attached images ({photos.length + iar.filter((r) => r.iar_image_url).length})</h2>
+        {photos.length === 0 && iar.every((r) => !r.iar_image_url) ? (
+          <p className={sectionStyles.panelSub}>No documentary photos or IAR scans attached yet.</p>
+        ) : (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem" }}>
+            {photos.map((p, i) => (
+              <a
+                key={p.id}
+                href={p.file_url ?? "#"}
+                target="_blank"
+                rel="noopener noreferrer"
+                title={`Documentary photo ${i + 1}${p.created_at ? ` · ${p.created_at.slice(0, 10)}` : ""}`}
+              >
+                <img
+                  src={p.file_url ?? ""}
+                  alt={`Documentary photo ${i + 1} for inspection ${delivery.id.slice(0, 8).toUpperCase()}`}
+                  width={120}
+                  height={120}
+                  loading="lazy"
+                  decoding="async"
+                  style={{ width: 120, height: 120, objectFit: "cover", borderRadius: "0.375rem", border: "1px solid var(--color-navy-200)" }}
+                />
+              </a>
+            ))}
+            {iar.filter((r) => r.iar_image_url).map((r) => (
+              <a
+                key={r.id}
+                href={r.iar_image_url ?? "#"}
+                target="_blank"
+                rel="noopener noreferrer"
+                title={`IAR scan${r.iar_no ? ` · ${r.iar_no}` : ""}`}
+              >
+                <img
+                  src={r.iar_image_url ?? ""}
+                  alt={`IAR scan${r.iar_no ? ` ${r.iar_no}` : ""}`}
+                  width={120}
+                  height={120}
+                  loading="lazy"
+                  decoding="async"
+                  style={{ width: 120, height: 120, objectFit: "cover", borderRadius: "0.375rem", border: "1px solid var(--color-navy-200)" }}
+                />
+              </a>
+            ))}
+          </div>
+        )}
+      </Card>
+
+      <Card className={sectionStyles.panel}>
         <h2 className={sectionStyles.panelTitle}>IAR records ({iar.length})</h2>
         {iar.length === 0 ? (
           <p className={sectionStyles.panelSub}>No inspection & acceptance reports filed yet.</p>
@@ -94,6 +142,7 @@ export default async function SuperAdminInspectionDetailPage({
                   <th>IAR date</th>
                   <th>Invoice</th>
                   <th>Result</th>
+                  <th>Image</th>
                 </tr>
               </thead>
               <tbody>
@@ -105,6 +154,23 @@ export default async function SuperAdminInspectionDetailPage({
                     <td>{r.iar_invoice_no ?? "—"}</td>
                     <td>
                       <StatusPill value={r.inspection_result} />
+                    </td>
+                    <td>
+                      {r.iar_image_url ? (
+                        <a href={r.iar_image_url} target="_blank" rel="noopener noreferrer" title="Open full-size scan">
+                          <img
+                            src={r.iar_image_url}
+                            alt={`IAR scan${r.iar_no ? ` ${r.iar_no}` : ""}`}
+                            width={48}
+                            height={48}
+                            loading="lazy"
+                            decoding="async"
+                            style={{ width: 48, height: 48, objectFit: "cover", borderRadius: "0.25rem", border: "1px solid var(--color-navy-200)" }}
+                          />
+                        </a>
+                      ) : (
+                        "—"
+                      )}
                     </td>
                   </tr>
                 ))}

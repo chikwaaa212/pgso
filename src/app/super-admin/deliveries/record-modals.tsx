@@ -194,6 +194,41 @@ function InspectionDetailBody({ id }: { id: string }) {
           <InspectionReceipt delivery={detail.delivery} inspection={inspection} />
         </div>
       ) : null}
+      {detail.photos.length > 0 || detail.iar.some((r) => r.iar_image_url) ? (
+        <div>
+          <h3 style={{ fontSize: "0.9375rem", fontWeight: 700 }}>
+            Attached images ({detail.photos.length + detail.iar.filter((r) => r.iar_image_url).length})
+          </h3>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem", marginTop: "0.5rem" }}>
+            {detail.photos.map((p, i) => (
+              <a key={p.id} href={p.file_url ?? "#"} target="_blank" rel="noopener noreferrer" title={`Documentary photo ${i + 1}`}>
+                <img
+                  src={p.file_url ?? ""}
+                  alt={`Documentary photo ${i + 1}`}
+                  width={64}
+                  height={64}
+                  loading="lazy"
+                  decoding="async"
+                  style={{ width: 64, height: 64, objectFit: "cover", borderRadius: "0.25rem", border: "1px solid var(--color-navy-200)" }}
+                />
+              </a>
+            ))}
+            {detail.iar.filter((r) => r.iar_image_url).map((r) => (
+              <a key={r.id} href={r.iar_image_url ?? "#"} target="_blank" rel="noopener noreferrer" title={`IAR scan${r.iar_no ? ` · ${r.iar_no}` : ""}`}>
+                <img
+                  src={r.iar_image_url ?? ""}
+                  alt={`IAR scan${r.iar_no ? ` ${r.iar_no}` : ""}`}
+                  width={64}
+                  height={64}
+                  loading="lazy"
+                  decoding="async"
+                  style={{ width: 64, height: 64, objectFit: "cover", borderRadius: "0.25rem", border: "1px solid var(--color-navy-200)" }}
+                />
+              </a>
+            ))}
+          </div>
+        </div>
+      ) : null}
       <div>
         <h3 style={{ fontSize: "0.9375rem", fontWeight: 700 }}>
           IAR records ({detail.iar.length})

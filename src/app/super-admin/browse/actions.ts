@@ -180,10 +180,18 @@ export async function browseInspections(): Promise<UnifiedInspectionRow[]> {
   })
 }
 
+export interface InspectionPhotoRow {
+  id: string
+  file_url: string | null
+  inspection_id: string | null
+  created_at: string | null
+}
+
 export interface BrowseInspectionDetail {
   delivery: DeliveryForInspection
   history: InspectionHistoryRecord[]
   iar: IarRecordRow[]
+  photos: InspectionPhotoRow[]
 }
 
 export async function browseInspection(deliveryId: string): Promise<BrowseInspectionDetail | null> {
@@ -192,12 +200,23 @@ export async function browseInspection(deliveryId: string): Promise<BrowseInspec
   const { withScopedCache } = await import('@/lib/personnel-cache')
   return withScopedCache('super-admin:inspection-detail', 30, async () => {
   try {
-    const [delivery, history, iar] = await Promise.all([
+    const [delivery, history, iar, photoDocs] = await Promise.all([
       getDeliveryForInspection(deliveryId),
       getInspectionHistory(deliveryId),
       getIarRecords(deliveryId),
+      prisma.document.findMany({
+        where: { related_delivery_id: deliveryId, document_type: 'INSPECTION_PHOTO' },
+        orderBy: { created_at: 'asc' },
+        select: { id: true, file_url: true, related_inspection_id: true, created_at: true },
+      }),
     ])
-    return { delivery, history, iar }
+    const photos: InspectionPhotoRow[] = photoDocs.map((d) => ({
+      id: d.id,
+      file_url: d.file_url,
+      inspection_id: d.related_inspection_id,
+      created_at: d.created_at?.toISOString() ?? null,
+    }))
+    return { delivery, history, iar, photos }
   } catch {
     return null
   }

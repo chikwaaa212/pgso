@@ -1,10 +1,11 @@
 "use client";
 
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import Image from "next/image";
 import { Card } from "@/components/ui/card";
 import { BackButton } from "../back-button";
 import { requestTypeLabel } from "@/app/personnel/requests/request-types";
+import type { RequestRow } from "@/app/personnel/requests/actions";
 import { getMyRequests, getMyRequestOptions } from "../actions";
 import { NewRequestForm } from "./request-form";
 import { RequestQrButton } from "@/components/personnel/RequestQrButton";
@@ -34,7 +35,7 @@ export default function EmployeeRequestsPage() {
   // the personnel dashboard / deliveries pages. A DB outage never crashes
   // the page: stale data stays visible and only cold starts surface the
   // error with a Retry.
-  const { data: snapshot, loading, error, refresh } = useCachedAction(
+  const { data: snapshot, loading, error, refresh, mutate } = useCachedAction(
     buildQueryKey({ module: 'employee', resource: 'requests' }),
     () =>
       Promise.all([getMyRequests(), getMyRequestOptions()]).then(
@@ -42,6 +43,18 @@ export default function EmployeeRequestsPage() {
       ),
     { staleTime: 30_000 }
   );
+
+  // Optimistic filing: the new request paints instantly (temp row on top);
+  // success reconciles via silent refresh, failure rolls the temp row back.
+  // Same pattern as personnel asset create — never throws, never fetches.
+  const handleOptimisticFile = useCallback((temp: RequestRow) => {
+    mutate((prev) => (prev ? { ...prev, requests: [temp, ...prev.requests] } : prev));
+  }, [mutate]);
+  const handleOptimisticRollback = useCallback((tempId: string) => {
+    mutate((prev) =>
+      prev ? { ...prev, requests: prev.requests.filter((r) => r.id !== tempId) } : prev
+    );
+  }, [mutate]);
 
   const requests = useMemo(() => snapshot?.requests ?? [], [snapshot]);
   const options = useMemo(
@@ -136,7 +149,7 @@ export default function EmployeeRequestsPage() {
           (every delivery is an asset; stock is its quantity on hand).
           PGSO personnel review and act on it.
         </p>
-        <NewRequestForm assets={options.assets} personnel={options.personnel} onFiled={refresh} />
+        <NewRequestForm assets={options.assets} personnel={options.personnel} onFiled={refresh} onOptimisticFile={handleOptimisticFile} onOptimisticRollback={handleOptimisticRollback} />
       </Card>
 
       <Card className={styles.panel}>

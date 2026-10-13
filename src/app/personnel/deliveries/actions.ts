@@ -307,6 +307,55 @@ export async function recordInspection(
     return { error: 'Invalid item checks payload.' }
   }
 
+  // Documentary photos (optional, max 5): uploaded client-side to the same
+  // storage bucket as IAR scans; the form submits their public URLs here.
+  // URLs must be https storage links from this project — never arbitrary
+  // external images (admin renders them).
+  const MAX_INSPECTION_PHOTOS = 5
+  let photoUrls: string[] = []
+  try {
+    const photosRaw = (formData.get('photoUrlsJson') as string) || '[]'
+    const parsedPhotos: unknown = JSON.parse(photosRaw)
+    if (!Array.isArray(parsedPhotos)) {
+      return { error: 'Invalid photos payload.' }
+    }
+    photoUrls = [
+      ...new Set(
+        parsedPhotos
+          .filter((u): u is string => typeof u === 'string')
+          .map((u) => u.trim())
+          .filter(Boolean)
+      ),
+    ]
+  } catch {
+    return { error: 'Invalid photos payload.' }
+  }
+  if (photoUrls.length > MAX_INSPECTION_PHOTOS) {
+    return { error: `Attach at most ${MAX_INSPECTION_PHOTOS} documentary photos.` }
+  }
+  const supabaseHost = (() => {
+    try {
+      const raw = process.env.NEXT_PUBLIC_SUPABASE_URL ?? ''
+      return raw ? new URL(raw).hostname : null
+    } catch {
+      return null
+    }
+  })()
+  for (const url of photoUrls) {
+    if (url.length > 2048 || !url.startsWith('https://')) {
+      return { error: 'Documentary photos must be uploaded images (https URL).' }
+    }
+    if (supabaseHost) {
+      try {
+        if (new URL(url).hostname !== supabaseHost) {
+          return { error: 'Documentary photos must come from an upload in this form.' }
+        }
+      } catch {
+        return { error: 'Documentary photos contain an invalid URL.' }
+      }
+    }
+  }
+
   const { getPersonnelScope: getScopeForInspection } = await import('@/lib/personnel-scope')
   const inspectionScope = await getScopeForInspection()
   const user = inspectionScope.userId ? ({ id: inspectionScope.userId } as { id: string }) : null
@@ -357,6 +406,24 @@ export async function recordInspection(
           data:  { inspection_status: result },
         })
 
+        // Documentary photos ride along as inspection documents (same table
+        // the admin oversight views read) — no catalog or schema change.
+        // Runs inside the idempotency closure, so retries never duplicate.
+        if (photoUrls.length > 0) {
+          const stamp = Date.now().toString(36).toUpperCase()
+          await prisma.document.createMany({
+            data: photoUrls.map((file_url, i) => ({
+              document_type: 'INSPECTION_PHOTO',
+              reference_number: `INSP-PHOTO-${inspection.id.slice(0, 8).toUpperCase()}-${stamp}-${i}`,
+              related_inspection_id: inspection.id,
+              related_delivery_id: deliveryId,
+              file_url,
+              status: 'attached',
+              prepared_by: user.id,
+            })),
+          })
+        }
+
         return { inspectionId: inspection.id }
       }
     ).then(async (outcome) => {
@@ -387,6 +454,7 @@ export async function recordInspection(
         summary: remarks || `Delivery ${deliveryId.slice(0, 8).toUpperCase()} inspected — ${result}`,
         reference_id: deliveryId,
         result,
+        photos: photoUrls.length,
       },
     })
     return { success: true, stockWarning }

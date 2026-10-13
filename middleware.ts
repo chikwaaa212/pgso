@@ -11,6 +11,7 @@ function isPublicPath(pathname: string): boolean {
     '/forgot-password',
     '/info',
     '/auth',
+    '/scan',
     '/api/health',
   ]
   return publicPrefixes.some(

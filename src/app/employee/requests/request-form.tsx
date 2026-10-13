@@ -14,6 +14,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { requestTypeLabel } from "@/app/personnel/requests/request-types";
+import type { RequestRow } from "@/app/personnel/requests/actions";
 import { createMyRequest, getMyRequestOptions } from "../actions";
 
 const TYPES = ["transfer", "new_assignment", "repair"] as const;
@@ -37,6 +38,8 @@ export function NewRequestForm({
   assets,
   personnel,
   onFiled,
+  onOptimisticFile,
+  onOptimisticRollback,
 }: {
   assets: {
     id: string;
@@ -49,6 +52,10 @@ export function NewRequestForm({
   personnel: { id: string; label: string }[];
   /** Silent revalidation of the cached snapshot after a successful filing. */
   onFiled?: () => void;
+  /** Optimistic paint: called with a temp row before the server round-trip. */
+  onOptimisticFile?: (temp: RequestRow) => void;
+  /** Rollback: called with the temp row id when the filing fails. */
+  onOptimisticRollback?: (tempId: string) => void;
 }) {
   const [type, setType] = useState<string>("new_assignment");
   const [assetId, setAssetId] = useState<string>("");
@@ -147,6 +154,34 @@ export function NewRequestForm({
           }
         }
         start(async () => {
+          // Optimistic paint: the request appears at the top of the history
+          // instantly. Success reconciles via silent refresh (replaces the
+          // temp row with the server row); failure rolls it back below.
+          const tempId = `temp-${crypto.randomUUID()}`;
+          const reasonText = String(fd.get("reason") ?? "").trim();
+          const temp: RequestRow = {
+            id: tempId,
+            request_type: type,
+            description:
+              reasonText ||
+              (fd.get("transferTo") as string) ||
+              (fd.get("newLocation") as string) ||
+              (fd.get("itemNeeded") as string) ||
+              type,
+            status: "pending",
+            date_requested: new Date().toISOString().slice(0, 10),
+            date_resolved: null,
+            employee_id: "",
+            employee_name: "",
+            recipient_id: recipientId,
+            recipient_name: personnel.find((p) => p.id === recipientId)?.label ?? null,
+            asset_id: assetId || null,
+            asset_label: assets.find((a) => a.id === assetId)?.label ?? null,
+            account_code: null,
+            lines: [],
+            item_count: 1,
+          };
+          onOptimisticFile?.(temp);
           const res = await createMyRequest({
             requestType: type,
             recipientId,
@@ -170,6 +205,7 @@ export function NewRequestForm({
             onFiled?.();
             router.refresh();
           } else {
+            onOptimisticRollback?.(tempId);
             setError(res.error ?? "Failed to submit the request.");
           }
         });

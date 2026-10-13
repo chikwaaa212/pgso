@@ -11,6 +11,9 @@ import {
   ClipboardList,
   ShieldCheck,
   FileText,
+  ImagePlus,
+  Loader2,
+  X,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
@@ -65,7 +68,12 @@ interface InspectionDraft {
   inspectionDate: string;
   overallRemarks: string;
   verdict: Verdict;
+  photoUrls: string[];
 }
+
+const MAX_PHOTOS = 5;
+const MAX_PHOTO_BYTES = 8 * 1024 * 1024;
+const PHOTO_BUCKET = "iar-attachments";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -195,6 +203,15 @@ export function InspectionForm({
   const [overallRemarks, setOverallRemarks] = useState("")
   const [verdict, setVerdict] = useState<Verdict>("")
   const [idempotencyKey] = useState(() => crypto.randomUUID())
+  // Documentary photos (optional): uploaded immediately to storage (same
+  // bucket + rules as IAR scans); their URLs ride the hidden photoUrlsJson
+  // input into recordInspection, which files them as inspection documents.
+  // Uploads orphan only if the inspector abandons the form — same tradeoff
+  // as the standalone IAR attach button.
+  const [photos, setPhotos] = useState<string[]>([])
+  const [uploading, setUploading] = useState(false)
+  const [photoError, setPhotoError] = useState("")
+  const photoInputRef = useRef<HTMLInputElement>(null)
 
   const [actionState, formAction] = useActionState<InspectionState, FormData>(
     recordInspection,
@@ -229,6 +246,15 @@ export function InspectionForm({
             draft.verdict === ''
           ) {
             setVerdict(draft.verdict)
+          }
+          if (Array.isArray(draft.photoUrls)) {
+            setPhotos(
+              draft.photoUrls
+                .filter((u): u is string => typeof u === 'string')
+                .map((u) => u.trim())
+                .filter((u) => u.startsWith('https://'))
+                .slice(0, MAX_PHOTOS)
+            )
           }
           existing = null
         }
@@ -268,6 +294,7 @@ export function InspectionForm({
         inspectionDate: inspectionDate || '',
         overallRemarks,
         verdict,
+        photoUrls: photos,
       }
       window.localStorage.setItem(storageKey, JSON.stringify(draft))
     } catch {
@@ -282,6 +309,7 @@ export function InspectionForm({
     inspectionDate,
     overallRemarks,
     verdict,
+    photos,
   ])
 
   // Handle server action result
@@ -334,7 +362,8 @@ export function InspectionForm({
     allItemsChecked &&
     allSupplierChecked &&
     inspectorName.trim() !== "" &&
-    verdict !== "";
+    verdict !== "" &&
+    !uploading;
 
   const itemsDone = itemChecks.filter((c) => c.status !== "").length;
   const supplierDone = Object.values(supplierChecks).filter((v) => v !== "").length;
@@ -367,6 +396,8 @@ export function InspectionForm({
       duration: 2500,
       closeButton: true,
     };
+    if (uploading)
+      toastSonner.error("Photos are still uploading — wait a moment.", topCenter);
     if (!allItemsChecked)
       toastSonner.error("All items must have a status set.", topCenter);
     if (!allSupplierChecked)
@@ -419,6 +450,69 @@ export function InspectionForm({
     value: SupplierChecks[K]
   ) {
     setSupplierChecks((prev) => ({ ...prev, [key]: value }));
+  }
+
+  async function onPickPhotos(files: FileList | null) {
+    if (!files || files.length === 0) return;
+    setPhotoError("");
+    const picked = Array.from(files);
+    if (photos.length + picked.length > MAX_PHOTOS) {
+      setPhotoError(`At most ${MAX_PHOTOS} photos — remove one first.`);
+      return;
+    }
+    for (const f of picked) {
+      if (!f.type.startsWith("image/")) {
+        setPhotoError("Please choose image files (JPG or PNG).");
+        return;
+      }
+      if (f.size > MAX_PHOTO_BYTES) {
+        setPhotoError("Each photo must be 8 MB or smaller.");
+        return;
+      }
+    }
+    setUploading(true);
+    try {
+      const { createClient } = await import("@/lib/supabase/client");
+      const supabase = createClient();
+      const uploaded: string[] = [];
+      for (const file of picked) {
+        const safeName = file.name.replace(/[^A-Za-z0-9._-]+/g, "_") || "photo";
+        const path = `inspection-photos/${delivery.id}/${Date.now()}-${safeName}`;
+        const { error: upErr } = await supabase.storage
+          .from(PHOTO_BUCKET)
+          .upload(path, file, { cacheControl: "3600", upsert: false });
+        if (upErr) throw new Error(upErr.message);
+        const {
+          data: { publicUrl },
+        } = supabase.storage.from(PHOTO_BUCKET).getPublicUrl(path);
+        uploaded.push(publicUrl);
+      }
+      setPhotos((prev) => [...prev, ...uploaded].slice(0, MAX_PHOTOS));
+    } catch (e) {
+      setPhotoError(e instanceof Error ? e.message : "Photo upload failed.");
+    } finally {
+      setUploading(false);
+      if (photoInputRef.current) photoInputRef.current.value = "";
+    }
+  }
+
+  async function onRemovePhoto(url: string) {
+    setPhotos((prev) => prev.filter((u) => u !== url));
+    // Best-effort: delete the orphaned upload too.
+    try {
+      const marker = `/${PHOTO_BUCKET}/`;
+      const i = url.indexOf(marker);
+      if (i >= 0) {
+        const path = url.slice(i + marker.length);
+        const { createClient } = await import("@/lib/supabase/client");
+        await createClient()
+          .storage.from(PHOTO_BUCKET)
+          .remove([path])
+          .catch(() => undefined);
+      }
+    } catch {
+      /* orphan stays — harmless */
+    }
   }
 
 const deliveryRef = delivery.id.slice(0, 8).toUpperCase();
@@ -543,6 +637,7 @@ const deliveryRef = delivery.id.slice(0, 8).toUpperCase();
           )}
         />
         <input type="hidden" name="idempotencyKey" value={idempotencyKey} />
+        <input type="hidden" name="photoUrlsJson" value={JSON.stringify(photos)} />
 
         {/* ── Section 1: Delivery Record ─────────────────────────────── */}
         <Card className={styles.card}>
@@ -747,7 +842,102 @@ const deliveryRef = delivery.id.slice(0, 8).toUpperCase();
           </div>
         </Card>
 
-        {/* ── Section 4: Inspector Info & Verdict ───────────────────── */}
+        {/* ── Section 4: Documentary Photos (optional) ───────────── */}
+        <Card className={styles.card}>
+          <SectionHeading
+            icon={<ImagePlus className="h-5 w-5" />}
+            title="Documentary Photos"
+            subtitle={`Optional — up to ${MAX_PHOTOS} photos of the delivered items (damage, labels, serials). They are filed with this inspection and visible to Super Admin oversight.`}
+          />
+          <input
+            ref={photoInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            className="hidden"
+            aria-label="Choose documentary photos"
+            onChange={(e) => void onPickPhotos(e.target.files)}
+          />
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem", alignItems: "flex-start" }}>
+            {photos.map((url) => (
+              <figure key={url} style={{ position: "relative", margin: 0 }}>
+                <img
+                  src={url}
+                  alt="Documentary photo for this inspection"
+                  width={96}
+                  height={96}
+                  loading="lazy"
+                  decoding="async"
+                  style={{ width: 96, height: 96, objectFit: "cover", borderRadius: "0.375rem", border: "1px solid var(--color-navy-200)" }}
+                />
+                <button
+                  type="button"
+                  onClick={() => void onRemovePhoto(url)}
+                  aria-label="Remove photo"
+                  title="Remove photo"
+                  style={{
+                    position: "absolute",
+                    top: -8,
+                    right: -8,
+                    width: 22,
+                    height: 22,
+                    borderRadius: 9999,
+                    border: "1px solid var(--color-navy-200)",
+                    background: "#fff",
+                    cursor: "pointer",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    color: "#991b1b",
+                  }}
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </figure>
+            ))}
+            {photos.length < MAX_PHOTOS && (
+              <button
+                type="button"
+                onClick={() => photoInputRef.current?.click()}
+                disabled={uploading}
+                style={{
+                  width: 96,
+                  height: 96,
+                  borderRadius: "0.375rem",
+                  border: "1px dashed var(--color-navy-300)",
+                  background: "transparent",
+                  cursor: uploading ? "wait" : "pointer",
+                  display: "inline-flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: "0.25rem",
+                  fontSize: "0.6875rem",
+                  fontWeight: 600,
+                  color: "var(--color-navy-600)",
+                }}
+              >
+                {uploading ? (
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                ) : (
+                  <ImagePlus className="h-5 w-5" />
+                )}
+                {uploading ? "Uploading…" : "Add photo"}
+              </button>
+            )}
+          </div>
+          {photoError ? (
+            <p role="alert" style={{ marginTop: "0.5rem", fontSize: "0.8125rem", fontWeight: 600, color: "#991b1b" }}>
+              {photoError}
+            </p>
+          ) : (
+            <p className={styles.hint} style={{ marginTop: "0.5rem" }}>
+              JPG or PNG, 8 MB or smaller each. Photos upload immediately and are attached when you record the inspection.
+            </p>
+          )}
+        </Card>
+
+        {/* ── Section 5: Inspector Info & Verdict ───────────────────── */}
         <Card className={styles.card}>
           <SectionHeading
             icon={<ClipboardList className="h-5 w-5" />}

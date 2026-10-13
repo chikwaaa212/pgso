@@ -10,7 +10,7 @@ import { ToastProvider } from "@/components/ui/toaster";
 import { Toaster } from "@/components/ui/sonner";
 import styles from "./LayoutClient.module.css";
 
-const LANDING_PATHS = ["/"];
+const LANDING_PATHS = ["/", "/scan"];
 
 function isReceiptPath(pathname: string) {
   return (
