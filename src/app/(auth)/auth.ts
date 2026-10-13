@@ -7,7 +7,7 @@ import { writeAuditLog } from '@/lib/audit'
 import { withIdempotency } from '@/lib/idempotency'
 import { redirect, unstable_rethrow } from 'next/navigation'
 import type { LoginState, SignupState } from '@/types'
-import { OAUTH_PROVIDER, SIGNUP_ROLE_COOKIE, parseSignupRole } from './oauth'
+import { OAUTH_PROVIDER, SIGNUP_ROLE_COOKIE, OAUTH_MODE_COOKIE, parseSignupRole, parseOAuthMode } from './oauth'
 
 const roleRoutes: Record<string, string> = {
   super_admin: '/super-admin/dashboard',
@@ -70,24 +70,29 @@ async function callbackOrigin(): Promise<string> {
 }
 
 /**
- * Starts Supabase OAuth (PKCE) for self-registration + sign-in.
+ * Starts Supabase OAuth (PKCE), distinguishing Sign in from Sign up.
  *
- * New users pick their role (Employee / PGSO Personnel) on the signup page;
- * it is stashed in a short-lived cookie so the auth callback can create an
- * ACTIVE profile with that role — no admin approval needed. Returning users
- * (any role) keep their existing profile and sign straight in. OAuth users
- * have no password, so this is used by both login and signup.
+ * - Sign up (`mode=signup`, role picked on the signup page): first-time
+ *   Google users get a PENDING profile — a Super Admin must approve before
+ *   sign-in works.
+ * - Sign in (`mode=signin`, login page): first-time Google users get NO
+ *   profile — the callback bounces them to login?notice=no-account.
+ * Returning users (any role) keep their existing profile and sign straight
+ * in (subject to pending/inactive checks in the callback).
  */
 export async function signInWithOAuth(formData?: FormData): Promise<never> {
   const rawNext =
     formData instanceof FormData ? (formData.get('next') as string | null) : null
   const rawRole =
     formData instanceof FormData ? (formData.get('role') as string | null) : null
+  const rawMode =
+    formData instanceof FormData ? (formData.get('mode') as string | null) : null
   const next = safeNextParam(rawNext)
   const role = parseSignupRole(rawRole)
+  const mode = parseOAuthMode(rawMode)
 
-  // Remember the requested role across the Google round-trip (10 min TTL).
-  // The callback consumes + clears it. Validation happens again there.
+  // Remember role + mode across the Google round-trip (10 min TTL).
+  // The callback consumes + clears them. Validation happens again there.
   try {
     const jar = await cookies()
     jar.set(SIGNUP_ROLE_COOKIE, role, {
@@ -96,8 +101,14 @@ export async function signInWithOAuth(formData?: FormData): Promise<never> {
       sameSite: 'lax',
       secure: process.env.NODE_ENV === 'production',
     })
+    jar.set(OAUTH_MODE_COOKIE, mode, {
+      path: '/',
+      maxAge: 600,
+      sameSite: 'lax',
+      secure: process.env.NODE_ENV === 'production',
+    })
   } catch {
-    // best-effort: callback falls back to employee when the cookie is missing
+    // best-effort: callback falls back to employee/signin when cookies are missing
   }
 
   const supabase = await createClient()
@@ -132,7 +143,7 @@ export async function login(
     const tStart = Date.now()
     let tAuth = 0
     let tRole = 0
-    let tFlip = 0
+    const tFlip = 0
     // Login is naturally idempotent (signing in twice yields the same
     // session), so it skips the idempotency-key table entirely — that table
     // costs 3 DB round-trips per login (claim + complete + stale reclaim)
@@ -182,24 +193,17 @@ export async function login(
       throw new Error('Your account is inactive.')
     }
 
-    // Legacy self-registrations created before self-service auto-activation
-    // used `status = pending` + admin approval. Approval is gone — flip
-    // them to active on first successful sign-in so nobody is stuck.
+    // Self-registrations wait for Super Admin approval: a verified but
+    // still-pending account cannot sign in. The session is revoked so
+    // middleware (which also blocks pending) never sees a half-authed user.
     if (profile.status === 'pending') {
-      t0 = Date.now()
-      try {
-        await prisma.profile.update({
-          where: { id: user.id },
-          data: { status: 'active' },
-        })
-        const { bustRoleCache } = await import('@/lib/personnel-scope')
-        bustRoleCache(user.id)
-        const { bustMiddlewareRoleCache } = await import('@/lib/personnel-cache')
-        void bustMiddlewareRoleCache(user.id).catch(() => {})
-      } catch {
-        // best-effort: still let them in, middleware treats pending as active
-      }
-      tFlip = Date.now() - t0
+      await supabase.auth.signOut()
+      throw Object.assign(
+        new Error(
+          'Your account is waiting for Super Admin approval. You will be able to sign in once it is approved.'
+        ),
+        { needsApproval: true, email }
+      )
     }
 
     const role = profile.role
@@ -238,9 +242,12 @@ export async function login(
   } catch (e) {
     unstable_rethrow(e)
     if (e instanceof Error) {
-      const extra = e as Error & { needsVerification?: boolean; email?: string }
+      const extra = e as Error & { needsVerification?: boolean; needsApproval?: boolean; email?: string }
       if (extra.needsVerification) {
         return { error: extra.message, email: extra.email, needsVerification: true }
+      }
+      if (extra.needsApproval) {
+        return { error: extra.message, email: extra.email, needsApproval: true }
       }
       return { error: extra.message }
     }
@@ -249,12 +256,12 @@ export async function login(
 }
 
 /**
- * Self-registration with Email + Password + OTP (no admin approval).
+ * Self-registration with Email + Password + OTP (Super Admin approval required).
  *
  * Uses the anon `signUp` (not admin.createUser) so Supabase sends the
  * verification OTP / confirmation link when "Confirm email" is enabled.
- * The profile is created ACTIVE immediately, so once the email is verified
- * the user can sign straight in as the role they picked (employee/personnel).
+ * The profile is created PENDING — after email verification the user waits
+ * for a Super Admin to approve (activate) the account before sign-in works.
  *
  * Returns `{ needsVerification: true }` when Supabase requires email
  * confirmation — the signup page then shows the 8-digit OTP step.
@@ -292,18 +299,19 @@ export async function signup(_prevState: SignupState, formData: FormData): Promi
           throw new Error(error?.message || 'Signup failed')
         }
 
-        // Profile is ACTIVE from the start — verification (OTP/link) proves
-        // email ownership, no admin step. Prisma bypasses RLS, so this works
-        // even though the user has no session yet when confirmation is on.
+        // Profile starts PENDING — verification (OTP/link) proves email
+        // ownership, then a Super Admin must approve before sign-in works.
+        // Prisma bypasses RLS, so this works even though the user has no
+        // session yet when confirmation is on.
         try {
           await prisma.profile.upsert({
             where: { id: data.user.id },
-            update: { full_name, role, status: 'active' },
+            update: { full_name, role, status: 'pending' },
             create: {
               id: data.user.id,
               full_name,
               role,
-              status: 'active',
+              status: 'pending',
             },
             select: { id: true },
           })
@@ -318,7 +326,7 @@ export async function signup(_prevState: SignupState, formData: FormData): Promi
             module: 'auth',
             details: {
               purpose: 'Self-registration (email+OTP)',
-              summary: `Self-registered ${email} as ${role}, active`,
+              summary: `Self-registered ${email} as ${role}, pending approval`,
             },
           })
         } catch {
@@ -334,7 +342,15 @@ export async function signup(_prevState: SignupState, formData: FormData): Promi
       // Supabase requires email confirmation — show the OTP step.
       return { needsVerification: true, email, role }
     }
-    return { success: true, email, role }
+    // Confirmation is off and Supabase already signed the user in — revoke
+    // it: pending accounts must wait for Super Admin approval.
+    try {
+      const supabase = await createClient()
+      await supabase.auth.signOut()
+    } catch {
+      /* best-effort */
+    }
+    return { needsApproval: true, email, role }
   } catch (e) {
     return { error: e instanceof Error ? e.message : 'Signup failed' }
   }
@@ -342,8 +358,9 @@ export async function signup(_prevState: SignupState, formData: FormData): Promi
 
 /**
  * Verifies the 8-digit signup OTP Supabase emailed after `signup`.
- * On success the user gets a session (signed in) and an ACTIVE profile with
- * the role they picked — then the page redirects to their dashboard.
+ * On success the email is confirmed and the profile is left PENDING — the
+ * session is revoked and the client shows a "waiting for approval" panel
+ * instead of redirecting to a dashboard.
  */
 export async function verifySignupOtp(
   _prevState: SignupState,
@@ -384,8 +401,8 @@ export async function verifySignupOtp(
         try {
           await prisma.profile.upsert({
             where: { id: user.id },
-            update: { full_name: fullName, role: metaRole, status: 'active' },
-            create: { id: user.id, full_name: fullName, role: metaRole, status: 'active' },
+            update: { full_name: fullName, role: metaRole, status: 'pending' },
+            create: { id: user.id, full_name: fullName, role: metaRole, status: 'pending' },
             select: { id: true },
           })
         } catch {
@@ -398,7 +415,7 @@ export async function verifySignupOtp(
             module: 'auth',
             details: {
               purpose: 'Self-registration email verified',
-              summary: `Verified ${email} as ${metaRole}, active`,
+              summary: `Verified ${email} as ${metaRole}, pending approval`,
             },
           })
         } catch {
@@ -408,8 +425,16 @@ export async function verifySignupOtp(
       }
     )
 
-    const roleRoute = roleRoutes[(outcome.result as { role: string }).role] || '/'
-    redirect(roleRoute)
+    const verifiedRole = (outcome.result as { role: string }).role
+    // Revoke the just-verified session: pending accounts must wait for
+    // Super Admin approval before they can sign in.
+    try {
+      const supabase = await createClient()
+      await supabase.auth.signOut()
+    } catch {
+      /* best-effort */
+    }
+    return { needsApproval: true, email, role: verifiedRole }
   } catch (e) {
     unstable_rethrow(e)
     const message = e instanceof Error ? e.message : 'Verification failed'

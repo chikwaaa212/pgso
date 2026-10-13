@@ -59,7 +59,7 @@ export default async function SuperAdminDashboard() {
   const lowTotal = ops.lowStockCount + ops.outOfStockCount
 
   const stats = [
-    { label: 'Pending approvals', value: overview.pendingAccounts, delta: 'employees waiting', href: '/super-admin/users' },
+    { label: 'Pending approvals', value: overview.pendingAccounts, delta: 'employees + personnel waiting', href: '/super-admin/users' },
     { label: 'Personnel', value: overview.totalPersonnel, delta: 'active + inactive', href: '/super-admin/users' },
     { label: 'Employees', value: overview.totalEmployees, delta: 'registered', href: '/super-admin/users' },
     { label: 'Deliveries', value: ops.totalDeliveries, delta: `${ops.pendingInspections} pending inspection`, href: '/super-admin/transactions' },
@@ -131,8 +131,8 @@ export default async function SuperAdminDashboard() {
           <h2 className={styles.addTitle}>Add Personnel Employee</h2>
           <p className={styles.addSubtitle}>
             Create login credentials for a PGSO personnel member directly. Employee
-            + Personnel accounts can also self-register (Google or Email + OTP) and
-            are active immediately — manage them under{' '}
+            + Personnel self-registrations (Google or Email + OTP) wait for your
+            approval — manage them under{' '}
             <Link href="/super-admin/users" style={{ textDecoration: 'underline' }}>
               Users
             </Link>

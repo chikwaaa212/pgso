@@ -14,9 +14,11 @@ import styles from './page.module.css'
 
 const NOTICES: Record<string, string> = {
   inactive: 'Your account is inactive. Contact your administrator.',
+  pending: 'Your account is waiting for Super Admin approval. You will be able to sign in once it is approved.',
+  'no-account': 'No account found for this Google email. Please sign up first — a Super Admin must approve before you can sign in.',
   'oauth-error': 'Google sign-in failed. Try again or sign in with email.',
   verified: 'Email verified — sign in to continue.',
-  'check-email': 'Account created — verify the code we emailed you, then sign in.',
+  'check-email': 'Account created — verify the code we emailed you, then wait for Super Admin approval.',
 }
 
 function LoginNotice() {

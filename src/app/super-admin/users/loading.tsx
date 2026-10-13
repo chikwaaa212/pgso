@@ -56,7 +56,7 @@ export default function UsersLoading() {
             aria-hidden="true"
             className="inline-block h-4 w-56 animate-pulse rounded bg-navy-100 align-middle"
           />{" "}
-          Admin creates personnel only — employees self-register and wait for
+          Admin creates personnel directly — employees + personnel can also self-register and wait for
           approval.
         </p>
       </div>

@@ -5,7 +5,7 @@ import { SuperAdminNavbar } from "@/components/super-admin/SuperAdminNavbar";
 async function getPendingAccounts(): Promise<number> {
   try {
     return await prisma.profile.count({
-      where: { role: "employee", status: "pending" },
+      where: { status: "pending", role: { in: ["employee", "pgso_personnel"] } },
     });
   } catch {
     return 0;

@@ -76,6 +76,16 @@ export default function PpmpPage() {
         </Button>
       </Card>
 
+      <Card className="mt-4 p-6">
+        <h2 className="text-lg font-semibold">PPMP Planning</h2>
+        <p className="text-sm text-zinc-600 mt-1">
+          Build a forward-looking draft for any future fiscal year: forecast ranges, PPMP table, and Excel export.
+        </p>
+        <Button type="button" className="mt-4" onClick={() => router.push("/personnel/ppmp/planning")}>
+          Open planning
+        </Button>
+      </Card>
+
       <Dialog
         open={open}
         onOpenChange={(v) => {

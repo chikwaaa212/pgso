@@ -111,7 +111,7 @@ describe("users + logs Page readers", () => {
     const body = fnBody(src("../app/super-admin/users/actions.ts"), "getUsersPage");
     assert.match(body, /withScopedCache\('super-admin:users-page', 30/);
     assert.match(body, /\}, \{ page, pageSize, q \}\)/);
-    assert.match(body, /NOT: \[{ role: 'employee', status: 'pending' }\]/);
+    assert.match(body, /NOT: \[\{ status: 'pending' \}\]/);
     assert.match(body, /skip: \(page - 1\) \* pageSize/);
     assert.match(body, /pageResponse\(mapped, total, page, pageSize\)/);
     assert.ok(!/take:\s*300/.test(body), "no 300-row snapshot");

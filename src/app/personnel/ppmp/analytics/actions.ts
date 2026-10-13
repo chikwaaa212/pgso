@@ -193,15 +193,15 @@ export async function runPpmpAnalysis(
       return { error: "You do not have access to one or more selected files.", errorCode: "FORBIDDEN" };
   }
 
-  // Rate limit: 10 analyses per user per hour (best-effort; fail open).
+  // Rate limit: 100 analyses per user per hour (best-effort; fail open).
   try {
     const since = new Date(Date.now() - 60 * 60 * 1000).toISOString();
     const recent = await prisma.$queryRaw<Array<{ n: string }>>`
       SELECT COUNT(*)::text AS n FROM ppmp_analysis_sessions
       WHERE user_id = ${user.id}::uuid AND created_at > ${since}::timestamptz`;
-    if (Number(recent[0]?.n ?? 0) >= 10) {
+    if (Number(recent[0]?.n ?? 0) >= 100) {
       return {
-        error: "Analysis limit reached (10 per hour). Try again later.",
+        error: "Analysis limit reached (100 per hour). Try again later.",
         errorCode: "RATE_LIMITED",
       };
     }

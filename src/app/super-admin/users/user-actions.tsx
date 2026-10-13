@@ -11,7 +11,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { ActionButton } from "@/components/ui/action-button";
-import { setUserActive } from "./actions";
+import { approveEmployee, rejectEmployee, setUserActive } from "./actions";
 
 export function ActiveToggle({
   userId,
@@ -113,6 +113,70 @@ const btnPrimary: React.CSSProperties = {
   color: "#fff",
   cursor: "pointer",
 };
+
+export function ApprovalActions({
+  userId,
+  name,
+  role,
+  onDone,
+}: {
+  userId: string;
+  name: string;
+  role: string;
+  onDone?: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+
+  const run = async (kind: "approve" | "reject") => {
+    setBusy(true);
+    try {
+      const r =
+        kind === "approve"
+          ? await approveEmployee(userId)
+          : await rejectEmployee(userId);
+      if (r.ok) {
+        toast.success(kind === "approve" ? "Approved" : "Rejected", {
+          description:
+            kind === "approve"
+              ? `${name} (${role}) can now sign in.`
+              : `${name} (${role}) was rejected.`,
+          duration: 2000,
+          closeButton: true,
+        });
+        onDone?.();
+      } else {
+        toast.error("Failed", {
+          description: r.error ?? "Try again.",
+          duration: 2000,
+          closeButton: true,
+        });
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <span style={{ display: "inline-flex", gap: "0.5rem" }}>
+      <ActionButton
+        onClick={() => run("approve")}
+        loadingLabel="Approving…"
+        disabled={busy}
+        style={btnPrimary}
+      >
+        Approve
+      </ActionButton>
+      <ActionButton
+        onClick={() => run("reject")}
+        loadingLabel="Rejecting…"
+        disabled={busy}
+        style={btnDanger}
+      >
+        Reject
+      </ActionButton>
+    </span>
+  );
+}
 
 const btnDanger: React.CSSProperties = {
   ...btnPrimary,

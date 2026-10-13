@@ -41,6 +41,8 @@ export interface LoginState {
   /** Set when the password is right but the email is still unverified. */
   email?: string;
   needsVerification?: boolean;
+  /** Set when credentials are valid but the account is still pending approval. */
+  needsApproval?: boolean;
 }
 
 export interface SignupState {
@@ -48,6 +50,8 @@ export interface SignupState {
   error?: string;
   deliveryId?: string;
   needsVerification?: boolean;
+  /** Set when email is verified but the account waits for Super Admin approval. */
+  needsApproval?: boolean;
   email?: string;
   /** Role picked at signup — returned so the client can route to the right dashboard. */
   role?: string;

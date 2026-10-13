@@ -3,7 +3,7 @@ import { cookies } from 'next/headers'
 import { createClient } from '@/lib/supabase/server'
 import prisma from '@/lib/prisma'
 import { writeAuditLog } from '@/lib/audit'
-import { SIGNUP_ROLE_COOKIE } from '@/app/(auth)/oauth'
+import { SIGNUP_ROLE_COOKIE, OAUTH_MODE_COOKIE, parseOAuthMode } from '@/app/(auth)/oauth'
 
 const roleRoutes: Record<string, string> = {
   super_admin: '/super-admin/dashboard',
@@ -62,11 +62,15 @@ export async function GET(request: Request) {
 
         // Role the user picked on the signup page (cookie set before the
         // Google round-trip). Falls back to the invite metadata, then employee.
+        // Mode tells whether this started from Sign in (login page) or Sign up.
         let requestedRole: 'employee' | 'pgso_personnel' = 'employee'
+        let oauthMode: 'signin' | 'signup' = 'signin'
         try {
           const jar = await cookies()
           requestedRole = parseRole(jar.get(SIGNUP_ROLE_COOKIE)?.value)
+          oauthMode = parseOAuthMode(jar.get(OAUTH_MODE_COOKIE)?.value)
           jar.delete(SIGNUP_ROLE_COOKIE)
+          jar.delete(OAUTH_MODE_COOKIE)
         } catch {
           requestedRole = parseRole(user.user_metadata?.role as string | undefined)
         }
@@ -82,16 +86,29 @@ export async function GET(request: Request) {
         // redirecting — order between them doesn't matter.
         const pendingAudits: Promise<void>[] = []
 
-        // First-time OAuth user → self-registration, ACTIVE immediately.
-        // No admin approval — Google account ownership is the verification.
+        // No system account for this Google email.
+        // - Sign up → create a PENDING self-registration (waits for approval).
+        // - Sign in → reject: no profile is created, bounce to login.
         if (!profile) {
+          if (oauthMode === 'signin') {
+            await supabase.auth.signOut()
+            pendingAudits.push(
+              auditBestEffort({
+                userId: user.id,
+                action: 'auth:oauth_no_account',
+                summary: `OAuth sign-in rejected for ${email}: no system account`,
+              })
+            )
+            await Promise.allSettled(pendingAudits)
+            return NextResponse.redirect(`${requestUrl.origin}/login?notice=no-account`)
+          }
           profile = await prisma.profile
             .create({
               data: {
                 id: user.id,
                 full_name: fullName,
                 role: requestedRole,
-                status: 'active',
+                status: 'pending',
               },
               select: { id: true, role: true, status: true },
             })
@@ -101,23 +118,14 @@ export async function GET(request: Request) {
               auditBestEffort({
                 userId: user.id,
                 action: 'auth:signup_oauth',
-                summary: `OAuth self-registration for ${email} as ${profile.role}, active`,
+                summary: `OAuth self-registration for ${email} as ${profile.role}, pending approval`,
               })
             )
           }
-        } else if (profile.status === 'pending') {
-          // Legacy pending accounts (pre self-service) are auto-activated —
-          // admin approval no longer gates sign-in.
-          profile = await prisma.profile
-            .update({
-              where: { id: user.id },
-              data: { status: 'active' },
-              select: { id: true, role: true, status: true },
-            })
-            .catch(() => ({ ...profile!, status: 'active' as const }))
         }
 
-        // Only inactive accounts are blocked now (mirrors login + middleware).
+        // Only active accounts may continue — pending waits for approval,
+        // inactive is blocked (mirrors login + middleware).
         if (!profile) {
           await supabase.auth.signOut()
           return NextResponse.redirect(`${requestUrl.origin}/login?notice=oauth-error`)
@@ -125,6 +133,10 @@ export async function GET(request: Request) {
         if (profile.status === 'inactive') {
           await supabase.auth.signOut()
           return NextResponse.redirect(`${requestUrl.origin}/login?notice=inactive`)
+        }
+        if (profile.status === 'pending') {
+          await supabase.auth.signOut()
+          return NextResponse.redirect(`${requestUrl.origin}/login?notice=pending`)
         }
 
         pendingAudits.push(

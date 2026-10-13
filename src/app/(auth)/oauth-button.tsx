@@ -32,9 +32,10 @@ function GoogleIcon() {
 }
 
 /**
- * Shared Supabase OAuth entry point for self-registration + sign-in.
- * On signup the picked role rides along as a hidden field so the callback
- * can create an ACTIVE profile with that role (no admin approval).
+ * Shared Supabase OAuth entry point.
+ * `mode` decides what happens for a Google email with no system account:
+ * signup → PENDING profile (waits for approval); signin → rejected with
+ * login?notice=no-account (no profile is created).
  */
 export function OAuthButton({
   mode,
@@ -51,6 +52,7 @@ export function OAuthButton({
         <Suspense fallback={null}>
           <OAuthNextField />
         </Suspense>
+        <input type="hidden" name="mode" value={mode} />
         {role ? <input type="hidden" name="role" value={role} /> : null}
         <SubmitButton
           variant="outline"

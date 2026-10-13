@@ -184,8 +184,8 @@ export default function SuperAdminDashboardLoading() {
         <div className={styles.addSection}>
           <h2 className={styles.addTitle}>Add Personnel Employee</h2>
           <p className={styles.addSubtitle}>
-            Create login credentials for a PGSO personnel member. Employee accounts are
-            self-registered — approve them under{" "}
+            Create login credentials for a PGSO personnel member. Employee + Personnel
+            self-registrations wait for approval — review them under{" "}
             <span style={{ textDecoration: "underline" }}>Users</span>.
           </p>
           <div className={styles.addForm} aria-hidden="true">

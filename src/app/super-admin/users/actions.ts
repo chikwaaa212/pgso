@@ -141,8 +141,9 @@ export async function getPendingEmployees(): Promise<AdminUserRow[]> {
   const { withScopedCache } = await import('@/lib/personnel-cache')
   return withScopedCache('super-admin:pending-employees', 30, async () => {
   try {
+    // Both self-registered roles wait for approval (employee + personnel).
     const rows = await prisma.profile.findMany({
-      where: { role: 'employee', status: 'pending' },
+      where: { status: 'pending', role: { in: ['employee', 'pgso_personnel'] } },
       orderBy: { created_at: 'desc' },
       take: 200,
       select: ADMIN_SELECT,
@@ -199,7 +200,8 @@ export interface UsersPage {
  * snapshot + client slice: the DB returns only the window (+ exact total per
  * filter set, cached 30s and busted by user writes). Search spans the DB
  * profile columns plus Auth emails (bounded pre-lookup, same 200-user cap as
- * the legacy path). The pending-employee exclusion matches the roster table.
+ * the legacy path). Pending self-registrations (any role) live in the
+ * approval queue, not the roster table.
  */
 export async function getUsersPage(
   opts: { page?: number; q?: string } = {}
@@ -236,7 +238,7 @@ export async function getUsersPage(
       }
     }
     const where: Record<string, unknown> = {
-      NOT: [{ role: 'employee', status: 'pending' }],
+      NOT: [{ status: 'pending' }],
     }
     if (like) {
       // employee_no / department exist only after migration 25 (same guard
@@ -291,7 +293,7 @@ export async function getUserCounts(): Promise<{ pending: number; personnel: num
   return withScopedCache('super-admin:user-counts', 30, async () => {
   try {
     const [pending, personnel, employees] = await Promise.all([
-      prisma.profile.count({ where: { role: 'employee', status: 'pending' } }),
+      prisma.profile.count({ where: { status: 'pending', role: { in: ['employee', 'pgso_personnel'] } } }),
       prisma.profile.count({ where: { role: 'pgso_personnel' } }),
       prisma.profile.count({ where: { role: 'employee' } }),
     ])
@@ -322,8 +324,8 @@ export async function approveEmployee(targetId: string): Promise<{ ok: boolean; 
   try {
     ;({ userId: actorId } = await requireSuperAdmin())
     const target = await guardTarget(actorId, targetId)
-    if (target.role !== 'employee' || target.status !== 'pending') {
-      throw new Error('Only pending employee accounts can be approved.')
+    if ((target.role !== 'employee' && target.role !== 'pgso_personnel') || target.status !== 'pending') {
+      throw new Error('Only pending employee / personnel accounts can be approved.')
     }
     await prisma.profile.update({
       where: { id: targetId },
@@ -337,7 +339,7 @@ export async function approveEmployee(targetId: string): Promise<{ ok: boolean; 
       userId: actorId,
       action: 'users:approve_employee',
       module: 'users',
-      details: { purpose: 'Approve employee registration', summary: `Approved ${target.full_name ?? targetId}`, reference_id: targetId },
+      details: { purpose: 'Approve self-registration', summary: `Approved ${target.full_name ?? targetId} (${target.role})`, reference_id: targetId },
     })
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : 'Approval failed.' }
@@ -354,8 +356,8 @@ export async function rejectEmployee(targetId: string): Promise<{ ok: boolean; e
   try {
     ;({ userId: actorId } = await requireSuperAdmin())
     const target = await guardTarget(actorId, targetId)
-    if (target.role !== 'employee' || target.status !== 'pending') {
-      throw new Error('Only pending employee accounts can be rejected.')
+    if ((target.role !== 'employee' && target.role !== 'pgso_personnel') || target.status !== 'pending') {
+      throw new Error('Only pending employee / personnel accounts can be rejected.')
     }
     await prisma.profile.update({
       where: { id: targetId },
@@ -373,7 +375,7 @@ export async function rejectEmployee(targetId: string): Promise<{ ok: boolean; e
       userId: actorId,
       action: 'users:reject_employee',
       module: 'users',
-      details: { purpose: 'Reject employee registration', summary: `Rejected ${target.full_name ?? targetId}`, reference_id: targetId },
+      details: { purpose: 'Reject self-registration', summary: `Rejected ${target.full_name ?? targetId} (${target.role})`, reference_id: targetId },
     })
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : 'Rejection failed.' }

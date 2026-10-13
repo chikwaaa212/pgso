@@ -5,8 +5,8 @@ import { useMemo, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { label } from "@/lib/labels";
-import { getUsersPage, getUserCounts } from "./actions";
-import { ActiveToggle } from "./user-actions";
+import { getPendingEmployees, getUsersPage, getUserCounts } from "./actions";
+import { ActiveToggle, ApprovalActions } from "./user-actions";
 import { TablePager } from "@/components/personnel/TablePager";
 import { useCachedAction } from "@/hooks/use-cached-action";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
@@ -62,6 +62,17 @@ export default function SuperAdminUsersPage() {
     { staleTime: 30_000 }
   );
   const counts = countsData ?? { pending: 0, personnel: 0, employees: 0 };
+  const { data: pendingData, refresh: refreshPending } = useCachedAction(
+    buildQueryKey({ module: 'super-admin', resource: 'pending-approvals' }),
+    getPendingEmployees,
+    { staleTime: 30_000 }
+  );
+  const pending = useMemo(() => pendingData ?? [], [pendingData]);
+
+  const refreshAll = () => {
+    refresh();
+    refreshPending();
+  };
 
   // Profile status/role changes by another admin sync silently.
   useAdminRealtime({
@@ -83,14 +94,56 @@ export default function SuperAdminUsersPage() {
         <h1 className={styles.title}>Users</h1>
         <p className={styles.subtitle}>
           {counts.personnel} personnel ·{" "}
-          {counts.employees} employees. Employee + Personnel accounts are
-          self-registered (Google or Email + OTP) and active immediately — no
-          approval needed.
+          {counts.employees} employees · {counts.pending} pending approval. Employee + Personnel accounts
+          self-register (Google or Email + OTP) and wait for your approval before they can sign in.
           {isValidating || searching ? (
             <span role="status" aria-live="polite"> Updating…</span>
           ) : null}
         </p>
       </div>
+
+      <Card className={styles.panel}>
+        <h2 className={styles.panelTitle}>Pending approvals ({pending.length})</h2>
+        <p className={styles.panelSub}>
+          Verified self-registrations waiting for review. Approving activates the account immediately;
+          rejecting deactivates it.
+        </p>
+        {pending.length === 0 ? (
+          <p className={styles.empty}>No accounts waiting for approval.</p>
+        ) : (
+          <div className={`${styles.tableWrap} pgso-no-scrollbar`}>
+            <table className={styles.table}>
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Email</th>
+                  <th>Role</th>
+                  <th>Created</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {pending.map((u) => (
+                  <tr key={u.id}>
+                    <td>{u.full_name ?? "—"}</td>
+                    <td>{u.email ?? "—"}</td>
+                    <td>{roleLabel(u.role)}</td>
+                    <td>{fmtDate(u.created_at)}</td>
+                    <td>
+                      <ApprovalActions
+                        userId={u.id}
+                        name={u.full_name ?? u.email ?? "account"}
+                        role={roleLabel(u.role)}
+                        onDone={() => refreshAll()}
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
 
       <Card className={styles.panel}>
         <h2 className={styles.panelTitle}>All accounts</h2>
@@ -150,7 +203,7 @@ export default function SuperAdminUsersPage() {
                           userId={u.id}
                           name={u.full_name ?? u.email ?? "account"}
                           isActive={isActive}
-                          onSuccess={() => refresh()}
+                          onSuccess={() => refreshAll()}
                         />
                       )}
                     </td>

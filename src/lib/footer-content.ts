@@ -231,7 +231,7 @@ export const FOOTER_INFO: Record<string, FooterInfoContent> = {
     steps: [
       {
         title: "1. Auth & roles",
-        text: "/login and /signup handle email (password + OTP) + Google sign-in. Self-registered Employee / Personnel accounts are active immediately after verification. Middleware routes you to /employee, /personnel, or /super-admin.",
+        text: "/login and /signup handle email (password + OTP) + Google sign-in. Self-registered Employee / Personnel accounts wait for Super Admin approval before they can sign in. Middleware routes you to /employee, /personnel, or /super-admin.",
       },
       {
         title: "2. Core resources",
@@ -268,7 +268,7 @@ export const FOOTER_INFO: Record<string, FooterInfoContent> = {
     steps: [
       {
         title: "1. Check access first",
-        text: "Can't sign in? If you see 'inactive', contact your admin. New signups verify by Email OTP or Google and are active immediately — check your verification code / spam folder first.",
+        text: "Can't sign in? If you see 'inactive', contact your admin. If you see 'waiting for approval', a Super Admin still needs to approve your account. New signups verify by Email OTP or Google first — check your verification code / spam folder.",
       },
       {
         title: "2. Reproduce with steps",

@@ -77,7 +77,7 @@ export async function getSuperAdminOverview(): Promise<SuperOverview> {
       auditRows,
     ] = await Promise.all([
       getDashboardStats(),
-      prisma.profile.count({ where: { role: 'employee', status: 'pending' } }).catch(() => 0),
+      prisma.profile.count({ where: { status: 'pending', role: { in: ['employee', 'pgso_personnel'] } } }).catch(() => 0),
       prisma.profile.count({ where: { role: 'pgso_personnel' } }).catch(() => 0),
       prisma.profile.count({ where: { role: 'employee' } }).catch(() => 0),
       prisma.unit.count({ where: { status: 'active' } }).catch(() => 0),

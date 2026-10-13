@@ -89,11 +89,11 @@ function RolePicker({
 function EmailSignupForm({
   role,
   onNeedsVerification,
-  onSuccess,
+  onNeedsApproval,
 }: {
   role: SelfRegisterRole
   onNeedsVerification: (email: string, role: SelfRegisterRole) => void
-  onSuccess: (email: string, role: SelfRegisterRole) => void
+  onNeedsApproval: (email: string, role: SelfRegisterRole) => void
 }) {
   const [state, formAction] = useActionState<SignupState, FormData>(signup, {})
   const [idempotencyKey, setIdempotencyKey] = useState(() => crypto.randomUUID())
@@ -107,18 +107,19 @@ function EmailSignupForm({
   }, [state.error])
 
   // Bubble the terminal signup result to the parent exactly once so it can
-  // persist the OTP step in the URL (refresh-safe) or show the success panel.
+  // persist the OTP step in the URL (refresh-safe) or show the approval panel.
   // Supabase requires email confirmation → the action returns
   // needsVerification: swap to the OTP step, preserving email + role.
+  // When confirmation is off the account is already pending → show approval.
   useEffect(() => {
     if (state.needsVerification && state.email && notifiedFor.current !== state.email) {
       notifiedFor.current = state.email
       onNeedsVerification(state.email, role)
-    } else if (state.success && state.email && notifiedFor.current !== `done:${state.email}`) {
-      notifiedFor.current = `done:${state.email}`
-      onSuccess(state.email, role)
+    } else if (state.needsApproval && state.email && notifiedFor.current !== `pending:${state.email}`) {
+      notifiedFor.current = `pending:${state.email}`
+      onNeedsApproval(state.email, role)
     }
-  }, [state, role, onNeedsVerification, onSuccess])
+  }, [state, role, onNeedsVerification, onNeedsApproval])
 
   return (
     <form action={formAction} className={styles.form}>
@@ -176,8 +177,8 @@ function EmailSignupForm({
         Sign up with email
       </SubmitButton>
       <p style={{ fontSize: '0.75rem', opacity: 0.75, textAlign: 'center' }}>
-        We&apos;ll email you an 8-digit code to verify your address. Your account is active
-        immediately after verification — no admin approval needed.
+        We&apos;ll email you an 8-digit code to verify your address. After verification
+        your account waits for Super Admin approval before you can sign in.
       </p>
     </form>
   )
@@ -279,11 +280,15 @@ function OtpVerifyForm({ email, role }: { email: string; role: SelfRegisterRole 
     return <AlreadyVerifiedPanel email={email} />
   }
 
+  if (state.needsApproval) {
+    return <PendingApprovalPanel email={state.email ?? email} role={role} />
+  }
+
   return (
     <div className={styles.form}>
       <p className={styles.notice} role="status">
-        Code sent to <strong>{email}</strong>. Enter the 8-digit code to verify and sign in
-        {role ? ` as ${roleLabel(role)}` : ''}.
+        Code sent to <strong>{email}</strong>. Enter the 8-digit code to verify
+        {role ? ` as ${roleLabel(role)}` : ''} — then wait for Super Admin approval.
       </p>
       <form action={formAction} className={styles.form}>
         <input type="hidden" name="idempotencyKey" value={idempotencyKey} />
@@ -313,7 +318,7 @@ function OtpVerifyForm({ email, role }: { email: string; role: SelfRegisterRole 
           </p>
         )}
         <SubmitButton variant="primary" className={styles.submitButton} pendingLabel="Verifying…">
-          Verify & sign in
+          Verify
         </SubmitButton>
       </form>
       {/* Cooldown starts on submit (event handler, not render) so rapid
@@ -344,22 +349,16 @@ function OtpVerifyForm({ email, role }: { email: string; role: SelfRegisterRole 
   )
 }
 
-function SuccessPanel({ email, role }: { email: string; role: SelfRegisterRole }) {
-  const router = useRouter()
-  // A session already exists on this branch — hand off to middleware, which
-  // role-routes signed-in users to their dashboard.
-  useEffect(() => {
-    const timer = setTimeout(() => router.replace('/'), 1500)
-    return () => clearTimeout(timer)
-  }, [router])
+function PendingApprovalPanel({ email, role }: { email: string; role: SelfRegisterRole | null }) {
   return (
     <div className={styles.form}>
       <p className={styles.notice} role="status">
-        Account created for <strong>{email}</strong> as {roleLabel(role)} — taking you to
-        your dashboard…
+        Email verified for <strong>{email}</strong>
+        {role ? ` as ${roleLabel(role)}` : ''} — your account is now waiting for
+        Super Admin approval. You&apos;ll be able to sign in once it&apos;s approved.
       </p>
-      <Link href="/" className={styles.submitButton} style={{ textAlign: 'center' }}>
-        Continue to dashboard
+      <Link href="/login" className={styles.submitButton} style={{ textAlign: 'center' }}>
+        Go to sign in
       </Link>
     </div>
   )
@@ -371,7 +370,7 @@ function SignupContent() {
   const [role, setRole] = useState<SelfRegisterRole>('employee')
   // OTP step state from this tab's signup action (authoritative incl. role).
   const [otp, setOtp] = useState<{ email: string; role: SelfRegisterRole } | null>(null)
-  const [done, setDone] = useState<{ email: string; role: SelfRegisterRole } | null>(null)
+  const [pending, setPending] = useState<{ email: string; role: SelfRegisterRole } | null>(null)
 
   // Refresh-safe recovery: /signup?step=code&email=… reopens the OTP step
   // (role unknown here — verify prefers the role stored at signup).
@@ -391,10 +390,10 @@ function SignupContent() {
 
   return (
     <>
-      <RolePicker role={role} onChange={setRole} disabled={otpActive || done !== null} />
+      <RolePicker role={role} onChange={setRole} disabled={otpActive || pending !== null} />
 
-      {done ? (
-        <SuccessPanel email={done.email} role={done.role} />
+      {pending ? (
+        <PendingApprovalPanel email={pending.email} role={pending.role} />
       ) : otpActive ? (
         <OtpVerifyForm email={effectiveEmail} role={effectiveRole} />
       ) : (
@@ -406,7 +405,7 @@ function SignupContent() {
               setOtp({ email, role: r })
               persistStep(email)
             }}
-            onSuccess={(email, r) => setDone({ email, role: r })}
+            onNeedsApproval={(email, r) => setPending({ email, role: r })}
           />
           <CodeRecovery onJump={(email) => persistStep(email)} />
         </>
@@ -427,8 +426,8 @@ export default function SignupPage() {
         <div className={styles.header}>
           <h1 className={styles.title}>Create your account</h1>
           <p className={styles.description}>
-            Pick your account type, then sign up with Google or email. Accounts are
-            active immediately after verification — no admin approval needed.
+            Pick your account type, then sign up with Google or email. After verification
+            a Super Admin reviews and approves your account before you can sign in.
           </p>
         </div>
 

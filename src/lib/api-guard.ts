@@ -31,9 +31,9 @@ export type ApiAccess = 401 | 403 | 200;
 
 /**
  * Steps 1–2 of the guard order for a route that allows `allowedRoles`.
- * Personnel/super_admin routes require `status === 'active'`; the employee
- * role additionally accepts legacy `'pending'` (mirrors requireEmployee).
- * Unknown roles and inactive accounts → 403 (never 404, never data).
+ * Every role requires `status === 'active'` — self-registered `pending`
+ * accounts wait for Super Admin approval and `inactive` stays blocked.
+ * Unknown roles → 403 (never 404, never data).
  */
 export function resolveApiAccess(
   identity: ApiIdentity,
@@ -43,9 +43,7 @@ export function resolveApiAccess(
   if (!identity.role || !(allowedRoles as readonly string[]).includes(identity.role)) {
     return 403;
   }
-  if (identity.role === 'employee') {
-    if (identity.status !== 'active' && identity.status !== 'pending') return 403;
-  } else if (identity.status !== 'active') {
+  if (identity.status !== 'active') {
     return 403;
   }
   return 200;
