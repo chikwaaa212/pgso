@@ -14,6 +14,7 @@ import {
   ClipboardList,
   Database,
   Download,
+  FileSpreadsheet,
   FileText,
   KeyRound,
   LayoutDashboard,
@@ -146,6 +147,12 @@ export function SuperAdminNavbar({
           badge: totalDocuments,
         },
         {
+          label: "PPMP Files",
+          href: "/super-admin/ppmp",
+          description: "All uploaded PPMP workbooks",
+          icon: FileSpreadsheet,
+        },
+        {
           label: "PAR / ICS",
           href: "/super-admin/issuances",
           description: "Accountability documents",
@@ -272,8 +279,8 @@ export function SuperAdminNavbar({
       <div className={styles.bar}>
         <Link href="/super-admin/dashboard" className={styles.brand}>
           <Image
-            src="/favicon.png"
-            alt="PGSO-PSMS logo"
+            src="/province-seal.png"
+            alt="Province of Davao Oriental official seal"
             width={36}
             height={36}
             className={styles.brandMark}

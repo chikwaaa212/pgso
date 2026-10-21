@@ -31,7 +31,7 @@ export function Header() {
     >
       <div className={styles.nav}>
         <Link href="/" className={styles.logo} aria-label="PGSO EYE home">
-          <BrandLogo size={30} />
+          <BrandLogo size={44} />
         </Link>
 
         {isAuthPage ? (

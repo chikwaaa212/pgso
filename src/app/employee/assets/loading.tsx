@@ -1,10 +1,9 @@
-import Image from "next/image";
 import { Card } from "@/components/ui/card";
 import styles from "./page.module.css";
 
 /**
  * My Assets skeleton — mirrors EmployeeAssetsPage 1:1 (crumb, header with
- * back button + mascot, 3 panels, 7/7/7-col tables) so content swaps in
+ * back button, 3 panels, 7/7/7-col tables) so content swaps in
  * without layout shift.
  *
  * Static chrome renders as real text with real classes; only live values
@@ -123,14 +122,6 @@ export default function EmployeeAssetsLoading() {
             <span className="mt-1 block h-4 w-48 animate-pulse rounded bg-navy-100" />
           </p>
         </div>
-        <Image
-          src="/favicon.png"
-          alt="PGSO logo"
-          width={120}
-          height={120}
-          priority
-          className={styles.mascot}
-        />
       </div>
 
       <Card className={styles.panel}>

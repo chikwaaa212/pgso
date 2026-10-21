@@ -29,20 +29,6 @@
   gap: 1rem;
 }
 
-.mascot {
-  flex-shrink: 0;
-  width: 96px;
-  height: auto;
-  background-color: transparent;
-}
-
-@media (max-width: 480px) {
-  .mascot {
-    width: 72px;
-    background-color: transparent;
-  }
-}
-
 .panel {
   padding: 1.25rem;
 }

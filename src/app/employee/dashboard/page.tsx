@@ -1,4 +1,3 @@
-import Image from 'next/image'
 import Link from 'next/link'
 import { getSessionIdentity } from '@/lib/personnel-scope'
 import { cacheKey, withCache } from '@/lib/personnel-cache'
@@ -61,14 +60,6 @@ export default async function EmployeeDashboard() {
               </p>
               <span className={styles.bannerCta}>Open assets →</span>
             </div>
-            <Image
-              src="/favicon.png"
-              alt="Eagle mascot with telescope"
-              width={160}
-              height={160}
-              priority
-              className={styles.bannerImg}
-            />
           </Card>
         </Link>
         <Link href="/employee/requests" className={styles.bannerLink}>
@@ -80,14 +71,6 @@ export default async function EmployeeDashboard() {
               </p>
               <span className={styles.bannerCta}>Open requests →</span>
             </div>
-            <Image
-              src="/salute.png"
-              alt="Saluting eagle mascot"
-              width={160}
-              height={160}
-              priority
-              className={styles.bannerImg}
-            />
           </Card>
         </Link>
       </div>

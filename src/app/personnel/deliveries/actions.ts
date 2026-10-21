@@ -86,15 +86,12 @@ export async function logDelivery(
     return { error: 'Account code may only contain letters, numbers, spaces, and - . _ /' }
   }
 
-  // Asset type + account title ARE from the catalog (Super Admin Master Data):
-  // dropdowns in the form, each validated independently here. No pair-match
-  // requirement: any catalog-listed type combines with any catalog-listed
-  // title. The account code itself is free-form.
+  // Account title + asset type ARE from the catalog (Super Admin Master Data):
+  // the form picks a title, then auto-fills the asset type from it. The server
+  // derives the type from the title so a stale/tampered hidden field can never
+  // store a mismatched pair. The account code itself is free-form.
   const assetTypeInput = (assetTypeRaw || '').trim()
   const accountTitleInput = (accountTitleRaw || '').trim()
-  if (!assetTypeInput) {
-    return { error: 'Select an asset type from the catalog.' }
-  }
   if (!accountTitleInput) {
     return { error: 'Select an account title from the catalog.' }
   }
@@ -104,21 +101,31 @@ export async function logDelivery(
   if (catalogEntries.length === 0) {
     return { error: 'No active catalog entries — ask your Super Admin to add them in Master Data.' }
   }
-  const typeMatch = catalogEntries.find(
-    (e) => e.type.toLowerCase() === assetTypeInput.toLowerCase()
-  )
-  if (!typeMatch) {
-    return { error: 'Unknown asset type — pick one from the catalog.' }
-  }
-  const titleMatch = catalogEntries.find(
+  const titleMatches = catalogEntries.filter(
     (e) => e.title.toUpperCase() === accountTitleNorm
   )
-  if (!titleMatch) {
+  if (titleMatches.length === 0) {
     return { error: 'Unknown account title — pick one from the catalog.' }
   }
-  // Canonical catalog values for storage.
-  const assetTypeCanon = typeMatch.type
-  const accountTitleCanon = titleMatch.title
+  // A title normally maps to one asset type. If the catalog has it on rows
+  // with different types, accept the submitted type only when it is one of
+  // them; otherwise fall back to the first (the form auto-selects it).
+  const titleTypes = [
+    ...new Map(
+      titleMatches.map((e) => [e.type.trim().toLowerCase(), e.type.trim()])
+    ).values(),
+  ].filter(Boolean)
+  let assetTypeCanon = titleTypes[0]
+  if (assetTypeInput) {
+    const submitted = titleTypes.find(
+      (t) => t.toLowerCase() === assetTypeInput.toLowerCase()
+    )
+    if (submitted) assetTypeCanon = submitted
+  }
+  if (!assetTypeCanon) {
+    return { error: 'This account title has no asset type — ask your Super Admin to update Master Data.' }
+  }
+  const accountTitleCanon = titleMatches[0].title
 
   if (!dateSupplied || Number.isNaN(Date.parse(dateSupplied))) {
     // Waiting-for-arrival logs carry a target date instead of a received date.
@@ -204,9 +211,8 @@ export async function logDelivery(
       'delivery:create',
       async () => {
         // No catalog auto-seed: the account code is free-form per delivery and
-        // stays on the delivery row only. Asset type + account title were
-        // already validated independently above; store canonical catalog
-        // values.
+        // stays on the delivery row only. Asset type was derived from the
+        // selected account title above; store canonical catalog values.
         const delivery = await prisma.delivery.create({
           data: {
             supplier: supplierName,
@@ -586,6 +592,11 @@ export interface DeliveryFormOptions {
   assetTypes: string[]
   accountTitles: string[]
   codes: DeliveryFormCode[]
+  /**
+   * Uppercased account title → distinct catalog asset types. Used by the form
+   * to auto-fill Asset Type as soon as an Account Title is picked.
+   */
+  accountTitleTypes: Record<string, string[]>
 }
 
 /**
@@ -695,15 +706,20 @@ export async function getDeliveriesPage(
 
 /**
  * Catalog options for the Log delivery form, sourced from the active account
- * catalog. Asset type + account title are strict dropdowns, each validated
- * independently (no pair-match required). The account code is NOT from the
+ * catalog. Account title is a strict dropdown; asset type is auto-filled from
+ * the chosen title (accountTitleTypes). The account code is NOT from the
  * catalog — personnel types it or presses Generate. Codes listed here are
  * prior history for reference only.
  */
 export async function getDeliveryFormOptions(): Promise<DeliveryFormOptions> {
   const { withCache, cacheKey } = await import('@/lib/personnel-cache')
   return withCache(cacheKey('personnel:delivery-form-options'), 300, async () => {
-  const empty: DeliveryFormOptions = { assetTypes: [], accountTitles: [], codes: [] }
+  const empty: DeliveryFormOptions = {
+    assetTypes: [],
+    accountTitles: [],
+    codes: [],
+    accountTitleTypes: {},
+  }
   try {
     const entries = await getActiveCatalogEntries()
     const codes: DeliveryFormCode[] = entries.map((e) => ({
@@ -717,7 +733,21 @@ export async function getDeliveryFormOptions(): Promise<DeliveryFormOptions> {
     const accountTitles = [...new Set(codes.map((c) => c.accountTitle).filter(Boolean))].sort(
       (a, b) => a.localeCompare(b)
     )
-    return { assetTypes, accountTitles, codes }
+    // Title drives Asset Type. A title can (rarely) appear on more than one
+    // catalog row with different types, so keep every distinct type.
+    const accountTitleTypes: Record<string, string[]> = {}
+    for (const c of codes) {
+      const title = c.accountTitle?.trim().toUpperCase()
+      const type = c.assetType?.trim()
+      if (!title || !type) continue
+      const list = accountTitleTypes[title] ?? []
+      if (!list.some((t) => t.toLowerCase() === type.toLowerCase())) list.push(type)
+      accountTitleTypes[title] = list
+    }
+    for (const title of Object.keys(accountTitleTypes)) {
+      accountTitleTypes[title].sort((a, b) => a.localeCompare(b))
+    }
+    return { assetTypes, accountTitles, codes, accountTitleTypes }
   } catch (e) {
     console.error('[getDeliveryFormOptions]', e)
     return empty

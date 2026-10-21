@@ -1,7 +1,6 @@
 "use client";
 
 import { useMemo } from "react";
-import Image from "next/image";
 import { Package } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { BackButton } from "../back-button";
@@ -96,14 +95,6 @@ export default function EmployeeAssetsPage() {
             {docs.length > 0 ? ` · ${docs.length} issuance ${docs.length === 1 ? "document" : "documents"}` : ""}.
           </p>
         </div>
-        <Image
-          src="/favicon.png"
-          alt="PGSO logo"
-          width={120}
-          height={120}
-          priority
-          className={styles.mascot}
-        />
       </div>
 
       <Card className={styles.panel}>

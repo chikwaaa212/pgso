@@ -8,6 +8,7 @@ import { GppbTable } from "./gppb-table";
 import { downloadGppbExcel } from "./gppb-excel";
 import {
   buildForecastsFromItems,
+  buildPlanningBasis,
   buildPlanningForecasts,
   buildPpmpDraft,
   draftToCsv,
@@ -55,6 +56,16 @@ export function PlanningView({
   const draft = useMemo(
     () => buildPpmpDraft(forecasts, result.report, opts),
     [forecasts, result, opts]
+  );
+  // Plain-language basis: what the system applied/raised/defaulted, so the
+  // draft is auditable before anyone signs it.
+  const basis = useMemo(
+    () =>
+      buildPlanningBasis(forecasts, draft, result.report, opts, {
+        files: result.files,
+        items,
+      }),
+    [forecasts, draft, result, opts, items]
   );
   // Most-recommended highlights: top planned totals deserve first budget attention.
   const recommended = useMemo(() => {
@@ -121,6 +132,37 @@ export function PlanningView({
         final quantities, budgets, and schedules. Please have your Budget and BAC
         offices validate this draft before submission.
       </div>
+
+      <Card className="p-6" aria-label="Basis for this planning draft">
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div>
+            <h2 className="text-lg font-semibold">Basis for this planning draft</h2>
+            <p className="mt-1 text-xs text-zinc-500">
+              What the system applied from your files, what it increased, how each line
+              was projected, and which values it defaulted — so you can see exactly where
+              this draft comes from before editing or exporting it.
+            </p>
+          </div>
+          <span className="rounded-full border border-navy-200 bg-navy-50 px-2.5 py-1 text-xs font-medium text-navy-800">
+            Projection — not final
+          </span>
+        </div>
+        <p className="mt-3 rounded-md border border-navy-200 bg-navy-50/60 px-3 py-2 text-sm leading-relaxed text-navy-900">
+          {basis.headline}
+        </p>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          {basis.sections.map((section) => (
+            <div key={section.title} className="rounded-md border border-zinc-200 bg-zinc-50/40 p-3">
+              <h3 className="text-sm font-semibold text-navy-900">{section.title}</h3>
+              <ul className="mt-2 list-disc space-y-1 pl-5 text-sm leading-relaxed text-zinc-700">
+                {section.lines.map((line, i) => (
+                  <li key={`${section.title}-${i}`}>{line}</li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
+      </Card>
 
       <Card className="p-6">
         <h2 className="text-lg font-semibold">Most recommended for budget planning</h2>

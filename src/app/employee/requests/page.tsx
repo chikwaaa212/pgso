@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useMemo } from "react";
-import Image from "next/image";
 import { Card } from "@/components/ui/card";
 import { BackButton } from "../back-button";
 import { requestTypeLabel } from "@/app/personnel/requests/request-types";
@@ -82,14 +81,6 @@ export default function EmployeeRequestsPage() {
               {error || "Could not load your requests."}
             </p>
           </div>
-          <Image
-            src="/salute.png"
-            alt="Saluting eagle mascot"
-            width={120}
-            height={120}
-            priority
-            className={styles.mascot}
-          />
         </div>
         <Card className={styles.panel}>
           <p className={styles.panelSub}>
@@ -131,14 +122,6 @@ export default function EmployeeRequestsPage() {
             {pending > 0 ? ` · ${pending} awaiting review` : ""}.
           </p>
         </div>
-        <Image
-          src="/salute.png"
-          alt="Saluting eagle mascot"
-          width={120}
-          height={120}
-          priority
-          className={styles.mascot}
-        />
       </div>
 
       <Card className={styles.panel}>

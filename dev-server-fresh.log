@@ -1,0 +1,250 @@
+
+> pgso@0.1.0 dev
+> next dev
+
+▲ Next.js 16.3.4 (Turbopack)
+- Local:         http://localhost:3000
+- Network:       http://192.168.1.34:3000
+- Environments: .env.local, .env
+✓ Ready in 381ms
+✓ Running next.config.ts took 38ms
+- Experiments (use with caution):
+  · serverActions
+
+[browser] ./src/app/personnel/assets/custom-fields.ts:51:17
+Error: Server Actions must be async functions.
+  49 |
+  50 | /** Normalize a raw JSONB bag into string values (we only ever store strings). */
+> 51 | export function normalizeBag(bag: unknown): CustomBag {
+     |                 ^^^^^^^^^^^^
+  52 |   if (!bag || typeof bag !== 'object' || Array.isArray(bag)) return {}
+  53 |   const out: CustomBag = {}
+  54 |   for (const [k, v] of Object.entries(bag as Record<string, unknown>)) {
+
+Ecmascript file had an error 
+[browser] ./src/app/personnel/assets/custom-fields.ts:51:17
+Error: Server Actions must be async functions.
+  49 |
+  50 | /** Normalize a raw JSONB bag into string values (we only ever store strings). */
+> 51 | export function normalizeBag(bag: unknown): CustomBag {
+     |                 ^^^^^^^^^^^^
+  52 |   if (!bag || typeof bag !== 'object' || Array.isArray(bag)) return {}
+  53 |   const out: CustomBag = {}
+  54 |   for (const [k, v] of Object.entries(bag as Record<string, unknown>)) {
+
+Ecmascript file had an error 
+[browser] ./src/app/personnel/assets/custom-fields.ts:51:17
+Error: Server Actions must be async functions.
+  49 |
+  50 | /** Normalize a raw JSONB bag into string values (we only ever store strings). */
+> 51 | export function normalizeBag(bag: unknown): CustomBag {
+     |                 ^^^^^^^^^^^^
+  52 |   if (!bag || typeof bag !== 'object' || Array.isArray(bag)) return {}
+  53 |   const out: CustomBag = {}
+  54 |   for (const [k, v] of Object.entries(bag as Record<string, unknown>)) {
+
+Ecmascript file had an error 
+[browser] ./src/app/personnel/assets/custom-fields.ts:51:17
+Error: Server Actions must be async functions.
+  49 |
+  50 | /** Normalize a raw JSONB bag into string values (we only ever store strings). */
+> 51 | export function normalizeBag(bag: unknown): CustomBag {
+     |                 ^^^^^^^^^^^^
+  52 |   if (!bag || typeof bag !== 'object' || Array.isArray(bag)) return {}
+  53 |   const out: CustomBag = {}
+  54 |   for (const [k, v] of Object.entries(bag as Record<string, unknown>)) {
+
+Ecmascript file had an error 
+[browser] ./src/app/personnel/assets/custom-fields.ts:51:17
+Error: Server Actions must be async functions.
+  49 |
+  50 | /** Normalize a raw JSONB bag into string values (we only ever store strings). */
+> 51 | export function normalizeBag(bag: unknown): CustomBag {
+     |                 ^^^^^^^^^^^^
+  52 |   if (!bag || typeof bag !== 'object' || Array.isArray(bag)) return {}
+  53 |   const out: CustomBag = {}
+  54 |   for (const [k, v] of Object.entries(bag as Record<string, unknown>)) {
+
+Ecmascript file had an error 
+[browser] ./src/app/personnel/assets/custom-fields.ts:51:17
+Error: Server Actions must be async functions.
+  49 |
+  50 | /** Normalize a raw JSONB bag into string values (we only ever store strings). */
+> 51 | export function normalizeBag(bag: unknown): CustomBag {
+     |                 ^^^^^^^^^^^^
+  52 |   if (!bag || typeof bag !== 'object' || Array.isArray(bag)) return {}
+  53 |   const out: CustomBag = {}
+  54 |   for (const [k, v] of Object.entries(bag as Record<string, unknown>)) {
+
+Ecmascript file had an error 
+[browser] ./src/app/personnel/assets/custom-fields.ts:51:17
+Error: Server Actions must be async functions.
+  49 |
+  50 | /** Normalize a raw JSONB bag into string values (we only ever store strings). */
+> 51 | export function normalizeBag(bag: unknown): CustomBag {
+     |                 ^^^^^^^^^^^^
+  52 |   if (!bag || typeof bag !== 'object' || Array.isArray(bag)) return {}
+  53 |   const out: CustomBag = {}
+  54 |   for (const [k, v] of Object.entries(bag as Record<string, unknown>)) {
+
+Ecmascript file had an error 
+[browser] ./src/app/personnel/assets/custom-fields.ts:51:17
+Error: Server Actions must be async functions.
+  49 |
+  50 | /** Normalize a raw JSONB bag into string values (we only ever store strings). */
+> 51 | export function normalizeBag(bag: unknown): CustomBag {
+     |                 ^^^^^^^^^^^^
+  52 |   if (!bag || typeof bag !== 'object' || Array.isArray(bag)) return {}
+  53 |   const out: CustomBag = {}
+  54 |   for (const [k, v] of Object.entries(bag as Record<string, unknown>)) {
+
+Ecmascript file had an error 
+[browser] ./src/app/personnel/assets/custom-fields.ts:51:17
+Error: Server Actions must be async functions.
+  49 |
+  50 | /** Normalize a raw JSONB bag into string values (we only ever store strings). */
+> 51 | export function normalizeBag(bag: unknown): CustomBag {
+     |                 ^^^^^^^^^^^^
+  52 |   if (!bag || typeof bag !== 'object' || Array.isArray(bag)) return {}
+  53 |   const out: CustomBag = {}
+  54 |   for (const [k, v] of Object.entries(bag as Record<string, unknown>)) {
+
+Ecmascript file had an error 
+[browser] ./src/app/personnel/assets/custom-fields.ts:51:17
+Error: Server Actions must be async functions.
+  49 |
+  50 | /** Normalize a raw JSONB bag into string values (we only ever store strings). */
+> 51 | export function normalizeBag(bag: unknown): CustomBag {
+     |                 ^^^^^^^^^^^^
+  52 |   if (!bag || typeof bag !== 'object' || Array.isArray(bag)) return {}
+  53 |   const out: CustomBag = {}
+  54 |   for (const [k, v] of Object.entries(bag as Record<string, unknown>)) {
+
+Ecmascript file had an error 
+[browser] ./src/app/personnel/assets/custom-fields.ts:51:17
+Error: Server Actions must be async functions.
+  49 |
+  50 | /** Normalize a raw JSONB bag into string values (we only ever store strings). */
+> 51 | export function normalizeBag(bag: unknown): CustomBag {
+     |                 ^^^^^^^^^^^^
+  52 |   if (!bag || typeof bag !== 'object' || Array.isArray(bag)) return {}
+  53 |   const out: CustomBag = {}
+  54 |   for (const [k, v] of Object.entries(bag as Record<string, unknown>)) {
+
+Ecmascript file had an error 
+[browser] ./src/app/personnel/assets/custom-fields.ts:51:17
+Error: Server Actions must be async functions.
+  49 |
+  50 | /** Normalize a raw JSONB bag into string values (we only ever store strings). */
+> 51 | export function normalizeBag(bag: unknown): CustomBag {
+     |                 ^^^^^^^^^^^^
+  52 |   if (!bag || typeof bag !== 'object' || Array.isArray(bag)) return {}
+  53 |   const out: CustomBag = {}
+  54 |   for (const [k, v] of Object.entries(bag as Record<string, unknown>)) {
+
+Ecmascript file had an error 
+[browser] ./src/app/personnel/assets/custom-fields.ts:51:17
+Error: Server Actions must be async functions.
+  49 |
+  50 | /** Normalize a raw JSONB bag into string values (we only ever store strings). */
+> 51 | export function normalizeBag(bag: unknown): CustomBag {
+     |                 ^^^^^^^^^^^^
+  52 |   if (!bag || typeof bag !== 'object' || Array.isArray(bag)) return {}
+  53 |   const out: CustomBag = {}
+  54 |   for (const [k, v] of Object.entries(bag as Record<string, unknown>)) {
+
+Ecmascript file had an error 
+[browser] ./src/app/personnel/assets/custom-fields.ts:51:17
+Error: Server Actions must be async functions.
+  49 |
+  50 | /** Normalize a raw JSONB bag into string values (we only ever store strings). */
+> 51 | export function normalizeBag(bag: unknown): CustomBag {
+     |                 ^^^^^^^^^^^^
+  52 |   if (!bag || typeof bag !== 'object' || Array.isArray(bag)) return {}
+  53 |   const out: CustomBag = {}
+  54 |   for (const [k, v] of Object.entries(bag as Record<string, unknown>)) {
+
+Ecmascript file had an error 
+⨯ ./src/app/personnel/assets/custom-fields.ts:51:17
+Error: Server Actions must be async functions.
+  [90m49 |[0m
+  [90m50 |[0m [90m/** Normalize a raw JSONB bag into string values (we only ever store strings). */[0m
+[31m[1m>[0m [90m51 |[0m [36mexport[0m [36mfunction[0m normalizeBag(bag: unknown): [33mCustomBag[0m {
+  [90m   |[0m                 [31m[1m^^^^^^^^^^^^[0m
+  [90m52 |[0m   [36mif[0m (!bag || [36mtypeof[0m bag !== [32m'object'[0m || [33mArray[0m.isArray(bag)) [36mreturn[0m {}
+  [90m53 |[0m   [36mconst[0m out: [33mCustomBag[0m = {}
+  [90m54 |[0m   [36mfor[0m ([36mconst[0m [k, v] [36mof[0m [33mObject[0m.entries(bag [36mas[0m [33mRecord[0m<string, unknown>)) {
+
+Ecmascript file had an error
+
+
+⨯ ./src/app/personnel/assets/custom-fields.ts:51:17
+Error: Server Actions must be async functions.
+  [90m49 |[0m
+  [90m50 |[0m [90m/** Normalize a raw JSONB bag into string values (we only ever store strings). */[0m
+[31m[1m>[0m [90m51 |[0m [36mexport[0m [36mfunction[0m normalizeBag(bag: unknown): [33mCustomBag[0m {
+  [90m   |[0m                 [31m[1m^^^^^^^^^^^^[0m
+  [90m52 |[0m   [36mif[0m (!bag || [36mtypeof[0m bag !== [32m'object'[0m || [33mArray[0m.isArray(bag)) [36mreturn[0m {}
+  [90m53 |[0m   [36mconst[0m out: [33mCustomBag[0m = {}
+  [90m54 |[0m   [36mfor[0m ([36mconst[0m [k, v] [36mof[0m [33mObject[0m.entries(bag [36mas[0m [33mRecord[0m<string, unknown>)) {
+
+Ecmascript file had an error
+
+
+ GET /personnel/assets 500 in 393ms (next.js: 267ms, application-code: 126ms)
+ GET /super-admin/assets 500 in 380ms (next.js: 365ms, application-code: 15ms)
+[browser] Uncaught Error: ./src/app/personnel/assets/custom-fields.ts:51:17
+Error: Server Actions must be async functions.
+  49 |
+  50 | /** Normalize a raw JSONB bag into string values (we only ever store strings). */
+> 51 | export function normalizeBag(bag: unknown): CustomBag {
+     |                 ^^^^^^^^^^^^
+  52 |   if (!bag || typeof bag !== 'object' || Array.isArray(bag)) return {}
+  53 |   const out: CustomBag = {}
+  54 |   for (const [k, v] of Object.entries(bag as Record<string, unknown>)) {
+
+Ecmascript file had an error
+
+
+    at <unknown> (Error: ./src/app/personnel/assets/custom-fields.ts:51:17)
+    at <unknown> (Error: (./src/app/personnel/assets/custom-fields.ts:51:17)
+[browser] Uncaught Error: ./src/app/personnel/assets/custom-fields.ts:51:17
+Error: Server Actions must be async functions.
+  49 |
+  50 | /** Normalize a raw JSONB bag into string values (we only ever store strings). */
+> 51 | export function normalizeBag(bag: unknown): CustomBag {
+     |                 ^^^^^^^^^^^^
+  52 |   if (!bag || typeof bag !== 'object' || Array.isArray(bag)) return {}
+  53 |   const out: CustomBag = {}
+  54 |   for (const [k, v] of Object.entries(bag as Record<string, unknown>)) {
+
+Ecmascript file had an error
+
+
+    at <unknown> (Error: ./src/app/personnel/assets/custom-fields.ts:51:17)
+    at <unknown> (Error: (./src/app/personnel/assets/custom-fields.ts:51:17)
+ GET /login 500 in 102ms (next.js: 77ms, application-code: 25ms)
+✓ Compiled in 1586ms
+ GET /api/master-data 200 in 2.9s (next.js: 187ms, application-code: 2.7s)
+ GET /api/master-data 200 in 3.0s (next.js: 245ms, application-code: 2.8s)
+ GET /personnel/assets 200 in 11.2s (next.js: 769ms, application-code: 10.4s)
+ GET /super-admin/assets 200 in 13.7s (next.js: 949ms, application-code: 12.8s)
+(node:3768) MaxListenersExceededWarning: Possible EventEmitter memory leak detected. 11 drain listeners added to [Gzip]. MaxListeners is 10. Use emitter.setMaxListeners() to increase limit
+(Use `node --trace-warnings ...` to show where the warning was created)
+ POST /personnel/assets 200 in 9.0s (next.js: 7ms, application-code: 9.0s)
+  └─ ƒ getAssetsSnapshot() in 8375ms src/app/personnel/assets/actions.ts
+ POST /personnel/assets 200 in 1201ms (next.js: 8ms, application-code: 1194ms)
+  └─ ƒ getCustomFields() in 1169ms src/app/personnel/assets/custom-fields.ts
+(node:3768) MaxListenersExceededWarning: Possible EventEmitter memory leak detected. 11 drain listeners added to [Gzip]. MaxListeners is 10. Use emitter.setMaxListeners() to increase limit
+ POST /super-admin/assets 200 in 7.8s (next.js: 14ms, application-code: 7.8s)
+  └─ ƒ browseAssets() in 7552ms src/app/super-admin/browse/actions.ts
+ POST /super-admin/assets 200 in 1297ms (next.js: 9ms, application-code: 1288ms)
+  └─ ƒ browseCategories() in 1273ms src/app/super-admin/browse/actions.ts
+ POST /super-admin/assets 200 in 118ms (next.js: 7ms, application-code: 111ms)
+  └─ ƒ getCustomFields() in 90ms src/app/personnel/assets/custom-fields.ts
+ GET /api/master-data 200 in 712ms (next.js: 4ms, application-code: 707ms)
+ GET /api/master-data 200 in 1211ms (next.js: 7ms, application-code: 1205ms)
+ GET /login 200 in 227ms (next.js: 52ms, application-code: 175ms)
+ GET /super-admin/assets 307 in 498ms (next.js: 11ms, application-code: 487ms)
+ GET /login 200 in 240ms (next.js: 20ms, application-code: 220ms)
+[?25h

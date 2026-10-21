@@ -3,8 +3,10 @@ import assert from "node:assert";
 import type { AnalysisReport } from "../lib/ppmp/analytics/types";
 import {
   buildForecastsFromItems,
+  buildPlanningBasis,
   buildPlanningForecasts,
   buildPpmpDraft,
+  classifyForecastBasis,
   draftToCsv,
   fitDraftToCeilingGreedy,
   fitDraftToCeilingLP,
@@ -397,4 +399,33 @@ test("full coverage: budget-only entries get lump-sum lots, cost-missing uses me
     assert.notStrictEqual(d.qty, null);
     assert.notStrictEqual(d.total_cents, null);
   }
+});
+
+test("planning basis explains files, increases, defaults, and confirmations", () => {
+  const report = baseReport();
+  const opts = { ...OPTS, method: "growth" as const, growthPct: 10, pricePct: 5, ceilingPesos: 10000 };
+  const forecasts = buildPlanningForecasts(report, opts);
+  const draft = buildPpmpDraft(forecasts, report, opts);
+  const basis = buildPlanningBasis(forecasts, draft, report, opts, {
+    files: [{ filename: "PPMP_2026.xlsx", fiscalYear: 2026 }],
+  });
+  const text = basis.sections.flatMap((s) => s.lines).join("\n");
+  assert.ok(basis.headline.includes("FY 2027"));
+  assert.ok(text.includes("PPMP_2026.xlsx"));
+  assert.ok(text.includes("+10%/yr"));
+  assert.ok(text.includes("+5%/yr"));
+  assert.ok(text.includes("no PS/MOOE/CO column"));
+  assert.ok(text.includes("To confirm with BAC"));
+  assert.ok(text.includes("General Fund"));
+  assert.ok(text.includes("Budget ceiling"));
+  assert.ok(text.includes("confirm the actual timetable") || text.includes("BAC must confirm"));
+  assert.strictEqual(basis.sections.length, 5);
+});
+
+test("forecast basis classifier separates history, lump sums, and fallbacks", () => {
+  assert.strictEqual(classifyForecastBasis("statistical_linear_full_coverage"), "statistical");
+  assert.strictEqual(classifyForecastBasis("simple_statistics_trend_from_3yr"), "trend");
+  assert.strictEqual(classifyForecastBasis("simple_statistics_growth_plus_5pct_x1yr"), "carryover");
+  assert.strictEqual(classifyForecastBasis("lump_sum_2_lots_from_budget_x1yr"), "lump_sum");
+  assert.strictEqual(classifyForecastBasis("median_fallback_from_file"), "median_fallback");
 });

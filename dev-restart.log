@@ -1,0 +1,64 @@
+
+> pgso@0.1.0 dev
+> next dev
+
+▲ Next.js 16.3.4 (Turbopack)
+- Local:         http://localhost:3000
+- Network:       http://10.2.0.2:3000
+- Environments: .env.local, .env
+✓ Ready in 776ms
+✓ Running next.config.ts took 57ms
+- Experiments (use with caution):
+  · serverActions
+
+○ Compiling /login ...
+ GET /login 200 in 11.9s (next.js: 10.6s, application-code: 1239ms)
+ GET /personnel/dashboard 200 in 388ms (next.js: 22ms, application-code: 367ms)
+ GET /personnel/dashboard 200 in 37.4s (next.js: 10.3s, application-code: 27.1s)
+prisma:error 
+Invalid `prisma.$queryRaw()` invocation:
+
+
+Raw query failed. Code: `42P01`. Message: `relation "inventory_items" does not exist`
+ POST /personnel/dashboard 200 in 56s (next.js: 11ms, application-code: 56s)
+  └─ ƒ getDashboardSnapshot() in 55741ms src/app/personnel/dashboard/actions.ts
+✓ Compiled in 578ms
+ GET /login 200 in 246ms (next.js: 25ms, application-code: 221ms)
+[cache] get failed pgso:personnel:sidebar-user:eyJ1IjoiMTlmNjA1ZjAtOWYwZi00ZDBhLTk0N2QtYjIxNWNiODdiY2M0In0 Error: timed out after 2500ms
+    at Timeout.<anonymous> (src\lib\personnel-cache.ts:22:37)
+  20 |   let timer: ReturnType<typeof setTimeout> | undefined
+  21 |   const timeout = new Promise<never>((_, reject) => {
+> 22 |     timer = setTimeout(() => reject(new Error(`timed out after ${ms}ms`)), ms)
+     |                                     ^
+  23 |   })
+  24 |   return Promise.race([promise, timeout]).finally(() => {
+  25 |     if (timer) clearTimeout(timer)
+[cache] get failed pgso:catalog:departments:e30 Error: timed out after 2500ms
+    at Timeout.<anonymous> (src\lib\personnel-cache.ts:22:37)
+  20 |   let timer: ReturnType<typeof setTimeout> | undefined
+  21 |   const timeout = new Promise<never>((_, reject) => {
+> 22 |     timer = setTimeout(() => reject(new Error(`timed out after ${ms}ms`)), ms)
+     |                                     ^
+  23 |   })
+  24 |   return Promise.race([promise, timeout]).finally(() => {
+  25 |     if (timer) clearTimeout(timer)
+[cache] set failed pgso:personnel:sidebar-user:eyJ1IjoiMTlmNjA1ZjAtOWYwZi00ZDBhLTk0N2QtYjIxNWNiODdiY2M0In0 Error: timed out after 2500ms
+    at Timeout.<anonymous> (src\lib\personnel-cache.ts:22:37)
+  20 |   let timer: ReturnType<typeof setTimeout> | undefined
+  21 |   const timeout = new Promise<never>((_, reject) => {
+> 22 |     timer = setTimeout(() => reject(new Error(`timed out after ${ms}ms`)), ms)
+     |                                     ^
+  23 |   })
+  24 |   return Promise.race([promise, timeout]).finally(() => {
+  25 |     if (timer) clearTimeout(timer)
+[cache] set failed pgso:personnel:dashboard-stats:eyJhIjowLCJ1IjoiMTlmNjA1ZjAtOWYwZi00ZDBhLTk0N2QtYjIxNWNiODdiY2M0In0 Error: timed out after 2500ms
+    at Timeout.<anonymous> (src\lib\personnel-cache.ts:22:37)
+  20 |   let timer: ReturnType<typeof setTimeout> | undefined
+  21 |   const timeout = new Promise<never>((_, reject) => {
+> 22 |     timer = setTimeout(() => reject(new Error(`timed out after ${ms}ms`)), ms)
+     |                                     ^
+  23 |   })
+  24 |   return Promise.race([promise, timeout]).finally(() => {
+  25 |     if (timer) clearTimeout(timer)
+ GET /personnel/dashboard 200 in 21.8s (next.js: 77ms, application-code: 21.7s)
+[?25h

@@ -55,7 +55,7 @@ export function Navbar() {
           transition={{ duration: 0.6, ease: "easeOut", delay: 0.3 }}
         >
           <Link href="/" className={styles.logo} aria-label="PGSO EYE home">
-            <BrandLogo size={32} />
+            <BrandLogo size={44} />
           </Link>
         </motion.div>
 

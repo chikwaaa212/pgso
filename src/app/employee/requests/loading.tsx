@@ -1,10 +1,9 @@
-import Image from "next/image";
 import { Card } from "@/components/ui/card";
 import styles from "./page.module.css";
 
 /**
  * My Requests skeleton — mirrors EmployeeRequestsPage 1:1 (crumb,
- * header with back button + mascot, file-a-request form panel, 8-col
+ * header with back button, file-a-request form panel, 8-col
  * history table) so content swaps in without layout shift.
  *
  * Static chrome renders as real text with real classes; only live values
@@ -90,14 +89,6 @@ export default function EmployeeRequestsLoading() {
             <span className="mt-1 block h-4 w-48 animate-pulse rounded bg-navy-100" />
           </p>
         </div>
-        <Image
-          src="/salute.png"
-          alt="Saluting eagle mascot"
-          width={120}
-          height={120}
-          priority
-          className={styles.mascot}
-        />
       </div>
 
       <Card className={styles.panel}>

@@ -57,7 +57,7 @@ export function Footer() {
             transition={{ duration: 0.6, ease: "easeOut" }}
           >
             <Link href="/" className={styles.logo} aria-label="PGSO EYE home">
-              <BrandLogo size={36} />
+              <BrandLogo size={52} />
             </Link>
             <p className={styles.description}>
               An integrated web-based property and supply management system

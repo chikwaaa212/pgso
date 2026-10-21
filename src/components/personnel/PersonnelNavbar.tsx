@@ -407,8 +407,8 @@ export function PersonnelNavbar({
       <div className={styles.bar}>
         <Link href="/personnel/dashboard" className={styles.brand}>
           <Image
-            src="/favicon.png"
-            alt="PGSO-PSMS logo"
+            src="/province-seal.png"
+            alt="Province of Davao Oriental official seal"
             width={36}
             height={36}
             className={styles.brandMark}

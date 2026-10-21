@@ -170,14 +170,21 @@ export function LogDeliveryMockForm({
     reset,
   } = draft;
 
+  const [formOptions, setFormOptions] = useState<DeliveryFormOptions>({
+    assetTypes: [],
+    accountTitles: [],
+    codes: [],
+    accountTitleTypes: {},
+  });
+
   const handleStep1Change = (field: keyof Step1Data, value: string) => {
     setStep1((prev) => ({ ...prev, [field]: value }));
   };
 
   /**
    * Account code is free-form (typed or Generated) — NOT from the catalog.
-   * Asset type + account title are strict catalog dropdowns; the pair must
-   * co-occur in one active catalog entry (validated client + server).
+   * Account title is a strict catalog dropdown; Asset Type auto-fills from the
+   * selected title (validated client + re-derived server-side).
    */
   const handleAccountCodeChange = (value: string) => {
     setStep1((prev) => ({ ...prev, accountCode: value }));
@@ -199,6 +206,35 @@ export function LogDeliveryMockForm({
       code = candidate;
     }
     setStep1((prev) => ({ ...prev, accountCode: code }));
+  };
+
+  const assetTypesForTitle = (title: string): string[] => {
+    const key = title.trim().toUpperCase();
+    if (!key) return [];
+    const mapped = formOptions.accountTitleTypes?.[key];
+    if (mapped && mapped.length > 0) return mapped;
+    // Fallback for an older cached options payload without the title map.
+    return [
+      ...new Set(
+        formOptions.codes
+          .filter((c) => c.accountTitle.trim().toUpperCase() === key)
+          .map((c) => c.assetType)
+          .filter(Boolean)
+      ),
+    ];
+  };
+
+  /**
+   * Picking an account title drives Asset Type. The type is auto-filled from
+   * the catalog entry (and locked in the UI when the title maps to one type).
+   */
+  const handleAccountTitleChange = (value: string) => {
+    const derived = assetTypesForTitle(value);
+    setStep1((prev) => ({
+      ...prev,
+      accountTitle: value,
+      assetType: derived.length > 0 ? derived[0] : "",
+    }));
   };
 
   const handleAssetTypeChange = (value: string) => {
@@ -247,11 +283,6 @@ export function LogDeliveryMockForm({
   );
   const lastSavedId = useRef<string | null>(null);
   const [idempotencyKey, setIdempotencyKey] = useState(() => crypto.randomUUID());
-  const [formOptions, setFormOptions] = useState<DeliveryFormOptions>({
-    assetTypes: [],
-    accountTitles: [],
-    codes: [],
-  });
   const master = useMasterData();
   const unitOptions = master.loaded && master.units.length > 0 ? master.units : FALLBACK_UNITS;
 
@@ -296,16 +327,17 @@ export function LogDeliveryMockForm({
     }
   }, [actionState, toast, onClose]);
 
-  // Account code is free-form (typed or Generated). Type + title are each
-  // validated independently against the catalog (no pair-match required).
+  // Account code is free-form (typed or Generated). Account title is from the
+  // catalog and its asset type is auto-filled from that title.
+  const selectedTitleTypes = assetTypesForTitle(step1.accountTitle);
   const isStep1Valid =
     (step1.deliveryKind === "stock" || step1.deliveryKind === "asset") &&
     step1.accountCode.trim().length >= 2 &&
-    formOptions.assetTypes.some(
-      (t) => t.toLowerCase() === step1.assetType.trim().toLowerCase()
-    ) &&
     formOptions.accountTitles.some(
       (t) => t.toUpperCase() === step1.accountTitle.trim().toUpperCase()
+    ) &&
+    selectedTitleTypes.some(
+      (t) => t.toLowerCase() === step1.assetType.trim().toLowerCase()
     );
   const isAwaitingArrival = step2.deliveryStatus === "Awaiting";
   const isStep2Valid =
@@ -389,32 +421,12 @@ export function LogDeliveryMockForm({
           )}
         </div>
         <div>
-          <Label htmlFor="asset-type" className="mb-1 block text-sm font-medium">
-            Asset Type <span className="font-normal text-navy-500">(from catalog)</span>
-          </Label>
-          <Select
-            value={step1.assetType}
-            onValueChange={handleAssetTypeChange}
-          >
-            <SelectTrigger id="asset-type" className="w-full">
-              <SelectValue placeholder="Select asset type" />
-            </SelectTrigger>
-            <SelectContent>
-              {formOptions.assetTypes.map((t) => (
-                <SelectItem key={t} value={t}>
-                  {t}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <div>
           <Label htmlFor="account-title" className="mb-1 block text-sm font-medium">
             Account Title <span className="font-normal text-navy-500">(from catalog)</span>
           </Label>
           <Select
             value={step1.accountTitle}
-            onValueChange={(v) => handleStep1Change("accountTitle", v)}
+            onValueChange={handleAccountTitleChange}
           >
             <SelectTrigger id="account-title" className="w-full">
               <SelectValue placeholder="Select account title" />
@@ -427,6 +439,40 @@ export function LogDeliveryMockForm({
               ))}
             </SelectContent>
           </Select>
+        </div>
+        <div>
+          <Label htmlFor="asset-type" className="mb-1 block text-sm font-medium">
+            Asset Type{" "}
+            <span className="font-normal text-navy-500">(auto-filled from account title)</span>
+          </Label>
+          {selectedTitleTypes.length > 1 ? (
+            <Select value={step1.assetType} onValueChange={handleAssetTypeChange}>
+              <SelectTrigger id="asset-type" className="w-full">
+                <SelectValue placeholder="Select asset type" />
+              </SelectTrigger>
+              <SelectContent>
+                {selectedTitleTypes.map((t) => (
+                  <SelectItem key={t} value={t}>
+                    {t}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          ) : (
+            <Input
+              id="asset-type"
+              value={step1.assetType}
+              readOnly
+              placeholder="Select an account title first"
+              className="bg-navy-50"
+            />
+          )}
+          {selectedTitleTypes.length > 1 && (
+            <p className="mt-1 text-xs text-navy-500">
+              This title is linked to more than one asset type — pick the one for
+              this delivery.
+            </p>
+          )}
         </div>
         {catalogEmpty && (
           <p className="text-xs font-medium text-red-600">

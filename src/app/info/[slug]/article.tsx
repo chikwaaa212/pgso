@@ -32,7 +32,7 @@ export function InfoArticle({ content }: { content: FooterInfoContent }) {
     <article className={styles.container}>
       <div className={styles.masthead}>
         <span className={styles.mastheadBrand}>
-          <BrandLogo size={24} />
+          <BrandLogo size={36} />
           <span className={styles.docsSuffix}>Docs</span>
         </span>
         <Link href="/" className={styles.back}>

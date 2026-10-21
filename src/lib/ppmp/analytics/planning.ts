@@ -594,6 +594,253 @@ export function buildExecutiveSummary(
   return out.slice(0, 6);
 }
 
+export interface PlanningBasisSection {
+  title: string;
+  lines: string[];
+}
+
+export interface PlanningBasisSummary {
+  headline: string;
+  sections: PlanningBasisSection[];
+}
+
+/** How a forecast row's quantity/cost was derived, for the basis summary. */
+export type ForecastBasis =
+  | "statistical"
+  | "trend"
+  | "carryover"
+  | "lump_sum"
+  | "median_fallback";
+
+const FORECAST_BASIS_LABEL: Record<ForecastBasis, string> = {
+  statistical: "statistical forecast from a 3+ year history",
+  trend: "simple-statistics projection from a multi-year history",
+  carryover: "single-year carryover / last recorded line value",
+  lump_sum: "budget-only lump sum (1 lot per recorded entry)",
+  median_fallback: "median unit-cost fallback (cost missing in source)",
+};
+
+export function classifyForecastBasis(method: string): ForecastBasis {
+  const m = method.toLowerCase();
+  if (m.startsWith("lump_sum_")) return "lump_sum";
+  if (m.startsWith("median_fallback_")) return "median_fallback";
+  if (m.startsWith("statistical_")) return "statistical";
+  if (m.startsWith("simple_statistics_") && m.includes("_from_")) return "trend";
+  return "carryover";
+}
+
+function signedPct(pct: number): string {
+  const v = round2(pct);
+  return `${v > 0 ? "+" : ""}${v}%`;
+}
+
+/**
+ * Plain-language explanation of how the planning draft was produced:
+ * what was applied from the uploaded files, what was increased, how each
+ * line was projected, which defaults the system configured, and what still
+ * needs human confirmation. Pure, so the UI can show it on every draft.
+ */
+export function buildPlanningBasis(
+  forecasts: PlanningForecastRow[],
+  draft: PpmpDraftRow[],
+  report: AnalysisReport | null,
+  opts: PlanningOptions,
+  context: {
+    files?: { filename: string; fiscalYear: number | null }[];
+    items?: PlanningItemInput[] | null;
+  } = {}
+): PlanningBasisSummary {
+  const files = context.files ?? [];
+  const items = context.items ?? null;
+  const lastYear = lastHistoryYear(report);
+  const horizon = planningHorizon(opts.targetYear, lastYear);
+  const historyYears = report?.overview.years ?? [];
+  const yearLabel = opts.targetYear !== null ? `FY ${opts.targetYear}` : "the next fiscal year";
+  const methodLabel =
+    opts.method === "growth"
+      ? "growth rate"
+      : opts.method === "trend"
+        ? "trend / linear regression"
+        : "average / carryover";
+  const totalBase = draft.reduce((a, r) => a + (r.total_cents ?? 0), 0);
+  const qtyFactor = opts.method === "growth" ? compoundPct(opts.growthPct, horizon) : 1;
+  const priceFactor = compoundPct(opts.pricePct, horizon);
+  const categoryLabel =
+    opts.categoryFilter.trim() && opts.categoryFilter.trim().toLowerCase() !== "all"
+      ? `"${opts.categoryFilter.trim()}"`
+      : "all categories";
+
+  const applied: string[] = [];
+  applied.push(
+    files.length > 0
+      ? `Files read: ${files
+          .map((f) => `${f.filename}${f.fiscalYear !== null ? ` (FY ${f.fiscalYear})` : ""}`)
+          .join("; ")}.`
+      : `${report?.overview.files ?? 0} uploaded workbook(s) from this planning session.`
+  );
+  applied.push(
+    historyYears.length > 0
+      ? `History used: FY ${historyYears.join(", ")}${lastYear !== null ? ` — latest recorded year is FY ${lastYear}` : ""}.`
+      : "History used: no fiscal year was readable from the uploaded files."
+  );
+  applied.push(
+    `Source lines: ${report?.overview.line_items ?? forecasts.length} parsed PPMP line(s) → ` +
+      `${forecasts.length} forecast line(s) → ${draft.length} PPMP row(s).`
+  );
+  applied.push(
+    `Scope: agency/end-user "${opts.agency || "General"}", category filter ${categoryLabel}.`
+  );
+  applied.push(
+    opts.targetYear === null
+      ? `Planning target: next fiscal year (set a target year to make the horizon explicit).`
+      : lastYear === null
+        ? `Planning target: ${yearLabel}; no history year was detected, so a 1-year horizon is assumed.`
+        : `Planning target: ${yearLabel} — ${horizon} annual step(s) from FY ${lastYear} (last recorded year).`
+  );
+  if (report?.overview.total_budget_cents !== null && report?.overview.total_budget_cents !== undefined) {
+    applied.push(
+      `Uploaded workbook total (all recorded years): ${formatPesos(report.overview.total_budget_cents)}. ` +
+        `This draft's planned base total for ${yearLabel}: ${formatPlanningPesos(totalBase)}.`
+    );
+  }
+
+  const increases: string[] = [];
+  increases.push(`Quantity method selected: ${methodLabel}.`);
+  if (opts.method === "growth") {
+    increases.push(
+      horizon > 0
+        ? `Quantity increase: ${signedPct(opts.growthPct)}/yr compounded over ${horizon} year(s) = ×${round2(qtyFactor)} on the planned base quantity.`
+        : `Quantity increase: ${signedPct(opts.growthPct)}/yr is configured, but the target year equals the latest history year (0 steps), so quantities are held.`
+    );
+  } else if (opts.method === "trend") {
+    increases.push(
+      "Quantity increase: no growth rate is added — quantities follow the fitted linear trend, so a line can rise or fall depending on its own history."
+    );
+  } else {
+    increases.push(
+      "Quantity increase: not applied — the average/carryover method holds the historical mean or last recorded quantity."
+    );
+  }
+  increases.push(
+    opts.pricePct !== 0
+      ? `Unit-cost increase: ${signedPct(opts.pricePct)}/yr compounded over ${horizon} year(s) = ×${round2(priceFactor)} on recorded unit costs.`
+      : "Unit-cost increase: none (0%/yr) — recorded unit costs are held."
+  );
+  if (qtyFactor !== 1 && priceFactor !== 1) {
+    increases.push(
+      `Quantity and price compound together: ×${round2(qtyFactor)} × ×${round2(priceFactor)} ≈ ×${round2(qtyFactor * priceFactor)} versus the historical base figures.`
+    );
+  }
+  if (qtyFactor === 1 && priceFactor === 1) {
+    increases.push("No quantity or price increase was applied — this is a carryover draft using the recorded figures.");
+  }
+  increases.push(
+    "Increases are projections only: every figure remains editable, and Budget/BAC must validate the rates used."
+  );
+
+  const basisCounts = new Map<ForecastBasis, number>();
+  for (const f of forecasts) {
+    const basis = classifyForecastBasis(f.method);
+    basisCounts.set(basis, (basisCounts.get(basis) ?? 0) + 1);
+  }
+  const projection: string[] = [];
+  (Object.keys(FORECAST_BASIS_LABEL) as ForecastBasis[]).forEach((basis) => {
+    const n = basisCounts.get(basis) ?? 0;
+    if (n > 0) projection.push(`${n} line(s): ${FORECAST_BASIS_LABEL[basis]}.`);
+  });
+  const needsCanvass = draft.filter((r) => (r.total_cents ?? 0) === 0).length;
+  if (needsCanvass > 0) {
+    projection.push(
+      `${needsCanvass} line(s) show ₱0.00 because no cost exists in the files — canvass/price quotation is required before submission.`
+    );
+  } else {
+    projection.push("Every line has a unit cost carried or estimated from the uploaded files.");
+  }
+  if (items !== null) {
+    projection.push(
+      `Full coverage was used: ${items.length} aggregated item(s) from ${report?.overview.line_items ?? "all"} source entries, not just the top items.`
+    );
+  } else {
+    projection.push("Full coverage was unavailable, so planning fell back to the report's top items.");
+  }
+  projection.push("No prices or quantities were invented from outside the uploaded workbooks.");
+
+  const missingMode = items
+    ? items.filter((i) => !(i.mode ?? "").trim()).length
+    : forecasts.filter((f) => !(f.mode ?? "").trim()).length;
+  const missingFunds = items
+    ? items.filter((i) => !(i.source_funds ?? "").trim()).length
+    : forecasts.filter((f) => !(f.source_funds ?? "").trim()).length;
+  const scheduleObserved = (report?.quarterly.cells ?? []).some((c) => c.starts > 0);
+  const configuration: string[] = [];
+  configuration.push(
+    `Recommended mode: copied from the workbook where recorded; ${missingMode} item(s) have no mode, so the draft says "To confirm with BAC".`
+  );
+  configuration.push(`Expense class: ${inferExpenseClass()}.`);
+  configuration.push(
+    `Source of funds: kept from the workbook where present; ${missingFunds} item(s) were defaulted to "General Fund" because the source had none.`
+  );
+  configuration.push(
+    `Quarter split: ${scheduleObserved ? "the observed start-month mix from your history" : "25% per quarter (no schedule history was found)"}.`
+  );
+  configuration.push(
+    `Procurement milestones (advertisement, bid opening, award, signing): template dates anchored to the dominant recorded quarter ` +
+      `${report ? dominantQuarter(report) : 1}Q — BAC must confirm the actual timetable.`
+  );
+  configuration.push(
+    `End-user / implementing unit: "${opts.agency || "General"}". Pre-procurement conference: "No". ` +
+      `Supporting document: "Market Scooping through canvass/price quotation".`
+  );
+
+  const confirm: string[] = [];
+  if (opts.ceilingPesos !== null) {
+    const ceilingCents = Math.round(opts.ceilingPesos * 100);
+    confirm.push(
+      totalBase <= ceilingCents
+        ? `Budget ceiling ${formatPlanningPesos(ceilingCents)} covers the base total ${formatPlanningPesos(totalBase)}.`
+        : `Budget ceiling ${formatPlanningPesos(ceilingCents)} is exceeded by the base total ${formatPlanningPesos(totalBase)} — prioritize lines with Budget.`
+    );
+  } else {
+    confirm.push("No budget ceiling was entered — confirm the base total with Budget before submission.");
+  }
+  if (report) {
+    if (report.anomalies.length > 0) {
+      confirm.push(`${report.anomalies.length} anomaly flag(s) in the analysis need review before finalizing quantities.`);
+    }
+    if (report.fileInsights.duplicates.length > 0) {
+      confirm.push(`${report.fileInsights.duplicates.length} repeated item(s) may need consolidation or bulk buying.`);
+    }
+    if (report.overview.budget_only_lines > 0) {
+      confirm.push(`${report.overview.budget_only_lines} budget-only line(s) have no stated quantity; the draft assumes 1 lot per entry.`);
+    }
+    if (report.overview.low_confidence_lines > 0) {
+      confirm.push(`${report.overview.low_confidence_lines} low-confidence line(s) parsed with limited structure — verify units and quantities.`);
+    }
+    if (report.quarterly.unscheduledStarts > 0 || report.quarterly.unscheduledDeliveries > 0) {
+      confirm.push(
+        `${report.quarterly.unscheduledStarts} line(s) lack a start month and ${report.quarterly.unscheduledDeliveries} lack a delivery month; their milestones are placeholders.`
+      );
+    }
+  }
+  confirm.push(
+    `Have your Budget and BAC offices validate quantities, unit costs, rates, and schedules for ${yearLabel} before submission.`
+  );
+
+  return {
+    headline:
+      `${files.length > 0 ? `${files.length} file(s)` : "Uploaded files"} → ${draft.length} planned PPMP row(s) for ${yearLabel} · ` +
+      `method ${methodLabel} · quantity ${qtyFactor === 1 ? "held" : `×${round2(qtyFactor)}`} · ` +
+      `unit cost ${priceFactor === 1 ? "held" : `×${round2(priceFactor)}`}.`,
+    sections: [
+      { title: "Applied from your files", lines: applied },
+      { title: "Increases applied", lines: increases },
+      { title: "How each line was projected", lines: projection },
+      { title: "Defaults the system configured", lines: configuration },
+      { title: "What still needs your confirmation", lines: confirm },
+    ],
+  };
+}
+
 export function formatPesos(cents: number | null): string {
   if (cents === null || cents === undefined) return "no data";
   const sign = cents < 0 ? "-" : "";
