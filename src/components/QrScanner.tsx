@@ -1,12 +1,19 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { usePathname } from "next/navigation";
 import jsQR from "jsqr";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { requestTypeLabel } from "@/app/personnel/requests/request-types";
+import {
+  assetTagHref,
+  parseAssetTagRef,
+  type AssetTagRef,
+  type PublicAssetTag,
+} from "@/lib/asset-tag";
 import {
   CLIENT_CACHE_KEYS,
   getClientCache,
@@ -38,6 +45,15 @@ type ScanResult =
       account_code: string | null;
       article: string | null;
       qty: number | null;
+      raw: string;
+    }
+  | {
+      /** Asset/stock tag — details come from the public lookup endpoint. */
+      kind: "asset";
+      ref: AssetTagRef;
+      asset: PublicAssetTag | null;
+      /** Set when the lookup itself failed (network/server), vs. 404. */
+      lookupError?: string;
       raw: string;
     }
   | { kind: "raw"; text: string };
@@ -103,6 +119,44 @@ function parsePayload(text: string): ScanResult {
   return { kind: "raw", text: raw };
 }
 
+/**
+ * Asset tags encode a detail-page URL, which the request/issue parser cannot
+ * understand. Resolve them through the public lookup endpoint so the scanner
+ * can show identifying details even when signed out.
+ */
+async function resolveScan(text: string): Promise<ScanResult> {
+  const ref = parseAssetTagRef(text);
+  if (!ref) return parsePayload(text);
+  const raw = text.trim();
+  try {
+    const res = await fetch(`/api/public/assets/${ref.id}`, {
+      cache: "no-store",
+    });
+    if (res.ok) {
+      const asset = (await res.json()) as PublicAssetTag;
+      return { kind: "asset", ref, asset, raw };
+    }
+    if (res.status === 404) {
+      return { kind: "asset", ref, asset: null, raw };
+    }
+    return {
+      kind: "asset",
+      ref,
+      asset: null,
+      lookupError: "Could not load asset details right now. Try again.",
+      raw,
+    };
+  } catch {
+    return {
+      kind: "asset",
+      ref,
+      asset: null,
+      lookupError: "Could not load asset details — check your connection.",
+      raw,
+    };
+  }
+}
+
 /** Shared camera / upload / paste QR scanner for personnel and admin. */
 export function QrScanner({
   crumb,
@@ -127,6 +181,18 @@ export function QrScanner({
   const [pasted, setPasted] = useState("");
   const [result, setResult] = useState<ScanResult | null>(null);
   const [notice, setNotice] = useState("");
+  const pathname = usePathname();
+  const superAdmin = pathname?.startsWith("/super-admin") ?? false;
+
+  // Request/issue payloads decode instantly; asset tags need a public lookup,
+  // so show the card only when the result (or failure) is ready.
+  const handleDecoded = useCallback((text: string, doneNotice: string) => {
+    setNotice("Reading QR…");
+    void resolveScan(text).then((next) => {
+      setResult(next);
+      setNotice(doneNotice);
+    });
+  }, []);
 
   // Same instant-back-navigation idea as dashboard / deliveries: the last
   // decoded result is kept in memory + sessionStorage and restored on
@@ -166,11 +232,11 @@ export function QrScanner({
 
   useEffect(() => stopCamera, [stopCamera]);
 
-  const tick = useCallback(() => {
+  const tick = useCallback(function frame() {
     const video = videoRef.current;
     const canvas = canvasRef.current;
     if (!video || !canvas || video.readyState !== video.HAVE_ENOUGH_DATA) {
-      rafRef.current = requestAnimationFrame(tick);
+      rafRef.current = requestAnimationFrame(frame);
       return;
     }
     const scale = Math.min(1, 640 / video.videoWidth);
@@ -182,14 +248,13 @@ export function QrScanner({
       const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
       const code = jsQR(img.data, img.width, img.height);
       if (code?.data) {
-        setResult(parsePayload(code.data));
-        setNotice("QR detected from camera.");
         stopCamera();
+        handleDecoded(code.data, "QR detected from camera.");
         return;
       }
     }
-    rafRef.current = requestAnimationFrame(tick);
-  }, [stopCamera]);
+    rafRef.current = requestAnimationFrame(frame);
+  }, [stopCamera, handleDecoded]);
 
   async function startCamera() {
     setCamError("");
@@ -233,8 +298,7 @@ export function QrScanner({
         const data = ctx.getImageData(0, 0, canvas.width, canvas.height);
         const code = jsQR(data.data, data.width, data.height);
         if (code?.data) {
-          setResult(parsePayload(code.data));
-          setNotice(`Decoded from ${file.name}.`);
+          handleDecoded(code.data, `Decoded from ${file.name}.`);
         } else {
           setNotice("No QR code found in that image.");
         }
@@ -342,8 +406,7 @@ export function QrScanner({
               variant="outline"
               disabled={pasted.trim() === ""}
               onClick={() => {
-                setNotice("");
-                setResult(parsePayload(pasted));
+                handleDecoded(pasted, "");
               }}
             >
               Decode pasted data
@@ -387,18 +450,87 @@ export function QrScanner({
                 </tbody>
               </table>
             </div>
+          ) : result.kind === "asset" ? (
+            result.asset ? (
+              <>
+                <div className={styles.tableWrap}>
+                  <table className={styles.table}>
+                    <tbody>
+                      <tr>
+                        <td>Type</td>
+                        <td>{result.asset.kind === "stock" ? "Stock item" : "Property / asset"}</td>
+                      </tr>
+                      <tr>
+                        <td>Property No.</td>
+                        <td>{result.asset.property_number ?? result.asset.qr_code ?? "—"}</td>
+                      </tr>
+                      <tr>
+                        <td>Item</td>
+                        <td>{result.asset.article ?? "—"}</td>
+                      </tr>
+                      <tr>
+                        <td>Description</td>
+                        <td>{result.asset.description ?? "—"}</td>
+                      </tr>
+                      <tr>
+                        <td>Category</td>
+                        <td>{result.asset.category ?? "—"}</td>
+                      </tr>
+                      <tr>
+                        <td>Status</td>
+                        <td>{result.asset.status ?? "—"}</td>
+                      </tr>
+                      <tr>
+                        <td>Condition</td>
+                        <td>{result.asset.condition ?? "—"}</td>
+                      </tr>
+                      <tr>
+                        <td>Location</td>
+                        <td>{result.asset.location ?? "—"}</td>
+                      </tr>
+                      <tr>
+                        <td>Quantity</td>
+                        <td>
+                          {[result.asset.quantity, result.asset.unit]
+                            .filter((v) => v !== null && v !== "")
+                            .join(" ") || "—"}
+                        </td>
+                      </tr>
+                      <tr>
+                        <td>Date acquired</td>
+                        <td>{fmtDate(result.asset.date_acquired)}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+                <p className={`${subClass} mt-2`}>
+                  <a
+                    href={assetTagHref(result.ref, superAdmin)}
+                    className="font-medium underline underline-offset-2"
+                  >
+                    Open full asset details
+                  </a>{" "}
+                  — sign in to view history and complete records.
+                </p>
+              </>
+            ) : (
+              <p className={subClass}>
+                {result.lookupError ??
+                  "This asset tag no longer matches a record — it may have been deleted."}
+              </p>
+            )
           ) : (
             <p className="whitespace-pre-wrap break-all font-mono text-xs">
               {result.text || "—"}
             </p>
           )}
-          {result.kind !== "raw" ? (
+          {"raw" in result ? (
             <details className="mt-2">
               <summary className="cursor-pointer text-xs font-medium">Raw QR data</summary>
               <p className="mt-1 break-all font-mono text-xs text-zinc-600">{result.raw}</p>
             </details>
           ) : (
-            <p className={subClass}>Not a PGSO request or issue QR — showing raw content.</p>
+            <p className={subClass}>This QR is not a PGSO request, issue, or asset tag.</p>
           )}
         </Card>
       ) : null}

@@ -8,7 +8,7 @@ export default function SuperAdminScanPage() {
     <QrScanner
       crumb="QR Scanner"
       title="QR Scanner"
-      subtitle="Scan a completed-request or issue QR code — camera, image upload, or pasted data. Details show below."
+      subtitle="Scan a completed-request, issue, or asset QR code — camera, image upload, or pasted data. Details show below."
       styles={styles}
       center
     />

@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 export const metadata = {
   title: "Scan QR Code | PGSO",
   description:
-    "Scan a PGSO request or issue QR code with your camera, an image upload, or pasted data. No login needed.",
+    "Scan a PGSO request, issue, or asset QR code with your camera, an image upload, or pasted data. Asset tags show basic property info without login.",
 };
 
 export default function PublicScanPage() {
@@ -18,7 +18,7 @@ export default function PublicScanPage() {
         <QrScanner
           crumb="PGSO / QR Scanner"
           title="Scan a QR Code"
-          subtitle="No login needed — point your camera at a request or issue QR, upload a photo of one, or paste its data. Details show below. Asset tags encode a private link, so they show as text here; sign in to open full asset details."
+          subtitle="No login needed — point your camera at a request, issue, or asset tag, upload a photo of one, or paste its data. Details show below. Asset tags show basic property info; sign in to open full asset details and history."
           styles={styles}
           center
         />

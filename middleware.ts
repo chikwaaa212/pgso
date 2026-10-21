@@ -13,6 +13,9 @@ function isPublicPath(pathname: string): boolean {
     '/auth',
     '/scan',
     '/api/health',
+    // Public asset-tag lookup used by the no-login scanner. Returns only
+    // non-sensitive identification fields (see route handler).
+    '/api/public',
   ]
   return publicPrefixes.some(
     (p) => pathname === p || pathname.startsWith(`${p}/`)
