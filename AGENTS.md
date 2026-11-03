@@ -133,6 +133,7 @@ npm run build
 | PPMP parsing, analytics, planning | `src/lib/ppmp/**` |
 | Data model | `prisma/schema.prisma`, `prisma/migrations/**` |
 | Tests | `src/__tests__/**` |
+| Plans, assessments, audits | `docs/plans/`, `docs/assessments/`, `docs/audits/` (index: `docs/README.md`) |
 
 ## Environment
 
