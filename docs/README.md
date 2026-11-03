@@ -30,6 +30,13 @@ stock → issuance flow, and a connection reference that separates real foreign 
 the soft (app-enforced) UUID and account-code joins. Paste the blocks into
 <https://mermaid.live> to render.
 
+## `UI-SITEMAP.md`
+
+Mermaid sitemap of every screen: public/auth routes, the three portal trees, the
+per-portal screen inventory (tabs, dialogs, read-only vs writable), cross-portal
+journeys (account, delivery, request, scan, PPMP), navigation patterns, and known gaps.
+Paste the blocks into <https://mermaid.live> to render.
+
 ## `plans/`
 
 Implementation plans written before each feature push.
