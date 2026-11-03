@@ -9,6 +9,20 @@ Plain-language guide for non-technical users. Explains where each feature lives,
 to click, how the workflow moves from delivery to issuance, and why the system enforces
 each rule. Start here if you are learning the app rather than the codebase.
 
+## `OBJECTIVE-FOCUS-WORKFLOW.md`
+
+Detailed explanation of the featured workflow — delivery → inspection → AIR/IAR →
+stocking → PAR/ICS issuance — and how each stage answers a project objective. Written
+for reviewers, demo presenters, and new team members. Includes the rules, a worked
+example, failure modes, a code map, and a verification checklist.
+
+## `SYSTEM-OBJECTIVES-GUIDE.md`
+
+Maps the six official system objectives to the real menus, routes, roles, and rules.
+For each objective it shows where to find it in the personnel, Super Admin, and
+employee portals, how the feature works, what to demonstrate, the supporting code,
+and the honest limits. Includes a role matrix and a ten-minute demo script.
+
 ## `plans/`
 
 Implementation plans written before each feature push.
