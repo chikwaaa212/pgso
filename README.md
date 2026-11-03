@@ -12,6 +12,10 @@ PGSO-PSMS replaces spreadsheet-driven property custodianship with a single audit
 - Employees see exactly what they hold; personnel see exactly what they processed; Super Admins see the whole province.
 - Uploaded PPMP workbooks can be validated, compared year over year, forecast, and turned into a draft procurement plan.
 
+> **Using the system, not building it?** Read the plain-language
+> [`docs/USER-GUIDE.md`](docs/USER-GUIDE.md) — it explains every screen, workflow, and rule
+> for employees, personnel, and administrators.
+
 ---
 
 ## Table of contents

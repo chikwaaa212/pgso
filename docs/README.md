@@ -3,6 +3,12 @@
 Project documentation lives here. App code, config, and the root README stay at the
 repository root because the build and tooling expect them there.
 
+## `USER-GUIDE.md`
+
+Plain-language guide for non-technical users. Explains where each feature lives, what
+to click, how the workflow moves from delivery to issuance, and why the system enforces
+each rule. Start here if you are learning the app rather than the codebase.
+
 ## `plans/`
 
 Implementation plans written before each feature push.
