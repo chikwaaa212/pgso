@@ -8,7 +8,7 @@ export default function PersonnelScanPage() {
     <QrScanner
       crumb="Personnel / QR Scanner"
       title="QR Scanner"
-      subtitle="Scan a completed-request, issue, or asset QR code — camera, image upload, or pasted data. Details show below."
+      subtitle="Point the camera at a completed-request, issue, or asset QR code. Details show below."
       styles={styles}
       center
     />

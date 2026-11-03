@@ -1,10 +1,13 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { Suspense, useCallback, useMemo, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { TablePager } from "@/components/personnel/TablePager";
+import { RepairCreateDialog } from "@/components/personnel/RepairCreateDialog";
+import { useScanPrefill } from "@/hooks/use-scan-prefill";
+import type { ScannedAssetPrefill } from "@/lib/scan-actions";
 import {
   StatusPill,
   fmtDate,
@@ -33,6 +36,14 @@ function fmtCost(v: number | null) {
 }
 
 export default function SuperAdminRepairsPage() {
+  return (
+    <Suspense fallback={<RepairsLoading />}>
+      <SuperAdminRepairsContent />
+    </Suspense>
+  );
+}
+
+function SuperAdminRepairsContent() {
   // Server-paged window (PAGE_SIZE = 15) via the shared repairs reader
   // (super_admin scope is global there): the DB returns only the window +
   // exact total per filter set (30s, busted by repair writes).
@@ -51,6 +62,18 @@ export default function SuperAdminRepairsPage() {
   });
   const rows = useMemo(() => paged?.rows ?? [], [paged]);
   const total = paged?.total ?? 0;
+
+  // Create-repair dialog, shared with the personnel portal (super admins
+  // cannot open /personnel/*, so the action has to live here too).
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [scanPrefill, setScanPrefill] = useState<ScannedAssetPrefill | null>(null);
+  useScanPrefill(
+    useCallback((prefill: ScannedAssetPrefill) => {
+      setScanPrefill(prefill);
+      setDialogOpen(true);
+    }, [])
+  );
+
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const safePage = Math.min(Math.max(1, page), pageCount);
   // Overlay receipt viewer with per-record client caching (same shared
@@ -113,12 +136,24 @@ export default function SuperAdminRepairsPage() {
   return (
     <section className={styles.section}>
       <p className={styles.crumb}>Repairs</p>
-      <div>
-        <h1 className={styles.title}>Repairs</h1>
-        <p className={styles.subtitle}>
-          {`${total} repair ${total === 1 ? "ticket" : "tickets"}`} · read-only
-          {isValidating ? " · updating…" : ""}
-        </p>
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className={styles.title}>Repairs</h1>
+          <p className={styles.subtitle}>
+            {`${total} repair ${total === 1 ? "ticket" : "tickets"}`}
+            {isValidating ? " · updating…" : ""}
+          </p>
+        </div>
+        <Button
+          type="button"
+          onClick={() => {
+            setScanPrefill(null);
+            setDialogOpen(true);
+          }}
+          className="h-8 gap-2 rounded-[4px] px-3.5 text-xs font-semibold"
+        >
+          New repair
+        </Button>
       </div>
       <Card className={styles.panel}>
         <div className={browseStyles.searchRow}>
@@ -175,6 +210,16 @@ export default function SuperAdminRepairsPage() {
           />
         ) : null}
       </Card>
+
+      <RepairCreateDialog
+        open={dialogOpen}
+        onOpenChange={(next) => {
+          setDialogOpen(next);
+          if (!next) setScanPrefill(null);
+        }}
+        prefill={scanPrefill}
+        onCreated={refresh}
+      />
 
       <ReceiptOverlay
         open={viewer.selectedId !== null}

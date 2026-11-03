@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Card } from "@/components/ui/card";
 /* Loader2 now provided via ActionButton spinner */
@@ -35,6 +35,9 @@ import {
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { IssuanceEvaluateDialog } from "@/components/personnel/IssuanceDialog";
 import { RequestQrButton } from "@/components/personnel/RequestQrButton";
+import { ScanTransferDialog } from "@/components/personnel/ScanTransferDialog";
+import { useScanPrefill } from "@/hooks/use-scan-prefill";
+import type { ScannedAssetPrefill } from "@/lib/scan-actions";
 import {
   requestTypeLabel,
   type RequestStatus,
@@ -95,6 +98,14 @@ function blankLine(key: number): ReqLine {
 }
 
 export default function PersonnelRequestsPage() {
+  return (
+    <Suspense fallback={<RequestsLoading />}>
+      <PersonnelRequestsContent />
+    </Suspense>
+  );
+}
+
+function PersonnelRequestsContent() {
   const [query, setQuery] = useState("");
   const [statusTab, setStatusTab] =
     useState<(typeof STATUS_TABS)[number]["value"]>("all");
@@ -201,6 +212,19 @@ export default function PersonnelRequestsPage() {
   const [lineSeq, setLineSeq] = useState(2);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState("");
+
+  // Scan deep link (`?asset=…&scan=transfer|replenish`): compact dialog,
+  // separate from the multi-type filing dialog above.
+  const [scanPrefill, setScanPrefill] = useState<ScannedAssetPrefill | null>(null);
+  const [scanIntent, setScanIntent] = useState<string | null>(null);
+  const [scanOpen, setScanOpen] = useState(false);
+  useScanPrefill(
+    useCallback((prefill: ScannedAssetPrefill, scan: string | null) => {
+      setScanPrefill(prefill);
+      setScanIntent(scan);
+      setScanOpen(true);
+    }, [])
+  );
 
   const reload = () => {
     // Own write (file / approve / reject / complete / issue) — force fresh
@@ -1299,6 +1323,19 @@ export default function PersonnelRequestsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {scanOpen && scanPrefill ? (
+        <ScanTransferDialog
+          open={scanOpen}
+          onOpenChange={(next) => {
+            setScanOpen(next);
+            if (!next) setScanPrefill(null);
+          }}
+          prefill={scanPrefill}
+          scan={scanIntent}
+          onCreated={reload}
+        />
+      ) : null}
 
       {issuanceOpen ? (
         <IssuanceEvaluateDialog

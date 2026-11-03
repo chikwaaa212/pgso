@@ -3,8 +3,9 @@ import type {
   AnalysisReport,
   EvidenceRef,
 } from "./types";
+import type { ConsumptionSuggestion } from "./consumption";
 
-export type PlanningMethod = "average" | "trend" | "growth";
+export type PlanningMethod = "average" | "trend" | "growth" | "consumption";
 
 export interface PlanningOptions {
   targetYear: number | null;
@@ -17,6 +18,13 @@ export interface PlanningOptions {
   /** Annual unit-cost adjustment % (e.g. inflation), compounded by year gap. */
   pricePct: number;
   categoryFilter: string;
+  /**
+   * Issuance-history suggestions from Objective 5. When `method` is
+   * `"consumption"` these replace the quantity bands; for every other method
+   * they are only used for the "consumption check" panel (never silently
+   * overriding a quantity the planner chose).
+   */
+  consumption?: ConsumptionSuggestion[] | null;
 }
 
 export interface PlanningForecastRow {
@@ -170,6 +178,17 @@ export function projectQtyHistory(
       detail: `simple-statistics linearRegression slope=${round2(m)}/yr intercept=${round2(b)} → ${yearsAhead}yr ahead=${pred}`,
     };
   }
+  if (method !== "growth") {
+    // Consumption plans take their quantity from issuance history instead of
+    // this history, so hold the last recorded value as a neutral fallback.
+    const last = round2(vals[vals.length - 1]);
+    return {
+      low: round2(min(vals)),
+      base: last,
+      high: round2(max(vals)),
+      detail: `carryover last recorded quantity ${last} (min..max band)`,
+    };
+  }
   const last = round2(vals[vals.length - 1]);
   const base = round2(last * compoundPct(growthPct, yearsAhead));
   return {
@@ -177,6 +196,80 @@ export function projectQtyHistory(
     base,
     high: round2(base * compoundPct(growthPct, 1)),
     detail: `hold last ${last}, compound +${growthPct}%/yr over ${yearsAhead}yr → base ${base}`,
+  };
+}
+
+/**
+ * Index consumption suggestions by their PPMP `item_key` so a forecast row can
+ * be matched by exact normalized description|unit — never by fuzzy guess.
+ */
+export function consumptionIndex(
+  suggestions: ConsumptionSuggestion[] | null | undefined
+): Map<string, ConsumptionSuggestion> {
+  const map = new Map<string, ConsumptionSuggestion>();
+  for (const s of suggestions ?? []) map.set(s.itemKey, s);
+  return map;
+}
+
+/** Plain-language record of where a consumption quantity came from. */
+export function consumptionAssumption(suggestion: ConsumptionSuggestion): string {
+  const unit = suggestion.unit ?? "unit";
+  const years = suggestion.years
+    .filter((y) => y.quantity > 0)
+    .map((y) => `FY ${y.year}: ${y.quantity.toLocaleString("en-PH")}`)
+    .join(", ");
+  const onHand = suggestion.onHand > 0
+    ? `${suggestion.onHand.toLocaleString("en-PH")} ${unit} on hand was deducted. `
+    : "";
+  return (
+    `Issuance history (${years || "no usable year"}): ` +
+    `${suggestion.total.toLocaleString("en-PH")} ${unit} issued, averaging ` +
+    `${suggestion.averageAnnual.toLocaleString("en-PH")} ${unit}/yr. ` +
+    `Suggested next-year purchase ${suggestion.qtyBase.toLocaleString("en-PH")} ${unit} ` +
+    `(range ${suggestion.qtyLow.toLocaleString("en-PH")}–${suggestion.qtyHigh.toLocaleString("en-PH")}). ` +
+    onHand +
+    `${suggestion.note}`
+  );
+}
+
+/**
+ * Overlay an issuance-history suggestion onto a forecast row.
+ *
+ * Advisory by design: the row keeps its unit cost, provenance and evidence;
+ * only the quantity bands and the method label change. A line without matching
+ * history keeps its workbook-based quantity and says so instead of inventing a
+ * number.
+ */
+export function applyConsumptionForecast(
+  row: PlanningForecastRow,
+  suggestion: ConsumptionSuggestion | undefined,
+  yearsWindow: number
+): PlanningForecastRow {
+  if (!suggestion || (suggestion.qtyBase <= 0 && suggestion.qtyHigh <= 0)) {
+    return {
+      ...row,
+      method: `consumption_no_history_${row.method}`,
+      assumptions:
+        `No matching issuance history in the last ${yearsWindow} fiscal year(s), so the quantity ` +
+        `falls back to the uploaded workbook. ${row.assumptions}`,
+    };
+  }
+  const unitCost = row.unit_cost_cents;
+  const total = (q: number): number | null =>
+    unitCost === null ? null : Math.round(q * unitCost);
+  const qLow = suggestion.qtyLow;
+  const qBase = suggestion.qtyBase;
+  const qHigh = suggestion.qtyHigh;
+  return {
+    ...row,
+    qty_low: qLow,
+    qty_base: qBase,
+    qty_high: qHigh,
+    total_low_cents: total(qLow),
+    total_base_cents: total(qBase),
+    total_high_cents: total(qHigh),
+    method: `consumption_history_${suggestion.years.length}yr`,
+    assumptions: `${consumptionAssumption(suggestion)} Projection only — confirm with the end-user.`,
   };
 }
 
@@ -385,8 +478,13 @@ export function buildPlanningForecasts(
     pushFromTopItem(t.description, t.qty ?? null, t.unit ?? null, t.category ?? null, t.budget_cents, t.evidence);
   }
 
-  // Cap to a readable planning set.
-  return rows.slice(0, 60);
+  const planned = rows.slice(0, 60);
+  if (opts.method !== "consumption") return planned;
+  const consumptionByKey = consumptionIndex(opts.consumption);
+  const window = opts.consumption?.[0]?.years.length ?? 3;
+  return planned.map((row) =>
+    applyConsumptionForecast(row, consumptionByKey.get(row.item_key), window)
+  );
 }
 
 /** Source workbooks carry no PS/MOOE/CO column: never guess, always flag. */
@@ -610,7 +708,8 @@ export type ForecastBasis =
   | "trend"
   | "carryover"
   | "lump_sum"
-  | "median_fallback";
+  | "median_fallback"
+  | "consumption";
 
 const FORECAST_BASIS_LABEL: Record<ForecastBasis, string> = {
   statistical: "statistical forecast from a 3+ year history",
@@ -618,10 +717,12 @@ const FORECAST_BASIS_LABEL: Record<ForecastBasis, string> = {
   carryover: "single-year carryover / last recorded line value",
   lump_sum: "budget-only lump sum (1 lot per recorded entry)",
   median_fallback: "median unit-cost fallback (cost missing in source)",
+  consumption: "issuance-history suggestion (actual usage, on-hand deducted)",
 };
 
 export function classifyForecastBasis(method: string): ForecastBasis {
   const m = method.toLowerCase();
+  if (m.startsWith("consumption_history_")) return "consumption";
   if (m.startsWith("lump_sum_")) return "lump_sum";
   if (m.startsWith("median_fallback_")) return "median_fallback";
   if (m.startsWith("statistical_")) return "statistical";
@@ -661,7 +762,9 @@ export function buildPlanningBasis(
       ? "growth rate"
       : opts.method === "trend"
         ? "trend / linear regression"
-        : "average / carryover";
+        : opts.method === "consumption"
+          ? "issuance history (actual usage)"
+          : "average / carryover";
   const totalBase = draft.reduce((a, r) => a + (r.total_cents ?? 0), 0);
   const qtyFactor = opts.method === "growth" ? compoundPct(opts.growthPct, horizon) : 1;
   const priceFactor = compoundPct(opts.pricePct, horizon);
@@ -715,6 +818,17 @@ export function buildPlanningBasis(
   } else if (opts.method === "trend") {
     increases.push(
       "Quantity increase: no growth rate is added — quantities follow the fitted linear trend, so a line can rise or fall depending on its own history."
+    );
+  } else if (opts.method === "consumption") {
+    const consumptionForecasts = forecasts.filter((f) =>
+      f.method.startsWith("consumption_history_")
+    );
+    const noHistory = forecasts.length - consumptionForecasts.length;
+    increases.push(
+      `Quantity increase: not applied — quantities come from actual issuance history (last ${opts.consumption?.[0]?.years.length ?? 3} fiscal years), with on-hand stock deducted.`
+    );
+    increases.push(
+      `${consumptionForecasts.length} line(s) matched issuance history · ${noHistory} kept their workbook quantity because no matching issuance was found.`
     );
   } else {
     increases.push(
@@ -821,6 +935,11 @@ export function buildPlanningBasis(
         `${report.quarterly.unscheduledStarts} line(s) lack a start month and ${report.quarterly.unscheduledDeliveries} lack a delivery month; their milestones are placeholders.`
       );
     }
+  }
+  if (opts.method !== "consumption" && (opts.consumption?.length ?? 0) > 0) {
+    confirm.push(
+      `Issuance history is available for ${opts.consumption?.length ?? 0} item(s) but was not applied — the ${methodLabel} method was chosen. Switch the method to "Issuance history" to plan from actual usage.`
+    );
   }
   confirm.push(
     `Have your Budget and BAC offices validate quantities, unit costs, rates, and schedules for ${yearLabel} before submission.`
@@ -1359,7 +1478,11 @@ export function buildForecastsFromItems(
       });
     }
   }
-  return rows.slice(0, 200);
+  const planned = rows.slice(0, 200);
+  if (opts.method !== "consumption") return planned;
+  const byKey = consumptionIndex(opts.consumption);
+  const window = opts.consumption?.[0]?.years.length ?? 3;
+  return planned.map((row) => applyConsumptionForecast(row, byKey.get(row.item_key), window));
 }
 
 /** Quantity + unit phrasing for GPPB Column 3 (e.g. "10 reams", "2 lots"). */

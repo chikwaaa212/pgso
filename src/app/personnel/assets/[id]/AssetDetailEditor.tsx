@@ -533,7 +533,7 @@ export function AssetDetailEditor({
       </Card>
 
       {history ? (
-        <div style={{ marginTop: "1.25rem" }}>
+        <div id="asset-history" style={{ marginTop: "1.25rem" }}>
           <AssetHistorySection asset={displayed} history={history} />
         </div>
       ) : null}

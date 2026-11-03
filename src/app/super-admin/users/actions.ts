@@ -463,6 +463,10 @@ export async function updateMyDisplayName(
       where: { id: actorId },
       data: { full_name: clean },
     })
+    // The navbar/layout reuses the 60s in-memory profile row — drop it so
+    // the new name paints on the next render, not after the TTL.
+    const { bustRoleCache } = await import('@/lib/personnel-scope')
+    bustRoleCache(actorId)
     await writeAuditLog({
       userId: actorId,
       action: 'users:update_own_name',

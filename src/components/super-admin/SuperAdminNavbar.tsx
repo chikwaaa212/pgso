@@ -8,6 +8,7 @@ import { usePathname, useRouter } from "next/navigation";
 import {
   Archive,
   ArrowLeftRight,
+  BarChart3,
   Boxes,
   ChevronDown,
   ClipboardCheck,
@@ -18,6 +19,7 @@ import {
   FileText,
   KeyRound,
   LayoutDashboard,
+  Lightbulb,
   LogOut,
   Menu,
   Package,
@@ -67,7 +69,7 @@ export function SuperAdminNavbar({
   pendingRequests = 0,
   pendingRepairs = 0,
   totalDocuments = 0,
-  userName = "MARIO GENTILES",
+  userName = "Administrator",
   userDetail = "Administrator",
 }: {
   pendingAccounts?: number;
@@ -183,6 +185,18 @@ export function SuperAdminNavbar({
           description: "Track repair tickets",
           icon: Wrench,
           badge: pendingRepairs,
+        },
+        {
+          label: "Reports",
+          href: "/super-admin/reports",
+          description: "Aging, issuance and conditions",
+          icon: BarChart3,
+        },
+        {
+          label: "Recommendations",
+          href: "/super-admin/recommendations",
+          description: "Replenishment, disposal and idle advice",
+          icon: Lightbulb,
         },
         {
           label: "Logs",

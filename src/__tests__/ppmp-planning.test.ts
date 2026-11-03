@@ -17,6 +17,7 @@ import {
   qtySizeText,
   recommendMode,
 } from "../lib/ppmp/analytics/planning";
+import type { ConsumptionSuggestion } from "../lib/ppmp/analytics/consumption";
 
 function baseReport(): AnalysisReport {
   return {
@@ -428,4 +429,140 @@ test("forecast basis classifier separates history, lump sums, and fallbacks", ()
   assert.strictEqual(classifyForecastBasis("simple_statistics_growth_plus_5pct_x1yr"), "carryover");
   assert.strictEqual(classifyForecastBasis("lump_sum_2_lots_from_budget_x1yr"), "lump_sum");
   assert.strictEqual(classifyForecastBasis("median_fallback_from_file"), "median_fallback");
+  assert.strictEqual(classifyForecastBasis("consumption_history_3yr"), "consumption");
+});
+
+function consumptionSuggestion(overrides: Partial<ConsumptionSuggestion> = {}): ConsumptionSuggestion {
+  return {
+    itemKey: "k1",
+    description: "Bond Paper",
+    unit: "reams",
+    years: [
+      { year: 2024, quantity: 10, documents: 1 },
+      { year: 2025, quantity: 0, documents: 0 },
+      { year: 2026, quantity: 20, documents: 2 },
+    ],
+    total: 30,
+    averageAnnual: 10,
+    low: 10,
+    high: 20,
+    usableYears: 2,
+    lastIssuedAt: "2026-03-01T00:00:00.000Z",
+    evidence: [],
+    onHand: 2,
+    qtyLow: 8,
+    qtyBase: 8,
+    qtyHigh: 18,
+    confidence: "medium",
+    note: "2 reams on hand was deducted from the suggestion.",
+    ...overrides,
+  };
+}
+
+test("consumption method replaces quantity bands with issuance history", () => {
+  const report = baseReport();
+  report.forecasts = [
+    {
+      item_key: "k1",
+      description: "Bond Paper",
+      method: "moving_average_3",
+      point: 12,
+      band_low: 10,
+      band_high: 14,
+      confidence: "LOW",
+      warning: "test",
+      calc_trace: "test",
+      evidence: [],
+    },
+  ];
+  report.trends = [
+    {
+      item_key: "k1",
+      description: "Bond Paper",
+      unit: "reams",
+      series: [{ year: 2026, qty: 10, budget_cents: 1000000 }],
+      qty_class: "INCREASING",
+      calc_trace: "test",
+      evidence: [],
+    },
+  ];
+  const opts = {
+    ...OPTS,
+    method: "consumption" as const,
+    consumption: [consumptionSuggestion()],
+  };
+  const rows = buildPlanningForecasts(report, opts);
+  const paper = rows.find((r) => r.item_key === "k1");
+  assert.ok(paper);
+  assert.strictEqual(paper.qty_low, 8);
+  assert.strictEqual(paper.qty_base, 8);
+  assert.strictEqual(paper.qty_high, 18);
+  assert.ok(paper.method.startsWith("consumption_history_"));
+  // Unit cost is still derived from the workbook history (100000c/ream).
+  assert.strictEqual(paper.unit_cost_cents, 100000);
+  assert.strictEqual(paper.total_base_cents, 800000);
+  assert.ok(paper.assumptions.includes("Issuance history"));
+  assert.strictEqual(classifyForecastBasis(paper.method), "consumption");
+});
+
+test("consumption method keeps workbook quantity when no history matches", () => {
+  const report = baseReport();
+  const opts = {
+    ...OPTS,
+    method: "consumption" as const,
+    consumption: [consumptionSuggestion({ itemKey: "other" })],
+  };
+  const rows = buildPlanningForecasts(report, opts);
+  const paper = rows.find((r) => r.description === "Bond Paper");
+  assert.ok(paper);
+  assert.strictEqual(paper.qty_base, 10);
+  assert.ok(paper.method.startsWith("consumption_no_history_"));
+  assert.ok(paper.assumptions.includes("No matching issuance history"));
+});
+
+test("consumption applies to full-coverage item rows", () => {
+  const report = baseReport();
+  const items = [
+    {
+      item_key: "k1",
+      description: "Bond Paper",
+      unit: "reams",
+      category: "Office Supplies",
+      office: "PGO",
+      mode: null,
+      proj_type: null,
+      source_funds: null,
+      occurrences: 1,
+      total_qty: 10,
+      qty_readings: 1,
+      total_budget_cents: 1000000,
+      budget_readings: 1,
+      avg_unit_cost_cents: 100000,
+      evidence: [],
+      source: "PPMP_2026.xlsx · PPMP · row 10",
+    },
+  ];
+  const rows = buildForecastsFromItems(items, report, {
+    ...OPTS,
+    method: "consumption",
+    consumption: [consumptionSuggestion()],
+  });
+  assert.strictEqual(rows.length, 1);
+  assert.strictEqual(rows[0].qty_base, 8);
+  assert.ok(rows[0].total_base_cents === 800000);
+});
+
+test("planning basis explains the consumption method", () => {
+  const report = baseReport();
+  const opts = {
+    ...OPTS,
+    method: "consumption" as const,
+    consumption: [consumptionSuggestion()],
+  };
+  const forecasts = buildPlanningForecasts(report, opts);
+  const draft = buildPpmpDraft(forecasts, report, opts);
+  const basis = buildPlanningBasis(forecasts, draft, report, opts);
+  const text = basis.sections.flatMap((s) => s.lines).join("\n");
+  assert.ok(text.includes("issuance history"));
+  assert.ok(text.includes("on-hand stock deducted"));
 });

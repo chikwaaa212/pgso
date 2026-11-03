@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useMemo, useState } from "react";
 import {
   Check,
   Loader2,
@@ -33,6 +33,9 @@ import {
 import { DatePicker } from "@/components/ui/date-picker";
 import { TablePager, FIXED_PAGE_SIZE } from "@/components/personnel/TablePager";
 import { ReceiptLoading } from "@/components/personnel/ReceiptLoading";
+import { RepairCreateDialog } from "@/components/personnel/RepairCreateDialog";
+import { useScanPrefill } from "@/hooks/use-scan-prefill";
+import type { ScannedAssetPrefill } from "@/lib/scan-actions";
 import { useCachedAction } from "@/hooks/use-cached-action";
 import { useReceipt } from "@/hooks/use-receipt";
 import { buildQueryKey, resourcePrefix } from "@/lib/query-keys";
@@ -42,14 +45,10 @@ import { RepairReceipt } from "./repair-receipt";
 import { ReceiptOverlay } from "../documents/receipt-overlay";
 import receiptStyles from "../inspections/components/receipt.module.css";
 import {
-  createRepair,
   getRepair,
-  getRepairFormOptions,
   getRepairsPage,
   setRepairStatus,
   updateRepair,
-  type RepairAssetOption,
-  type RepairEmployeeOption,
   type RepairRow,
 } from "./actions";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
@@ -89,13 +88,6 @@ function fmtCost(value: number | null) {
   }).format(value);
 }
 
-function todayISO() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
-    d.getDate()
-  ).padStart(2, "0")}`;
-}
-
 function parseISODate(s: string): Date | undefined {
   if (!s) return undefined;
   const d = new Date(`${s}T00:00:00`);
@@ -117,6 +109,14 @@ const STATUS_TABS = [
 ] as const;
 
 export default function PersonnelRepairsPage() {
+  return (
+    <Suspense fallback={<RepairsLoading />}>
+      <PersonnelRepairsContent />
+    </Suspense>
+  );
+}
+
+function PersonnelRepairsContent() {
   const [query, setQuery] = useState("");
   const [statusTab, setStatusTab] =
     useState<(typeof STATUS_TABS)[number]["value"]>("all");
@@ -155,42 +155,16 @@ export default function PersonnelRepairsPage() {
   const [actingId, setActingId] = useState<string | null>(null);
   const [actionError, setActionError] = useState("");
 
+  // Create-repair dialog (shared with the super-admin portal). A scanned
+  // asset tag opens it with the asset + current holder prefilled.
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [assets, setAssets] = useState<RepairAssetOption[]>([]);
-  const [employees, setEmployees] = useState<RepairEmployeeOption[]>([]);
-  // Server-side item search (small PAGE_SIZE window per open, never the
-  // 500-row slice): typing filters assets in the DB. Windows merge by id so
-  // a picked asset stays resolvable across searches.
-  const [itemQuery, setItemQuery] = useState("");
-  const debouncedItemQuery = useDebouncedValue(itemQuery, 300);
-  const trimmedItemSearch = debouncedItemQuery.trim();
-  const [searchedItems, setSearchedItems] = useState<RepairAssetOption[] | null>(null);
-  const [searchedItemsFor, setSearchedItemsFor] = useState("");
-  const searchingItems =
-    trimmedItemSearch !== "" && searchedItemsFor !== trimmedItemSearch;
-  const mergeRepairOptions = (
-    prev: RepairAssetOption[],
-    next: RepairAssetOption[]
-  ) => {
-    if (next.length === 0) return prev;
-    const seen = new Set(prev.map((a) => a.id));
-    const merged = [...prev];
-    for (const a of next) {
-      if (!seen.has(a.id)) {
-        seen.add(a.id);
-        merged.push(a);
-      }
-    }
-    return merged;
-  };
-  const [assetId, setAssetId] = useState("");
-  const [employeeId, setEmployeeId] = useState("");
-  const [repairDate, setRepairDate] = useState(todayISO());
-  const [description, setDescription] = useState("");
-  const [technician, setTechnician] = useState("");
-  const [cost, setCost] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [formError, setFormError] = useState("");
+  const [scanPrefill, setScanPrefill] = useState<ScannedAssetPrefill | null>(null);
+  useScanPrefill(
+    useCallback((prefill: ScannedAssetPrefill) => {
+      setScanPrefill(prefill);
+      setDialogOpen(true);
+    }, [])
+  );
 
   const [editOpen, setEditOpen] = useState(false);
   const [editing, setEditing] = useState<RepairRow | null>(null);  const [editDate, setEditDate] = useState("");
@@ -247,44 +221,6 @@ export default function PersonnelRepairsPage() {
     refreshRows();
   };
 
-  useEffect(() => {
-    if ((dialogOpen || editOpen) && employees.length === 0) {
-      void getRepairFormOptions({}).then((opts) => {
-        setEmployees(opts.employees);
-        setAssets((prev) => mergeRepairOptions(prev, opts.assets));
-      });
-    }
-  }, [dialogOpen, editOpen, employees.length]);
-
-  useEffect(() => {
-    if (!dialogOpen && !editOpen) return;
-    const q = debouncedItemQuery.trim();
-    if (q === "" || q === searchedItemsFor) return;
-    let live = true;
-    void getRepairFormOptions({ q })
-      .then((opts) => {
-        if (!live) return;
-        setSearchedItems(opts.assets);
-        setSearchedItemsFor(q);
-        setAssets((prev) => mergeRepairOptions(prev, opts.assets));
-      })
-      .catch(() => {
-        if (live) setSearchedItemsFor(q);
-      });
-    return () => {
-      live = false;
-    };
-  }, [dialogOpen, editOpen, debouncedItemQuery, searchedItemsFor]);
-
-  // Empty query → default window; pending query → previous results stay
-  // visible (no flash of wrong options while the next window loads).
-  const visibleAssets =
-    trimmedItemSearch === "" ? assets : (searchedItems ?? assets);
-  const lookupAssets =
-    searchedItems && searchedItems.length > 0
-      ? mergeRepairOptions(assets, searchedItems)
-      : assets;
-
   // Server already filtered + paged.
   const visible = rows;
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
@@ -332,51 +268,6 @@ export default function PersonnelRepairsPage() {
       toast.error(msg, { duration: 2000, closeButton: true });
     } finally {
       setActingId(null);
-    }
-  }
-
-  function resetForm() {
-    setAssetId("");
-    setEmployeeId("");
-    setRepairDate(todayISO());
-    setDescription("");
-    setTechnician("");
-    setCost("");
-    setFormError("");
-  }
-
-  async function onSubmit() {
-    if (saving) return;
-    setSaving(true);
-    setFormError("");
-    try {
-      const res = await createRepair({
-        assetId,
-        employeeId,
-        repairDate,
-        description,
-        technician,
-        cost,
-      });
-      if (!res.success) {
-        const msg = res.error ?? "Failed to log the repair.";
-        setFormError(msg);
-        toast.error(msg, { duration: 2000, closeButton: true });
-        return;
-      }
-      setDialogOpen(false);
-      resetForm();
-      reload();
-      toast.success("Repair logged successfully.", {
-        duration: 2000,
-        closeButton: true,
-      });
-    } catch {
-      const msg = "Failed to log the repair. Please try again.";
-      setFormError(msg);
-      toast.error(msg, { duration: 2000, closeButton: true });
-    } finally {
-      setSaving(false);
     }
   }
 
@@ -454,16 +345,6 @@ export default function PersonnelRepairsPage() {
     }
   }
 
-  const pickedAsset = lookupAssets.find((a) => a.id === assetId) ?? null;
-
-  const costNum = cost.trim() === "" ? null : Number(cost);
-  const canSubmit =
-    assetId !== "" &&
-    employeeId !== "" &&
-    description.trim() !== "" &&
-    repairDate !== "" &&
-    (costNum === null || (Number.isFinite(costNum) && costNum >= 0));
-
   const editCostNum = editCost.trim() === "" ? null : Number(editCost);
   const canEditSave =
     editing !== null &&
@@ -492,7 +373,7 @@ export default function PersonnelRepairsPage() {
           <Button
             type="button"
             onClick={() => {
-              resetForm();
+              setScanPrefill(null);
               setDialogOpen(true);
             }}
             className="h-8 gap-2 rounded-[4px] px-3.5 text-xs font-semibold"
@@ -749,177 +630,15 @@ export default function PersonnelRepairsPage() {
         ) : null}
       </Card>
 
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>New repair ticket</DialogTitle>
-            <DialogDescription>
-              Log an asset repair. Progress can be moved from pending to in
-              progress to completed from the table.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className={rep.formGrid}>
-            <div className={`${rep.field} ${rep.span2}`}>
-              <Label htmlFor="rep-item-search">Search items</Label>
-              <Input
-                id="rep-item-search"
-                aria-label="Search items"
-                value={itemQuery}
-                onChange={(e) => setItemQuery(e.target.value)}
-                placeholder="Type to search assets…"
-              />
-              {searchingItems ? (
-                <p className="text-xs text-zinc-500">Searching…</p>
-              ) : null}
-            </div>
-            <div className={`${rep.field} ${rep.span2}`}>
-              <Label htmlFor="rep-asset">
-                Asset <span className="text-red-600">*</span>
-              </Label>
-              <Select
-                value={assetId}
-                onValueChange={setAssetId}
-              >
-                <SelectTrigger id="rep-asset">
-                  <SelectValue placeholder="Select asset" />
-                </SelectTrigger>
-                <SelectContent>
-                  {visibleAssets.map((a) => (
-                    <SelectItem key={a.id} value={a.id}>
-                      {a.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            {pickedAsset ? (
-              <div className={`${rep.span2} grid gap-3 rounded-md border bg-zinc-50 px-3 py-2.5 text-sm sm:grid-cols-2`}>
-                <div>
-                  <p className="text-xs font-medium text-zinc-500">
-                    Account code
-                  </p>
-                  <p>{pickedAsset.account_code ?? "—"}</p>
-                </div>
-                <div>
-                  <p className="text-xs font-medium text-zinc-500">
-                    Account title
-                  </p>
-                  <p>{pickedAsset.account_title ?? "—"}</p>
-                </div>
-                <div>
-                  <p className="text-xs font-medium text-zinc-500">Asset type</p>
-                  <p>{pickedAsset.asset_type ?? "—"}</p>
-                </div>
-                <div>
-                  <p className="text-xs font-medium text-zinc-500">Location</p>
-                  <p>{pickedAsset.location ?? "—"}</p>
-                </div>
-              </div>
-            ) : null}
-
-            <div className={rep.field}>
-              <Label htmlFor="rep-employee">
-                Reported by <span className="text-red-600">*</span>
-              </Label>
-              <Select value={employeeId} onValueChange={setEmployeeId}>
-                <SelectTrigger id="rep-employee">
-                  <SelectValue placeholder="Select employee" />
-                </SelectTrigger>
-                <SelectContent>
-                  {employees.map((e) => (
-                    <SelectItem key={e.id} value={e.id}>
-                      {e.full_name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className={rep.field}>
-              <Label htmlFor="rep-date">
-                Repair date <span className="text-red-600">*</span>
-              </Label>
-              <DatePicker
-                id="rep-date"
-                value={parseISODate(repairDate)}
-                onChange={(date) => setRepairDate(formatISODate(date))}
-                placeholder="Pick a repair date"
-                className="h-9 px-3 text-sm"
-              />
-            </div>
-
-            <div className={`${rep.field} ${rep.span2}`}>
-              <Label htmlFor="rep-desc">
-                Issue <span className="text-red-600">*</span>
-              </Label>
-              <textarea
-                id="rep-desc"
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                placeholder="Describe the damage or issue…"
-                rows={2}
-                className="border-input placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-ring/50 flex w-full rounded-md border bg-transparent px-3 py-2 text-sm shadow-xs outline-none focus-visible:ring-[3px]"
-              />
-            </div>
-
-            <div className={rep.field}>
-              <Label htmlFor="rep-tech">Technician</Label>
-              <Input
-                id="rep-tech"
-                type="text"
-                value={technician}
-                onChange={(e) => setTechnician(e.target.value)}
-                placeholder="e.g. J. Santos (optional)"
-              />
-            </div>
-
-            <div className={rep.field}>
-              <Label htmlFor="rep-cost">Cost (₱)</Label>
-              <Input
-                id="rep-cost"
-                type="number"
-                min={0}
-                step="0.01"
-                value={cost}
-                onChange={(e) => setCost(e.target.value)}
-                placeholder="Optional"
-              />
-            </div>
-          </div>
-
-          {formError ? (
-            <p
-              role="alert"
-              className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800"
-            >
-              {formError}
-            </p>
-          ) : null}
-
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setDialogOpen(false)}
-              disabled={saving}
-              className="h-8 rounded-[4px] px-3.5 text-xs font-semibold"
-            >
-              Cancel
-            </Button>
-            <ActionButton
-              type="button"
-              disabled={!canSubmit || saving}
-              onClick={() => onSubmit()}
-              loadingLabel="Logging…"
-              className="h-8 gap-2 rounded-[4px] px-3.5 text-xs font-semibold"
-            >
-              Log repair
-            </ActionButton>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <RepairCreateDialog
+        open={dialogOpen}
+        onOpenChange={(next) => {
+          setDialogOpen(next);
+          if (!next) setScanPrefill(null);
+        }}
+        prefill={scanPrefill}
+        onCreated={reload}
+      />
 
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
         <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">

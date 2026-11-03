@@ -7,6 +7,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   ArrowLeftRight,
+  BarChart3,
   Boxes,
   Building2,
   CalendarCheck,
@@ -18,6 +19,7 @@ import {
   FileText,
   KeyRound,
   LayoutDashboard,
+  Lightbulb,
   LogOut,
   Menu,
   Package,
@@ -306,6 +308,18 @@ export function PersonnelNavbar({
           description: "Track repair tickets",
           icon: Wrench,
           badge: pendingRepairs,
+        },
+        {
+          label: "Reports",
+          href: "/personnel/reports",
+          description: "Aging, issuance and conditions",
+          icon: BarChart3,
+        },
+        {
+          label: "Recommendations",
+          href: "/personnel/recommendations",
+          description: "Replenishment, disposal and idle advice",
+          icon: Lightbulb,
         },
         {
           label: "Logs",

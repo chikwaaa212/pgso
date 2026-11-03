@@ -118,7 +118,17 @@ Self-registration creates an account in `pending` state. It cannot be used until
 | `active` | Approved and enabled | Yes |
 | `inactive` | Disabled by an administrator | No — sign-out + “inactive” notice |
 
-When an employee is approved for the first time, a blocking **Complete your profile** overlay requires the name parts, employee number, and department before the portal can be used.
+When an employee is approved for the first time, a blocking **Complete your profile** overlay requires the name parts, employee number, position, and department before the portal can be used. Departments are validated against the administrator-managed master data.
+
+### 2.3 Account menu
+
+Every portal exposes the same account menu in the navbar:
+
+- **Edit name** — updates the display name shown across the system.
+- **Change password** — changes the Supabase Auth password without leaving the portal.
+- **Department** — personnel can set or update their assigned department from the navbar.
+
+Profile and display-name edits are recorded through audited server actions.
 
 ---
 
@@ -184,7 +194,8 @@ The personnel portal is the operational core of the system.
   - Remarks.
   - Result: **passed** or **partial**.
 - “Passed” is only allowed when the cumulative received quantity equals the PO quantity for **every** item. A short delivery must be recorded as partial.
-- Generate the **AIR/IAR** from the inspection, or attach an externally prepared one.
+- Generate the **AIR/IAR** from the inspection, or attach an externally prepared one (including a scanned/signed IAR image).
+- Attach up to **5 optional documentary photos** to an inspection. Photos are uploaded immediately to Supabase Storage and stored as `INSPECTION_PHOTO` documents in the Documents hub; Super Admin delivery and inspection views render thumbnails.
 - Inspection detail, printable receipt, and IAR sheet routes.
 - Re-inspection is supported: updating a partial inspection to passed stocks only the remaining quantity.
 
@@ -276,12 +287,20 @@ A single document hub with tabs:
 - Run **Analytics** and **Planning**.
 - See [section 8](#8-ppmp-analytics-and-planning).
 
+#### Reports — `/personnel/reports`
+
+Descriptive-analytics workspace for the records the signed-in personnel can see:
+
+- **Aging & delays** — pending inspections, pending requests, and open repairs split into `0–3`, `4–7`, `8–14`, and `15+` day buckets. A record is *delayed* once it is older than 7 days; the page shows totals, overdue counts, the oldest open record, and a paged, filterable list.
+- **Quarterly issuance** — calendar-quarter (Q1 = Jan–Mar) PAR/ICS summary for a selected year: document counts, PAR/ICS split, quantity, amount, an 8-quarter trend, and top items / by office / by employee breakdowns. Consolidated multi-line documents count once in the summary and per line in the item table.
+- **Asset conditions** — normalized current-condition distribution from the shared asset registry, with the serviceable/unserviceable headline, percentages, and an explicit **Unspecified** bucket for blank or unrecognized values. Condition history is not stored, so this is a distribution, not a trend.
+- **Download XLSX** produces official ExcelJS workbooks with the report period, applied filters, generation timestamp, and threshold assumptions in the header.
+
 #### QR Scanner — `/personnel/scan`
 
-- Scan an asset/stock/request QR code using the device camera.
-- Upload an image of a QR code.
-- Paste QR payload data.
+- Scan an asset/stock/request QR code using the device camera (camera-only; no image upload).
 - Resolve the code to the corresponding asset, stock item, or completed request.
+- Act on a scanned asset without retyping it: **View history**, **Log repair**, and **Request transfer** open the right page with the asset (and current holder) prefilled. Stock tags offer **Request replenishment** instead of repair.
 
 ### 3.3 Super Admin portal
 
@@ -293,10 +312,11 @@ The Super Admin portal mirrors the operational modules for oversight, plus admin
   - Deliveries, inspections, stock, assets, issuances.
   - Pending accounts, requests, repairs, and inspections.
   - Trend and distribution charts.
+- Descriptive-analytics cards for **delayed & aging transactions**, **quarterly issuance**, and **asset conditions**, each linking to `/super-admin/reports`.
 
 #### Operations modules
 
-The Super Admin has the same pages as personnel — Deliveries, Inspections, Stock, Assets, Documents, PAR/ICS, Issues, Requests, Repairs, Logs, Templates, PPMP, QR Scanner — but with **unscoped visibility** across all users.
+The Super Admin has the same pages as personnel — Deliveries, Inspections, Stock, Assets, Documents, PAR/ICS, Issues, Requests, Repairs, Reports, Logs, Templates, PPMP, QR Scanner — but with **unscoped visibility** across all users.
 
 #### Users — `/super-admin/users`
 
@@ -381,6 +401,7 @@ Manage the reference data used throughout the system:
 | `/personnel/ppmp` | PPMP file vault |
 | `/personnel/ppmp/analytics` | PPMP analytics |
 | `/personnel/ppmp/planning` | PPMP planning |
+| `/personnel/reports` | Aging, quarterly issuance, and asset-condition reports |
 | `/personnel/scan` | QR scanner |
 
 ### 4.4 Super Admin routes
@@ -393,12 +414,16 @@ All personnel routes exist under `/super-admin/*` with the same module names, pl
 | `/super-admin/master-data` | Account catalog, units, departments |
 | `/super-admin/transactions` | System-wide transactions |
 | `/super-admin/records` | All records browser |
+| `/super-admin/ppmp/analytics` | PPMP analytics across all accessible files |
+| `/super-admin/ppmp/planning` | PPMP planning across all accessible files |
+| `/super-admin/reports` | System-wide aging, quarterly issuance, and asset-condition reports |
 
 ### 4.5 API routes
 
 | Route | Purpose |
 | --- | --- |
 | `/api/health` | Liveness/health |
+| `/api/public/assets/[id]` | Public, non-sensitive asset/stock tag lookup for the no-login scanner |
 | `/api/personnel/assets/template-xlsx` | Asset import template |
 | `/api/personnel/inspections/[id]/air-xlsx` | Generated AIR workbook |
 | `/api/personnel/issuances/[id]/par-xlsx` | PAR workbook |
@@ -406,6 +431,8 @@ All personnel routes exist under `/super-admin/*` with the same module names, pl
 | `/api/employee/issuances/[id]/par-xlsx` | Employee PAR download |
 | `/api/employee/issuances/[id]/ics-xlsx` | Employee ICS download |
 | `/api/personnel/ppmp/template-xlsx` | PPMP template |
+| `/api/personnel/reports/[report]` | Personnel report workbook (`aging`, `quarterly-issuance`, `asset-conditions`) |
+| `/api/super-admin/reports/[report]` | System-wide report workbook (same report ids) |
 | `/api/super-admin/master-data/catalog-template-xlsx` | Account catalog template |
 
 > API handlers enforce the same session and ownership checks as pages and actions.
@@ -574,6 +601,7 @@ The Documents hub is the filing cabinet. It aggregates records that already exis
 | --- | --- | --- |
 | Delivery receipt | Logging a delivery | Documents → Delivery; delivery detail |
 | Inspection report | Recording an inspection | Documents → Inspection; inspection detail |
+| Inspection documentary photos | Attaching up to 5 photos during inspection | Documents → Inspection; Super Admin delivery/inspection views |
 | AIR / IAR | Generating or attaching from an inspection | Documents → IAR Reports; inspection → IAR |
 | PAR | Issuing an asset/stock above the threshold | Documents → PAR; PAR/ICS list |
 | ICS | Issuing an asset/stock at or below the threshold | Documents → ICS; PAR/ICS list |
@@ -591,13 +619,20 @@ QR codes are generated for:
 - Stock items — resolve to the stock detail page.
 - Completed requests — resolve to the request handover.
 
-The scanner supports three input modes:
+The scanner uses the device camera (it is camera-only — there is no image-upload or paste box). Asset QR tags are resolved through the public lookup endpoint, so the identifying card shows even when signed out.
 
-1. **Camera** — live scan using the device camera.
-2. **Image upload** — decode a photo or screenshot.
-3. **Paste** — paste the QR payload directly.
+**Scan-to-action.** On the personnel and super-admin scanners a resolved asset offers:
 
-The public `/scan` route allows scanning without signing in, but resolution of protected records still requires an authorized session.
+| Scanned item | Actions (staff portals) |
+| --- | --- |
+| Asset | Open asset details · View history · **Log repair** · **Request transfer** |
+| Stock item | Open stock item · **Request replenishment** |
+
+The actions are portal-aware (`src/lib/scan-actions.ts`): super-admin links stay inside `/super-admin/*` because middleware redirects cross-portal paths. Deep links carry `?asset={id}`; the repairs and requests pages resolve the option, open the create dialog with the asset and current holder prefilled, then strip the query string so refresh/back does not re-open it. The public `/scan` route stays read-only — identification only, with a "sign in to act" hint.
+
+The public `/scan` route allows scanning without signing in. It resolves asset and stock tags through the public lookup endpoint, which returns only non-sensitive identification fields — property number, account code, article, description, category, status, condition, location, quantity, unit, and acquisition date. Costs, remarks, supplier details, account numbers, and assignees are never exposed. Protected record details still require an authorized session.
+
+Public tag lookups are cached briefly at the CDN edge (`s-maxage=60`) and can only be fetched by unguessable UUID, so the endpoint cannot be used to enumerate records.
 
 ### 5.8 PPMP upload and analysis
 
@@ -795,6 +830,9 @@ Planning methods:
 | `average` | Uses the historical average as the base case |
 | `trend` | Fits a linear regression over the available years |
 | `growth` | Applies a compounded annual growth percentage from the latest year |
+| `consumption` | Plans from **actual issuance history** (last three fiscal years, matched on normalized description + unit, on-hand stock deducted) |
+
+The planning page always shows a **consumption check** panel comparing each planned quantity with the issuance-history suggestion (under-planned / over-planned / aligned), and labels lines that have no matching history instead of guessing. Recommendations for replenishment, replacement/disposal, idle reassignment, and PPMP quantities are listed in the **Recommendations** workspace on both portals.
 
 Outputs include:
 
@@ -1136,6 +1174,9 @@ npm run build
 | `src/lib/inspection-rules.ts` | `isPassedAllowed`, `remainingOf`, `toCumulative` |
 | `src/lib/issuance-rules.ts` | `ISSUANCE_THRESHOLD`, `resolveDocType`, `issuanceTotal` |
 | `src/lib/stock.ts` | Stocking gate and high-water-mark logic |
+| `src/lib/reporting.ts` | Aging buckets, calendar quarters, condition normalization (pure helpers) |
+| `src/lib/reporting-queries.ts` | Scoped aging / quarterly issuance / asset-condition readers |
+| `src/lib/report-excel.ts` | Official report workbooks (ExcelJS) |
 | `src/lib/ppmp/analytics/*` | Trends, anomalies, forecasts, planning, GPPB table |
 
 ---
@@ -1162,9 +1203,12 @@ Download templates from **Templates** (`/personnel/templates` or `/super-admin/t
 | ICS workbook | `/api/personnel/issuances/[id]/ics-xlsx` |
 | Employee PAR | `/api/employee/issuances/[id]/par-xlsx` |
 | Employee ICS | `/api/employee/issuances/[id]/ics-xlsx` |
+| Aging report | `/api/personnel/reports/aging` or `/api/super-admin/reports/aging` |
+| Quarterly issuance report | `/api/personnel/reports/quarterly-issuance?year=YYYY` or the super-admin equivalent |
+| Asset-condition report | `/api/personnel/reports/asset-conditions` or the super-admin equivalent |
 | PPMP draft | Planning results view |
 
-Generated documents mirror the official government layouts and include the stored issuance snapshot, not live asset values.
+Generated documents mirror the official government layouts and include the stored issuance snapshot, not live asset values. Report workbooks include the report period, applied filters, generation timestamp, and the 7-day delayed threshold in their header block.
 
 ---
 

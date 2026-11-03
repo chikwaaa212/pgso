@@ -58,7 +58,13 @@ export default function SuperAdminDashboardLoading() {
   return (
     <section className={styles.section} aria-busy="true" aria-label="Loading dashboard">
       <p className={styles.crumb}>Dashboard</p>
-      <h1 className={styles.title}>Welcome, MARIO GENTILES</h1>
+      <h1 className={styles.title}>
+        Welcome,{" "}
+        <span
+          aria-hidden="true"
+          className="inline-block h-7 w-56 max-w-full animate-pulse rounded bg-navy-100 align-middle"
+        />
+      </h1>
       <p className={styles.subtitle}>
         Signed in as{" "}
         <span

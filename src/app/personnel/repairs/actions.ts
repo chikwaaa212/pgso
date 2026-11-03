@@ -14,7 +14,7 @@ function revalidatePath(path: string) {
 import { createClient } from '@/lib/supabase/server'
 import prisma from '@/lib/prisma'
 import { writeAuditLog } from '@/lib/audit'
-import { getPersonnelScope } from '@/lib/personnel-scope'
+import { getPersonnelScope, requirePersonnelScope } from '@/lib/personnel-scope'
 import { REPAIR_STATUSES, type RepairStatus } from './repair-types'
 
 export interface RepairRow {
@@ -445,10 +445,13 @@ export async function createRepair(
   }
 
   try {
-    const supabase = await createClient()
-    const {
-      data: { user },
-    } = await supabase.auth.getUser()
+    // Explicit role gate: the dialog is now mounted in the super-admin portal
+    // too, so "signed in" is not enough — only personnel/super admins may log
+    // repairs, and employees must never reach this write.
+    const scope = await requirePersonnelScope()
+    const actorId = scope.userId
+    if (!actorId) return { error: 'You must be signed in to log a repair.' }
+
     const [asset, employee] = await Promise.all([
       prisma.asset.findUnique({ where: { id: assetId }, select: { id: true } }),
       prisma.profile.findUnique({
@@ -458,14 +461,13 @@ export async function createRepair(
     ])
     if (!asset) return { error: 'Selected asset no longer exists.' }
     if (!employee) return { error: 'Selected employee no longer exists.' }
-    if (!user) return { error: 'You must be signed in to log a repair.' }
 
     // Raw insert carries created_by even when the generated client predates migration 16.
     try {
       const { randomUUID } = await import('crypto')
       await prisma.$executeRaw`
         INSERT INTO repairs (id, asset_id, reported_by, repair_date, description, technician, cost, status, created_by)
-        VALUES (${randomUUID()}::uuid, ${assetId}::uuid, ${employeeId}::uuid, ${repairDate}::date, ${description}, ${technician}, ${cost}, 'pending', ${user.id}::uuid)`
+        VALUES (${randomUUID()}::uuid, ${assetId}::uuid, ${employeeId}::uuid, ${repairDate}::date, ${description}, ${technician}, ${cost}, 'pending', ${actorId}::uuid)`
     } catch {
       // Column missing (migration not applied yet) → legacy insert without owner.
       await prisma.repair.create({

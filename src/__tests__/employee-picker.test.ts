@@ -92,9 +92,11 @@ describe("personnel pick-lists: small window + server search (no 500-row slice)"
 });
 
 describe("personnel dialog search wiring", () => {
+  // The repairs dialog was extracted into a shared component so the
+  // super-admin portal can mount it too; the search wiring moved with it.
   for (const [name, file, fn] of [
     ["requests", "../app/personnel/requests/page.tsx", "getRequestFormOptions({"],
-    ["repairs", "../app/personnel/repairs/page.tsx", "getRepairFormOptions({"],
+    ["repairs", "../components/personnel/RepairCreateDialog.tsx", "getRepairFormOptions({"],
   ] as const) {
     const page = src(file);
     it(`${name} dialog has a debounced server search for items`, () => {

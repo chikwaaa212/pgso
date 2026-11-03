@@ -515,115 +515,76 @@ export const getDashboardStats = cache(async function getDashboardStats(
     if (scope.isEmpty || !scope.userId) return zeros
     const all = scope.isSuperAdmin
     const me = scope.userId
-    const myDeliveryFilter = all ? {} : { received_by: me }
-    const myInspectionFilter = all ? {} : { inspector_id: me }
-    const myDeliveriesOrInspected = all
-      ? {}
-      : {
-          OR: [
-            { received_by: me },
-            { inspections: { some: { inspector_id: me } } },
-          ],
-        }
-    const issuanceDocsPromise = (
-      all
-        ? prisma
-            .$queryRaw<Array<{ count: bigint }>>`SELECT COUNT(*)::bigint AS count FROM issuance_records`
-            .then((r) => Number(r[0]?.count ?? 0))
-            .catch(() => 0)
-        : prisma
-            .$queryRaw<Array<{ count: bigint }>>`SELECT COUNT(*)::bigint AS count FROM issuance_records WHERE created_by = ${me}::uuid`
-            .then((r) => Number(r[0]?.count ?? 0))
-            .catch(() => 0)
-    )
-    // Repairs badge matches the repairs page (strict own-data:
-    // created_by = me, no legacy-NULL fallback — see getRepairs v2).
-    // Raw SQL keeps working whether or not the generated client knows the column.
-    const countMyRepairs = async (status: string): Promise<number> => {
-      try {
-        if (all) return await prisma.repair.count({ where: { status } })
-        const rows = await prisma.$queryRaw<Array<{ count: bigint }>>`
-          SELECT COUNT(*)::bigint AS count FROM repairs
-          WHERE status = ${status} AND created_by = ${me}::uuid`
-        return Number(rows[0]?.count ?? 0)
-      } catch {
-        // Column missing (migration not applied yet) → fail closed for
-        // personnel (return 0, never the global queue); super_admin path
-        // above already returned.
-        return 0
-      }
+
+    // One round-trip instead of ~13 parallel/sequential counts. The DB lives
+    // in ap-southeast-1 (~350ms RTT from the app), so every extra query is
+    // hundreds of milliseconds on a cold dashboard. Scalar subqueries keep
+    // the exact same filters as the previous Prisma counts — including the
+    // strict own-data rules and the per-viewer documents subtraction.
+    interface StatsRow {
+      total_deliveries: bigint
+      pending_inspections: bigint
+      completed_inspections: bigint
+      total_items: bigint
+      pending_requests: bigint
+      pending_repairs: bigint
+      total_documents: bigint
     }
-    const countMyCompletedRepairs = () => countMyRepairs('completed')
-    const countMyPendingRepairs = () => countMyRepairs('pending')
-    // Requests badge matches the personnel inbox exactly (strict
-    // recipient_id = me — same filter as getRequests({ forRecipient: true })
-    // behind the requests page). Legacy recipient-less rows are excluded
-    // from both the page and the badge so the count never exceeds what the
-    // login user actually sees. Super admin keeps the global queue count.
-    const myRequestFilter = all
-      ? { status: 'pending' }
-      : { status: 'pending', recipient_id: me }
-    // Two sequential batches (was one 12-way fan-out that tripped the
-    // pooler). issuanceDocs runs concurrently inside the docs batch instead
-    // of as a third serial hop before both batches.
-    const countBatch = async (which: 'core' | 'docs'): Promise<number[]> => {
-      if (which === 'core') {
-        return await Promise.all([
-          prisma.delivery.count({ where: myDeliveryFilter }),
-          prisma.delivery.count({ where: { ...myDeliveryFilter, inspection_status: 'pending' } }),
-          prisma.inspection.count({ where: myInspectionFilter }),
-          prisma.deliveryItem.count({ where: { delivery: myDeliveryFilter } }),
-          prisma.request.count({ where: myRequestFilter }),
-          countMyPendingRepairs(),
-        ])
-      }
-      return await Promise.all([
-        prisma.delivery.count({ where: myDeliveryFilter }),
-        // Stocks + assets are a shared global pool (same as the documents
-        // page, which lists them unfiltered) — the badge stays per-login-user
-        // through the own-data delivery / repair / IAR / issuance counts
-        // below minus this viewer's own views.
-        prisma.inventoryItem.count(),
-        prisma.asset.count(),
-        countMyCompletedRepairs(),
-        prisma.iarRecord.count({ where: { delivery: myDeliveriesOrInspected } }),
-        // Per-viewer unviewed count (raw SQL so no client regen is needed
-        // for viewer_id): one role's views never shrink another's badge.
-        prisma.$queryRaw<Array<{ count: bigint }>>`
-          SELECT COUNT(*)::bigint AS count FROM document_views WHERE viewer_id = ${me}::uuid`
-          .then((r) => Number(r[0]?.count ?? 0))
-          .catch(() => 0),
-        issuanceDocsPromise,
-      ])
-    }
-    const [
-      totalDeliveries,
-      pendingInspections,
-      completedInspections,
-      totalItems,
-      pendingRequests,
-      pendingRepairs,
-    ] = await countBatch('core')
-    const [
-      deliveryDocs = 0,
-      stockDocs = 0,
-      assetDocs = 0,
-      repairDocs = 0,
-      iarDocs = 0,
-      viewedDocs = 0,
-      issuanceDocs = 0,
-    ] = await countBatch('docs')
+    const rows = all
+      ? await prisma.$queryRaw<StatsRow[]>`
+          SELECT
+            (SELECT COUNT(*) FROM deliveries)::bigint AS total_deliveries,
+            (SELECT COUNT(*) FROM deliveries WHERE inspection_status = 'pending')::bigint AS pending_inspections,
+            (SELECT COUNT(*) FROM inspections)::bigint AS completed_inspections,
+            (SELECT COUNT(*) FROM delivery_items)::bigint AS total_items,
+            (SELECT COUNT(*) FROM requests WHERE status = 'pending')::bigint AS pending_requests,
+            (SELECT COUNT(*) FROM repairs WHERE status = 'pending')::bigint AS pending_repairs,
+            (
+              (SELECT COUNT(*) FROM deliveries)
+              + (SELECT COUNT(*) FROM inventory)
+              + (SELECT COUNT(*) FROM assets)
+              + (SELECT COUNT(*) FROM repairs WHERE status = 'completed')
+              + (SELECT COUNT(*) FROM iar_records)
+              + (SELECT COUNT(*) FROM issuance_records)
+              - (SELECT COUNT(*) FROM document_views WHERE viewer_id = ${me}::uuid)
+            )::bigint AS total_documents`
+      : await prisma.$queryRaw<StatsRow[]>`
+          SELECT
+            (SELECT COUNT(*) FROM deliveries WHERE received_by = ${me}::uuid)::bigint AS total_deliveries,
+            (SELECT COUNT(*) FROM deliveries WHERE received_by = ${me}::uuid AND inspection_status = 'pending')::bigint AS pending_inspections,
+            (SELECT COUNT(*) FROM inspections WHERE inspector_id = ${me}::uuid)::bigint AS completed_inspections,
+            (SELECT COUNT(*) FROM delivery_items di JOIN deliveries d ON d.id = di.delivery_id WHERE d.received_by = ${me}::uuid)::bigint AS total_items,
+            (SELECT COUNT(*) FROM requests WHERE status = 'pending' AND recipient_id = ${me}::uuid)::bigint AS pending_requests,
+            (SELECT COUNT(*) FROM repairs WHERE status = 'pending' AND created_by = ${me}::uuid)::bigint AS pending_repairs,
+            (
+              (SELECT COUNT(*) FROM deliveries WHERE received_by = ${me}::uuid)
+              + (SELECT COUNT(*) FROM inventory)
+              + (SELECT COUNT(*) FROM assets)
+              + (SELECT COUNT(*) FROM repairs WHERE status = 'completed' AND created_by = ${me}::uuid)
+              + (
+                  SELECT COUNT(*) FROM iar_records iar
+                  JOIN deliveries d ON d.id = iar.delivery_id
+                  WHERE d.received_by = ${me}::uuid
+                     OR EXISTS (
+                       SELECT 1 FROM inspections i
+                       WHERE i.delivery_id = d.id AND i.inspector_id = ${me}::uuid
+                     )
+                )
+              + (SELECT COUNT(*) FROM issuance_records WHERE created_by = ${me}::uuid)
+              - (SELECT COUNT(*) FROM document_views WHERE viewer_id = ${me}::uuid)
+            )::bigint AS total_documents`
+
+    const r = rows[0]
+    if (!r) return zeros
+    const n = (v: bigint | null | undefined) => Number(v ?? 0)
     return {
-      totalDeliveries,
-      pendingInspections,
-      completedInspections,
-      totalItems,
-      pendingRequests,
-      pendingRepairs,
-      totalDocuments: Math.max(
-        0,
-        deliveryDocs + stockDocs + assetDocs + repairDocs + iarDocs + issuanceDocs - viewedDocs
-      ),
+      totalDeliveries: n(r.total_deliveries),
+      pendingInspections: n(r.pending_inspections),
+      completedInspections: n(r.completed_inspections),
+      totalItems: n(r.total_items),
+      pendingRequests: n(r.pending_requests),
+      pendingRepairs: n(r.pending_repairs),
+      totalDocuments: Math.max(0, n(r.total_documents)),
     }
   } catch (e) {
     console.error('[getDashboardStats]', e)

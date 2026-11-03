@@ -2,6 +2,10 @@
 
 import prisma from '@/lib/prisma'
 import { getPersonnelScope } from '@/lib/personnel-scope'
+import {
+  getAgingReport,
+  getAssetConditionReport,
+} from '@/lib/reporting-queries'
 
 // ─── Extended counts for the full operations overview ───────────────────────
 
@@ -448,6 +452,9 @@ export interface DashboardSnapshot {
   recentRepairs: RecentRepairRow[]
   lowStock: LowStockRow[]
   recentIssuances: RecentIssuanceRow[]
+  aging: import('@/lib/reporting-queries').AgingReport
+  conditions: import('@/lib/reporting-queries').AssetConditionReport
+  recommendationCount: number
 }
 
 /**
@@ -465,6 +472,7 @@ export async function getDashboardSnapshot(): Promise<DashboardSnapshot> {
     // Resolve scope once and thread it — 7 readers sharing one Auth+profile
     // lookup instead of 7 independent getUser+profile chains.
     const { getPersonnelScope } = await import('@/lib/personnel-scope')
+    const { getRecommendationCount } = await import('@/lib/prescriptive-queries')
     const scope = await getPersonnelScope()
     const [
       stats,
@@ -474,6 +482,9 @@ export async function getDashboardSnapshot(): Promise<DashboardSnapshot> {
       recentRepairs,
       lowStock,
       recentIssuances,
+      aging,
+      conditions,
+      recommendationCount,
     ] = await Promise.all([
       getOperationsStats(scope),
       getMonthlyOverview(scope),
@@ -482,6 +493,9 @@ export async function getDashboardSnapshot(): Promise<DashboardSnapshot> {
       getRecentRepairs(5, scope),
       getLowStockItems(5),
       getRecentIssuances(5, scope),
+      getAgingReport({ portal: 'personnel' }),
+      getAssetConditionReport(),
+      getRecommendationCount('personnel'),
     ])
     return {
       stats,
@@ -491,6 +505,9 @@ export async function getDashboardSnapshot(): Promise<DashboardSnapshot> {
       recentRepairs,
       lowStock,
       recentIssuances,
+      aging,
+      conditions,
+      recommendationCount,
     }
   })
 }

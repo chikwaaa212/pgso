@@ -111,33 +111,70 @@ export interface PersonnelScope {
 // Short-lived in-memory role cache (per server instance) so repeated
 // personnel-scope resolutions in one session don't hit the DB every time.
 // React `cache()` already dedupes per-request; this extends to ~60s across requests.
-const roleCache = new Map<string, { role: string | null; status: string | null; expires: number }>()
+const roleCache = new Map<string, CachedProfileEntry>()
 const ROLE_CACHE_TTL_MS = 60_000
 
-async function getCachedProfile(userId: string): Promise<{ role: string | null; status: string | null }> {
+export interface CachedProfileEntry {
+  role: string | null
+  status: string | null
+  full_name: string | null
+  position: string | null
+  office: string | null
+  expires: number
+}
+
+/**
+ * Cached profile row (role/status plus the display fields layouts need).
+ * 60s TTL, busted by `bustRoleCache` on role/status writes and logout — the
+ * same staleness bound middleware already accepts, but it saves a profile
+ * round-trip (~350ms to the remote DB) on every authenticated request.
+ */
+export async function getCachedProfileRow(
+  userId: string
+): Promise<CachedProfileEntry> {
   const now = Date.now()
   const hit = roleCache.get(userId)
   if (hit && hit.expires > now) {
     if (process.env.PERF_TRACE === '1') {
       console.log(`[perf role] getCachedProfile HIT for ${userId.slice(0, 8)}: 0ms`)
     }
-    return { role: hit.role, status: hit.status }
+    return hit
   }
   const t0 = Date.now()
   const { default: prisma } = await import('@/lib/prisma')
   const profile = await prisma.profile.findUnique({
     where: { id: userId },
-    select: { role: true, status: true },
+    select: {
+      role: true,
+      status: true,
+      full_name: true,
+      position: true,
+      office: true,
+    },
   })
   if (process.env.PERF_TRACE === '1') {
     console.log(`[perf role] getCachedProfile MISS (DB): ${Date.now() - t0}ms`)
   }
-  const entry = { role: profile?.role ?? null, status: profile?.status ?? null, expires: now + ROLE_CACHE_TTL_MS }
+  const entry: CachedProfileEntry = {
+    role: profile?.role ?? null,
+    status: profile?.status ?? null,
+    full_name: profile?.full_name ?? null,
+    position: profile?.position ?? null,
+    office: profile?.office ?? null,
+    expires: now + ROLE_CACHE_TTL_MS,
+  }
   roleCache.set(userId, entry)
   // Bound growth: drop expired entries opportunistically.
   if (roleCache.size > 2000) {
     for (const [k, v] of roleCache) if (v.expires <= now) roleCache.delete(k)
   }
+  return entry
+}
+
+async function getCachedProfile(
+  userId: string
+): Promise<{ role: string | null; status: string | null }> {
+  const entry = await getCachedProfileRow(userId)
   return { role: entry.role, status: entry.status }
 }
 

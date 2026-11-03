@@ -13,11 +13,11 @@
 | 1 | Digitize receiving, inspection, inventory, repair monitoring, and document processing | **Fully met** | Complete Delivery → Inspection → IAR → Inventory → Issuance/Document chain exists, including automatic stock-in and generated/exportable forms. |
 | 2 | Manage inventory and asset accountability (assignment, location, condition, maintenance history, responsible personnel) | **Fully met** | Asset records carry all required fields, transfers/assignments update custody, and a per-asset history combines requests, issuances, and repairs. |
 | 3 | Track repair and maintenance activities (history, usability status, damaged assets) | **Fully met (minor caveat)** | Repair tickets, status workflow, technician/cost, receipts, and asset history exist. Usability is represented by `status` + free-text `condition`, not a dedicated controlled field. |
-| 4 | Apply descriptive analytics through dashboards and reports (inventory, low stock, delayed transactions, workflow, repairs, asset conditions, quarterly issuance) | **Partially met** | Dashboards, stock health, workflow counts, repair/asset status, and issuance trends exist. **Delayed/aging transactions**, a **quarterly issuance report**, and an **asset-condition breakdown** are not implemented. |
-| 5 | Implement prescriptive analytics (replenishment, replacement/disposal, reassignment of unused items, PPMP quantity suggestions) | **Partially met** | Rule-based replenishment and PPMP forecasting (low/base/high, budget-ceiling optimization) exist. **Replacement/disposal**, **idle-asset reassignment**, and **issuance-history-driven** quantity suggestions are missing. |
-| 6 | Enhance asset tracking with QR-based identification and scanning | **Partially met** | Asset QR tags (URL payloads), QR display, and a request/issuance QR scanner exist. The in-app scanner cannot resolve **asset** QR tags; there is no scan-to-asset-action workflow. |
+| 4 | Apply descriptive analytics through dashboards and reports (inventory, low stock, delayed transactions, workflow, repairs, asset conditions, quarterly issuance) | **Fully met** | Dashboards, stock health, workflow counts, repair/asset status, issuance trends, **aging/delayed-transaction analytics with a 7-day threshold**, a **calendar-quarter issuance report** (PAR/ICS, item, office, employee), and an **asset-condition breakdown** — on both portals, with official XLSX exports. |
+| 5 | Implement prescriptive analytics (replenishment, replacement/disposal, reassignment of unused items, PPMP quantity suggestions) | **Fully met** | A shared Recommendations workspace on both portals adds evidence-based **replacement/disposal**, **idle-asset reassignment** (180-day available assets + duplicate custody), **replenishment order quantities**, and **issuance-history-driven PPMP quantities** with a planned-vs-suggested variance panel. |
+| 6 | Enhance asset tracking with QR-based identification and scanning | **Fully met** | Asset QR tags resolve in the in-app scanner, and a role-aware scan-to-action row logs a repair, requests a transfer, views custody history, or requests stock replenishment with the asset and current holder prefilled. |
 
-**Overall:** The project **substantially achieves** the objectives. Three objectives are fully satisfied, and three are satisfied in part. Nothing in the six objectives is completely unaddressed. However, the system is best described as **descriptive + rule-based prescriptive decision support**, not a full predictive/prescriptive analytics platform. If the objectives are defended exactly as written, objectives 4, 5, and 6 need either additional features or narrower wording.
+**Overall:** The project **achieves** the objectives. All six objectives are fully satisfied, with one documented caveat (usable status is `status` + free-text `condition`, Objective 3). The system is best described as **descriptive + rule-based prescriptive decision support**, not a predictive ML platform.
 
 ---
 
@@ -100,7 +100,7 @@ The system records the who/what/when/cost/technician of every repair and preserv
 
 ### Objective 4 — Apply descriptive analytics through dashboards and reports
 
-**Verdict: Partially met.**
+**Verdict: Fully met.**
 
 **What is implemented**
 
@@ -110,60 +110,52 @@ The system records the who/what/when/cost/technician of every repair and preserv
 | Available and low-stock supplies | Yes | Low-stock watchlist and “Replenishment needed” alert in `src/app/personnel/dashboard/page.tsx` and `src/app/personnel/inventory/page.tsx` |
 | Workflow status | Yes | Pending inspections, pending requests, active repairs, open documents on the personnel dashboard; request/repair/document status breakdowns in `src/app/super-admin/dashboard/analytics.ts` |
 | Repair records | Yes | Repair counts by status and recent-repairs panels; repair list with filters |
-| Asset conditions | **Partial** | Asset **status** distribution is charted (`assetStatus` in `analytics.ts`) and assets can be filtered by `condition`, but there is no condition distribution/trend report |
-| Delayed transactions | **Partial / not as aging** | Pending queues and an inspection-backlog insight exist, but there is no computation of days pending, SLA breaches, or an aging report |
-| Quarterly supply issuance | **No** | Issuance analytics cover the last 6 months (`monthlyIssuances`) and document type mix. The PPMP “Quarterly schedule” is a **procurement plan** from uploaded PPMP workbooks, not actual supply issuance |
-| Dashboards and charts | Yes | Personnel dashboard stat cards, low-stock table, recent lists, monthly overview chart; Super Admin dashboard stat cards, deliveries-vs-inspections chart, analytics grid (`src/app/super-admin/dashboard/secondary.tsx`, `analytics-charts.tsx`) |
+| Asset conditions | Yes | Condition distribution from the shared registry (`getAssetConditionReport`), normalized with an explicit **Unspecified** bucket; serviceable/unserviceable headline; card on both dashboards and a full `/reports` tab (`src/lib/reporting-queries.ts`, `src/components/reporting/ReportsWorkspace.tsx`) |
+| Delayed transactions | Yes | Aging report (`getAgingReport`) computes age for pending inspections (`deliveries.created_at`), pending requests (`requests.date_requested`), and open repairs (`repairs.created_at`), buckets them `0–3 / 4–7 / 8–14 / 15+`, flags records older than the uniform **7-day** threshold, and pages a filterable list. Counts appear on both dashboards |
+| Quarterly supply issuance | Yes | `getQuarterlyIssuanceReport` groups `issuance_records` by calendar quarter for a selected year with PAR/ICS split, quantity, amount, 8-quarter trend, and top-items / by-office / by-employee breakdowns. Consolidated multi-line documents count once in the summary and per line in the item table |
+| Dashboards and charts | Yes | Personnel dashboard stat cards, low-stock table, recent lists, monthly overview chart, plus aging and condition panels; Super Admin dashboard stat cards, deliveries-vs-inspections chart, and the analytics grid including delayed/aging, quarterly issuance, and condition cards |
+| Reports and exports | Yes | `/personnel/reports` and `/super-admin/reports` provide filterable detail. Official ExcelJS workbooks are generated through `src/lib/report-excel.ts` and downloaded from `/api/{personnel,super-admin}/reports/{aging,quarterly-issuance,asset-conditions}` with period, filters, timestamp, and threshold metadata |
 
 **Explanation**
 
-The descriptive layer is real and reasonably broad. `src/app/super-admin/dashboard/analytics.ts` computes inspection outcomes, request status, repair status, asset status, stock health, issuance-by-type, six-month issuance counts, and document mix, then generates plain-language insights. The personnel dashboard surfaces operational queues and low-stock items.
+The descriptive layer now covers every item named in Objective 4. The personnel and Super Admin dashboards both surface inventory health, low-stock, workflow queues, repairs, asset status and condition, delayed/aging transactions, and quarterly issuance. The `/reports` workspace adds the filterable, exportable detail behind those summaries.
 
-However, three items in the objective are not fully satisfied:
+Scope is enforced consistently with the rest of the system: personnel see only their own deliveries, requests, repairs, and issuances; Super Admin sees system-wide records; the asset-condition pool is the shared registry for both. The safe-degradation path returns empty reports instead of failing when the scope or database is unavailable.
 
-1. **Delayed transactions** — the system shows *how many* items are pending, not *how long* they have been pending. There is no aging bucket, SLA threshold, or “delayed” flag based on elapsed days.
-2. **Quarterly supply issuance** — there is no report grouping `issuance_records` by quarter, item, office, or employee. The only quarterly view is the PPMP planning calendar.
-3. **Asset conditions** — condition is filterable, but not summarized as a distribution or trend. Asset *status* is summarized instead.
-
-**Conclusion:** Objective 4 is met for general descriptive dashboards, but not for the specific “delayed transactions” and “quarterly supply issuance” requirements as worded.
+**Conclusion:** Objective 4 is fully met. Delayed transactions are measured in days with an auditable threshold, quarterly supply issuance is reported by quarter/item/office/employee, and asset conditions are summarized as a distribution with a documented limitation (no condition-history trend because the registry stores only the current condition).
 
 ---
 
 ### Objective 5 — Implement prescriptive analytics
 
-**Verdict: Partially met.**
+**Verdict: Fully met.**
 
 **What is implemented**
 
 | Prescriptive capability | Status | Evidence |
 |---|---|---|
-| Recommend replenishment for low-stock items | Yes | `recommendationFor()` in `src/app/super-admin/inventory/page.tsx` returns “Replenish now / Restock soon / Plan reorder” with reasons; personnel inventory shows a replenishment alert and links to a `stock_replenishment` request (`src/app/personnel/requests/request-types.ts`) |
-| Suggested quantities for PPMP preparation | Yes, but from uploaded PPMP history | `buildPlanningForecasts()`, `projectQtyHistory()`, `buildPpmpDraft()` in `src/lib/ppmp/analytics/planning.ts` produce low/base/high quantities using average, trend/linear regression, or growth; unit-cost escalation and multi-year horizon are applied |
+| Recommend replenishment for low-stock items | Yes | `recommendationFor()` in `src/app/super-admin/inventory/page.tsx` returns “Replenish now / Restock soon / Plan reorder” with reasons; personnel inventory shows a replenishment alert and links to a `stock_replenishment` request (`src/app/personnel/requests/request-types.ts`). The Recommendations workspace adds a **suggested order quantity** derived from average monthly issuance over the consumption window × (lead time + safety days) − on-hand (`src/lib/prescriptive/replenishment.ts`) |
+| Suggested quantities for PPMP preparation | Yes | `buildPlanningForecasts()`, `projectQtyHistory()`, `buildPpmpDraft()` in `src/lib/ppmp/analytics/planning.ts` produce low/base/high quantities using average, trend/linear regression, growth, or **issuance history**; unit-cost escalation and multi-year horizon are applied |
 | Budget-aware selection | Yes | `fitDraftToCeilingGreedy()` and `fitDraftToCeilingLP()` (0/1 knapsack via `javascript-lp-solver`) select/defer PPMP lines under a ceiling |
 | Rule-based recommendations | Yes | `buildRecommendations()` in `src/lib/ppmp/analytics/rules.ts`: multi-year quantity change, above-average quantity, cost jumps, anomalies, low-confidence forecasts, and a `STOCK_COVER` rule using current inventory |
 | Inventory-aware PPMP review | Yes | `src/app/personnel/ppmp/analytics/actions.ts` builds an on-hand map and passes it into `runAnalysis()` |
-| Replacement/disposal of damaged assets | **No** | No rule computes replacement or disposal recommendations from condition, status, repair frequency, or repair cost. `analytics.ts` only emits a generic text insight when `retired` is the top asset status |
-| Re-assignment of items not in use | **No** | No idle/unused detection and no reassignment recommendation. Transfers are user-initiated requests, not system suggestions |
-| Quantities based on inventory **and supply issuance history** | **Partial** | PPMP forecasting uses uploaded PPMP workbooks plus an inventory on-hand snapshot. `issuance_records` is not used to derive consumption or recommended quantities |
+| Replacement/disposal of damaged assets | Yes | `src/lib/prescriptive/replacement.ts` flags **repair-heavy** assets (≥3 repairs in 12 months or repair spend ≥50% of recorded cost), **unserviceable assets with no open repair**, and **retired assets without disposal paperwork**, carrying the rule id, numbers, and record link |
+| Re-assignment of items not in use | Yes | `src/lib/prescriptive/idle.ts` flags available, unassigned assets whose **recorded acquisition date** (proxy — there is no “became available” timestamp) is older than **180 days**, duplicate custody of the same accountable item, and matches idle assets to pending new-assignment requests |
+| Quantities based on inventory **and supply issuance history** | Yes | `src/lib/ppmp/analytics/consumption.ts` aggregates `issuance_records` over the last three fiscal years on the normalized `description|unit` key, deducts on-hand stock, and feeds both the new `consumption` planning method and a planned-vs-suggested variance panel on the PPMP planning page |
 
 **Explanation**
 
-The strongest prescriptive component is the PPMP analytics/planning module. It is deterministic, auditable, and explains its calculations: every forecast row carries a method, assumptions, and evidence; recommendations carry rule IDs and calculation traces. The low-stock recommendations are also genuinely actionable because they link to the replenishment request flow.
+The shared Recommendations workspace (`/personnel/recommendations`, `/super-admin/recommendations`) presents four advisory groups — replenishment, replacement & disposal, idle & reassignment, and PPMP quantity signals — with the rule id, the numbers, and a deep link to the underlying record. Nothing mutates an asset status, disposal record, request, or stock level: the workspace is decision support only. Both dashboards carry a recommendation-count card linking to the page.
 
-The objective is still only partially met because two named prescriptions are absent:
+PPMP planning now offers a `consumption` method that replaces the workbook-based quantity bands with actual issuance usage, and always shows a consumption-check panel comparing planned quantities against the suggested low/base/high range with under/over/aligned labels. Lines without matching history keep their workbook quantity and are explicitly labelled rather than invented.
 
-- **Replacement or disposal of damaged assets.** The data needed exists (`condition`, `status`, repair count, repair cost), but no rule uses it to recommend “repair vs. replace vs. dispose.”
-- **Re-assignment of items not in use.** There is no query for assets marked `available` for a long period, assets assigned to inactive users, or assets with no issuance/repair activity, and no suggestion to transfer them.
-
-In addition, the PPMP quantity suggestions are driven by **uploaded PPMP workbooks and on-hand inventory**, not by the system’s own **supply issuance history**. If the objective specifically requires issuance-history-based quantities, that link is missing.
-
-**Conclusion:** This is rule-based prescriptive analytics for replenishment and PPMP planning, not a complete prescriptive system covering replacement, disposal, and reassignment.
+**Conclusion:** Objective 5 is fully met: replenishment, replacement/disposal, reassignment, and issuance-history-driven PPMP quantity suggestions are implemented, auditable, and advisory-only.
 
 ---
 
 ### Objective 6 — Enhance asset tracking with QR-based identification and scanning
 
-**Verdict: Partially met.**
+**Verdict: Fully met.**
 
 **What is implemented**
 
@@ -172,19 +164,20 @@ In addition, the PPMP quantity suggestions are driven by **uploaded PPMP workboo
 | Unique asset identifier | `Asset.qr_code` is `@unique`; `property_number` is also unique (`prisma/schema.prisma`) |
 | QR generation | `src/lib/qrcode.ts` generates an SVG data URL. Asset tags encode `/personnel/assets/{id}`; stock tags encode `/personnel/assets/stock/{id}` |
 | QR display/printing | QR card in `src/app/personnel/assets/[id]/AssetDetailEditor.tsx`; QR modal in `src/app/super-admin/assets/page.tsx`; QR data URL returned by `getAsset()` / `getUnifiedAssetsPage()` |
-| QR scanner UI | `src/app/personnel/scan/page.tsx` and `src/components/QrScanner.tsx` support camera, image upload, and pasted payloads via `jsQR` |
+| QR scanner UI | `src/app/personnel/scan/page.tsx` and `src/components/QrScanner.tsx` scan live camera frames via `jsQR` (camera-only) |
+| Asset tag resolution | `parseAssetTagRef()` (`src/lib/asset-tag.ts`) recognizes the URL and `PGSO-ASSET` payloads; `resolveScan()` loads the non-sensitive card from `/api/public/assets/[id]` — works signed out too |
+| Scan-to-action | `scanActionsFor()` (`src/lib/scan-actions.ts`) yields portal-aware actions; the asset card links to open, history, log repair, and request transfer, and stock tags link to replenishment |
+| Prefilled actions | `getScannedAssetOption()` (`src/lib/scan-actions-server.ts`, `requirePersonnelScope()`-guarded) resolves the asset outside the 15-row pick-list window; the repairs/requests pages open the create dialog with the asset + current holder prefilled and strip `?asset=` after use |
 | Scannable request/issuance records | `PGSO-REQUEST` and `PGSO-ISSUE` payloads are parsed and displayed with employee, item, quantity, dates, etc. |
 | QR on issued documents | `RequestQrButton` and issue QR records in `src/app/personnel/issues/` |
 
 **Explanation**
 
-Asset identification by QR is implemented: every asset has a unique QR/property number, the system generates a QR image that points to the asset’s live detail page, and the QR is displayed for printing or attachment. Scanning that tag with a phone camera opens the asset page, which shows details and history. The in-app scanner also handles request and issuance QRs.
+Asset identification by QR is implemented end to end: every asset has a unique QR/property number, the system generates a QR image that points to the asset’s live detail page, and the QR is displayed for printing or attachment. The in-app scanner resolves those tags into an identifying card, then offers the next action — log a repair, request a transfer, jump to the custody history, or request replenishment for stock — with the scanned asset and current holder prefilled. The public `/scan` route resolves tags read-only without login, and the super-admin portal has the same actions inside `/super-admin/*` (middleware blocks cross-portal paths).
 
-**Gap**
+**Remaining limitation (not a gap):** scanning is camera-only — there is no image-upload or paste box — and there is no offline/batch queue. Those are future-work conveniences, not requirements of the objective.
 
-The in-app scanner’s `parsePayload()` only recognizes `PGSO-REQUEST` and `PGSO-ISSUE`. It has **no branch for an asset URL or an asset payload**, so scanning a printed asset tag inside the scanner returns the raw URL text instead of resolving the asset. There is also no scan-driven action such as “scan asset → view / assign / log repair,” and no batch or offline scanning. The roadmap in `src/lib/footer-content.ts` explicitly lists “offline-tolerant scanning” as future work.
-
-**Conclusion:** QR-based asset **identification** is achieved; a fully integrated asset **scanning system** is partial.
+**Conclusion:** QR-based asset **identification and scanning** are fully implemented, including a usable scan-to-action workflow on both staff portals.
 
 ---
 
@@ -203,15 +196,17 @@ These do not map to a single objective but strengthen the claim that the project
 
 ## 4. Gaps That Prevent a “Fully Achieved” Rating
 
-| # | Gap | Affected objective | Why it matters |
+None. Every named gap has been implemented.
+
+| # | Former gap | Affected objective | Status |
 |---|---|---|---|
-| 1 | No days-pending / aging / SLA computation for pending deliveries, inspections, requests, or repairs | 4 | “Delayed transactions” cannot be reported; only queue counts exist |
-| 2 | No quarterly supply issuance report (by quarter, item, office, employee) | 4 | The required monitoring/evaluation view is absent; monthly and by-type views exist |
-| 3 | No asset-condition distribution or trend report | 4 | Condition is filterable but not summarized; asset *status* is charted instead |
-| 4 | No replacement/disposal recommendation for damaged or repeatedly repaired assets | 5 | A named prescriptive action is missing |
-| 5 | No idle/unused asset detection or reassignment recommendation | 5 | A named prescriptive action is missing |
-| 6 | PPMP quantities are not derived from `issuance_records` (actual supply issuance history) | 5 | The objective explicitly says “based on inventory and supply issuance history” |
-| 7 | In-app QR scanner does not resolve asset tags/URLs; no scan-to-action flow | 6 | Asset QR works with a phone camera, but the system’s own scanning workflow is incomplete |
+| 1 | In-app QR scanner does not resolve asset tags/URLs; no scan-to-action flow | 6 | **Implemented** — asset/stock tags resolve in the scanner, and scan actions log repairs, request transfers, open history, or request replenishment with the asset prefilled |
+
+> Objective 4’s former gaps — days-pending/aging, the quarterly supply issuance report, and the asset-condition distribution — are now implemented (see Section 3).
+>
+> Objective 5’s former gaps — replacement/disposal recommendations, idle-asset reassignment, and issuance-history-driven PPMP quantities — are now implemented in the shared Recommendations workspace and the `consumption` planning method.
+>
+> Objective 6’s former gap — asset-tag resolution and scan-to-action — is now implemented in `QrScanner`, `scan-actions.ts`, `getScannedAssetOption()`, and the shared repair/transfer dialogs.
 
 ---
 
@@ -219,52 +214,25 @@ These do not map to a single objective but strengthen the claim that the project
 
 Prioritized by effort-to-impact:
 
-1. **Add an aging/delayed-transaction view (Objective 4).**
-   - Compute age from `created_at` / `date_requested` / `date_delivered`.
-   - Bucket into `0–3`, `4–7`, `8–14`, `15+` days.
-   - Expose counts on the dashboard and a filterable list.
-   - Add an “overdue” threshold per workflow.
+> **Objective 4 is now implemented.** The former actions — aging/delayed-transaction view, quarterly supply issuance report, and asset-condition analytics — shipped as `/personnel/reports`, `/super-admin/reports`, dashboard cards, and XLSX exports.
+>
+> **Objective 5 is now implemented.** Replacement/disposal rules, idle-asset reassignment, and issuance-history-driven PPMP quantity suggestions shipped as `/personnel/recommendations`, `/super-admin/recommendations`, dashboard count cards, and the `consumption` plan method.
+>
+> **Objective 6 is now implemented.** Asset and stock tags resolve in the scanner, and scan actions log a repair, request a transfer, open custody history, or request replenishment with the asset + current holder prefilled — on both staff portals.
 
-2. **Add a quarterly supply issuance report (Objective 4).**
-   - Group `issuance_records` by `EXTRACT(quarter FROM created_at)`, year, item, employee/office.
-   - Add quantity and amount totals.
-   - Export to Excel/PDF and link it from Documents or the dashboard.
+No feature work remains for the named objectives. The optional enhancement below is not required by the objective wording.
 
-3. **Add asset-condition analytics (Objective 4).**
-   - Distribution of `condition` (serviceable, unserviceable, etc.) and `status`.
-   - Trend of assets entering `maintenance`/`retired`.
-   - List of damaged assets with age and repair cost.
-
-4. **Add replacement/disposal and reassignment rules (Objective 5).**
-   - Replacement/disposal: combine `condition`/`status`, repair count, cumulative repair cost, and asset age; emit “repair vs. replace vs. dispose” with a calculation trace.
-   - Reassignment: flag assets `available` beyond N days, assigned to inactive users, or with no issuance/repair activity; suggest transfer targets.
-   - Surface these in the existing recommendations panel so they share the advisory, evidence-based format.
-
-5. **Feed issuance history into PPMP suggestions (Objective 5).**
-   - Aggregate `issuance_records` by item/unit/quarter.
-   - Use actual consumption as the baseline for low/base/high quantities, with inventory on-hand as a correction.
-   - Keep uploaded PPMP workbooks as a comparison/validation source rather than the only history.
-
-6. **Extend the QR scanner to asset tags (Objective 6).**
-   - Recognize `/personnel/assets/{id}` URLs and an explicit `PGSO-ASSET` payload.
-   - Resolve the asset and show details, condition, holder, and history.
-   - Add actions: view asset, log repair, request transfer.
-   - Optional: offline queue and batch scan.
-
-7. **Introduce a controlled usability field (Objective 3, optional).**
+1. **Introduce a controlled usability field (Objective 3, optional).**
    - Add `usability_status` (`serviceable`, `repairable`, `unserviceable`, `for_disposal`) to make reporting and prescriptive rules deterministic.
 
 ---
 
-## 6. Suggested Objective Wording (If Features Are Not Added)
+## 6. Suggested Objective Wording (Optional)
 
-If the project will be defended without the gaps above, the objectives should be worded to match what is actually built:
+The objectives are met as written. If narrower wording is preferred for a defense, the following still describes the implementation accurately:
 
 - **Objective 4:** “…dashboards and reports that show inventory status, available and low-stock supplies, **pending workflow queues**, repair records, asset status, and **monthly issuance trends** for monitoring and evaluation.”
-- **Objective 5:** “Implement **rule-based prescriptive analytics** to recommend replenishment for low-stock items and to **forecast low/base/high quantities for annual PPMP preparation** using uploaded PPMP history and current inventory, with budget-ceiling optimization.”
-- **Objective 6:** “Enhance asset tracking by using **QR-coded asset tags that link to live asset pages**, together with a QR scanner for request and issuance records.”
-
-If the original wording must remain, implement gaps 1–6 first.
+- **Objective 6:** “Enhance asset tracking by using **QR-coded asset tags that link to live asset pages**, together with a QR scanner that resolves tags and offers repair, transfer, and replenishment actions.”
 
 ---
 
@@ -276,8 +244,8 @@ Use these paths to demonstrate each claim:
 2. **Accountability:** Employee → Requests → new assignment → Personnel approves/issuances → Asset detail shows `assigned_to`, `end_user`, location, and history.
 3. **Repairs:** Personnel → Repairs → create ticket → start → complete with technician and cost → asset history and receipt reflect it.
 4. **Descriptive analytics:** Personnel → Dashboard (queues, low stock, recent activity); Super Admin → Dashboard (status charts and insights).
-5. **Prescriptive analytics:** Super Admin → Inventory (replenishment recommendation); Personnel → PPMP → Analytics (recommendations) → Planning (low/base/high, quarterly split, ceiling fit).
-6. **QR:** Personnel → Assets → open an asset → QR card; scan with a phone camera to open the live page. Personnel → QR Scanner → scan a request/issuance QR.
+5. **Prescriptive analytics:** Personnel → Recommendations and Super Admin → Recommendations (replenishment, replacement/disposal, idle/reassignment, PPMP quantity signals with evidence and deep links); both dashboards show a recommendation-count card. Personnel → PPMP → Planning → choose the “Issuance history” method and review the consumption-check panel (planned vs. suggested range).
+6. **QR:** Personnel → Assets → open an asset → QR card; scan with a phone camera to open the live page. Personnel/Super Admin → QR Scanner → scan an asset tag → use **Log repair** or **Request transfer** (asset + holder prefilled), or scan a stock tag → **Request replenishment**. Public `/scan` shows identification only. Scan a request/issuance QR to see its details.
 
 ---
 
@@ -285,12 +253,12 @@ Use these paths to demonstrate each claim:
 
 The project **achieves the core operational objectives** — digitized receiving, inspection, inventory, repairs, documents, asset accountability, repair history, and QR-based asset identification. It also has a credible descriptive dashboard layer and a rule-based PPMP prescriptive module.
 
-It does **not yet fully achieve** the objectives as literally written because:
+It **fully achieves Objectives 1–6** as written, with one minor caveat on Objective 3 (`usability` is represented by `status` + free-text `condition` rather than a controlled field).
 
-- “Delayed transactions” and “quarterly supply issuance” are not reported.
-- Asset-condition analytics is only a filter, not a report.
-- Replacement/disposal and idle-asset reassignment prescriptions are missing.
-- PPMP quantities are not based on the system’s own issuance history.
-- The in-app QR scanner does not resolve asset tags.
+> Objective 4 is met: delayed transactions are reported with aging buckets and a 7-day threshold, quarterly supply issuance is reported by quarter/item/office/employee, and asset conditions are summarized as a distribution on both dashboards and in `/reports`.
+>
+> Objective 5 is met: replacement/disposal, idle-asset reassignment, replenishment quantities, and issuance-history-driven PPMP quantities ship in `/recommendations` and the `consumption` planning method.
+>
+> Objective 6 is met: asset/stock tags resolve in the scanner and offer prefilled repair, transfer, history, and replenishment actions on both staff portals.
 
-**Recommended position:** Present the project as having **fully met Objectives 1–3** and **partially met Objectives 4–6**, with the remaining items documented as limitations/future work. If the panel requires all six as stated, implement the seven actions in Section 5 before final defense.
+**Recommended position:** Present the project as having **fully met Objectives 1–6**, noting the controlled-usability caveat as an optional enhancement and camera-only scanning as a future-work convenience.

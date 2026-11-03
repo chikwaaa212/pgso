@@ -1,10 +1,13 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { Suspense, useCallback, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { ActionButton } from "@/components/ui/action-button";
+import { ScanTransferDialog } from "@/components/personnel/ScanTransferDialog";
+import { useScanPrefill } from "@/hooks/use-scan-prefill";
+import type { ScannedAssetPrefill } from "@/lib/scan-actions";
 import {
   Dialog,
   DialogContent,
@@ -37,6 +40,14 @@ import styles from "./page.module.css";
 type AdminStatus = "approved" | "rejected" | "completed";
 
 export default function SuperAdminRequestsPage() {
+  return (
+    <Suspense fallback={<RequestsLoading />}>
+      <SuperAdminRequestsContent />
+    </Suspense>
+  );
+}
+
+function SuperAdminRequestsContent() {
   // Server-paged window (PAGE_SIZE = 15): the DB returns only the window +
   // exact total per filter set (30s, busted by request writes).
   const [query, setQuery] = useState("");
@@ -60,6 +71,19 @@ export default function SuperAdminRequestsPage() {
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState("");
+
+  // Scan deep link (`?asset=…&scan=transfer|replenish`) — super admins cannot
+  // open /personnel/requests, so the compact scan dialog lives here too.
+  const [scanPrefill, setScanPrefill] = useState<ScannedAssetPrefill | null>(null);
+  const [scanIntent, setScanIntent] = useState<string | null>(null);
+  const [scanOpen, setScanOpen] = useState(false);
+  useScanPrefill(
+    useCallback((prefill: ScannedAssetPrefill, scan: string | null) => {
+      setScanPrefill(prefill);
+      setScanIntent(scan);
+      setScanOpen(true);
+    }, [])
+  );
 
   // Decisions bust the server caches — refresh() refetches silently with
   // rows kept visible (no skeleton flash).
@@ -276,6 +300,19 @@ export default function SuperAdminRequestsPage() {
           />
         ) : null}
       </Card>
+
+      {scanOpen && scanPrefill ? (
+        <ScanTransferDialog
+          open={scanOpen}
+          onOpenChange={(next) => {
+            setScanOpen(next);
+            if (!next) setScanPrefill(null);
+          }}
+          prefill={scanPrefill}
+          scan={scanIntent}
+          onCreated={reload}
+        />
+      ) : null}
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="sm:max-w-lg">

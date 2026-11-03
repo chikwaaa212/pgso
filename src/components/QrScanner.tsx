@@ -1,19 +1,18 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { usePathname } from "next/navigation";
 import jsQR from "jsqr";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { requestTypeLabel } from "@/app/personnel/requests/request-types";
 import {
-  assetTagHref,
   parseAssetTagRef,
   type AssetTagRef,
   type PublicAssetTag,
 } from "@/lib/asset-tag";
+import { scanActionsFor, type ScanPortal } from "@/lib/scan-actions";
 import {
   CLIENT_CACHE_KEYS,
   getClientCache,
@@ -157,7 +156,7 @@ async function resolveScan(text: string): Promise<ScanResult> {
   }
 }
 
-/** Shared camera / upload / paste QR scanner for personnel and admin. */
+/** Shared camera-only QR scanner for personnel and admin. */
 export function QrScanner({
   crumb,
   title,
@@ -178,11 +177,15 @@ export function QrScanner({
   const rafRef = useRef<number>(0);
   const [scanning, setScanning] = useState(false);
   const [camError, setCamError] = useState("");
-  const [pasted, setPasted] = useState("");
   const [result, setResult] = useState<ScanResult | null>(null);
   const [notice, setNotice] = useState("");
   const pathname = usePathname();
   const superAdmin = pathname?.startsWith("/super-admin") ?? false;
+  const portal: ScanPortal = superAdmin
+    ? "super-admin"
+    : pathname?.startsWith("/personnel")
+      ? "personnel"
+      : "public";
 
   // Request/issue payloads decode instantly; asset tags need a public lookup,
   // so show the card only when the result (or failure) is ready.
@@ -204,7 +207,6 @@ export function QrScanner({
         CLIENT_CACHE_KEYS.scan
       );
       if (hit) {
-        // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional post-hydration restore of cached scan
         setResult(hit.data.result);
         setNotice(hit.data.notice);
       }
@@ -281,38 +283,6 @@ export function QrScanner({
     }
   }
 
-  function decodeFile(file: File) {
-    setNotice("");
-    const url = URL.createObjectURL(file);
-    const img = new Image();
-    img.onload = () => {
-      try {
-        const canvas = canvasRef.current;
-        if (!canvas) return;
-        const scale = Math.min(1, 1200 / Math.max(img.naturalWidth, img.naturalHeight));
-        canvas.width = Math.floor(img.naturalWidth * scale);
-        canvas.height = Math.floor(img.naturalHeight * scale);
-        const ctx = canvas.getContext("2d");
-        if (!ctx) return;
-        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-        const data = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const code = jsQR(data.data, data.width, data.height);
-        if (code?.data) {
-          handleDecoded(code.data, `Decoded from ${file.name}.`);
-        } else {
-          setNotice("No QR code found in that image.");
-        }
-      } finally {
-        URL.revokeObjectURL(url);
-      }
-    };
-    img.onerror = () => {
-      URL.revokeObjectURL(url);
-      setNotice("Could not read that image file.");
-    };
-    img.src = url;
-  }
-
   // Centered pages constrain panels to a readable column and center
   // the header, titles, and buttons; the default stays left-aligned.
   const panelClass = center
@@ -368,51 +338,6 @@ export function QrScanner({
           style={{ display: scanning ? "block" : "none" }}
         />
         <canvas ref={canvasRef} className="hidden" aria-hidden="true" />
-      </Card>
-
-      <Card className={panelClass}>
-        <h2 className={titleClass}>Upload image</h2>
-        <p className={subClass}>Decode a saved QR photo or screenshot.</p>
-        <Input
-          type="file"
-          accept="image/*"
-          aria-label="Upload QR image"
-          onChange={(e) => {
-            const f = e.target.files?.[0];
-            if (f) decodeFile(f);
-            e.target.value = "";
-          }}
-        />
-      </Card>
-
-      <Card className={panelClass}>
-        <h2 className={titleClass}>Paste QR data</h2>
-        <p className={subClass}>Paste copied QR data to view it.</p>
-        <div className="grid gap-2">
-          <Label htmlFor="qr-paste" className="sr-only">
-            QR data
-          </Label>
-          <textarea
-            id="qr-paste"
-            value={pasted}
-            onChange={(e) => setPasted(e.target.value)}
-            rows={3}
-            placeholder='e.g. {"v":1,"kind":"PGSO-REQUEST",…}'
-            className="border-input placeholder:text-muted-foreground flex w-full rounded-md border bg-transparent px-3 py-2 font-mono text-xs shadow-xs outline-none"
-          />
-          <div className={center ? "flex justify-center" : undefined}>
-            <Button
-              type="button"
-              variant="outline"
-              disabled={pasted.trim() === ""}
-              onClick={() => {
-                handleDecoded(pasted, "");
-              }}
-            >
-              Decode pasted data
-            </Button>
-          </div>
-        </div>
       </Card>
 
       {notice ? <p className={subClass}>{notice}</p> : null}
@@ -503,15 +428,27 @@ export function QrScanner({
                     </tbody>
                   </table>
                 </div>
-                <p className={`${subClass} mt-2`}>
-                  <a
-                    href={assetTagHref(result.ref, superAdmin)}
-                    className="font-medium underline underline-offset-2"
-                  >
-                    Open full asset details
-                  </a>{" "}
-                  — sign in to view history and complete records.
-                </p>
+                <div className={`${subClass} mt-3 flex flex-wrap items-center gap-2`}>
+                  {scanActionsFor(result.ref, portal).map((action) => (
+                    <Link
+                      key={action.id}
+                      href={action.href}
+                      className={
+                        action.kind === "primary"
+                          ? "inline-flex items-center justify-center rounded-full bg-navy-900 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-navy-800"
+                          : "inline-flex items-center justify-center rounded-full border border-navy-200 px-3 py-1.5 text-xs font-semibold text-navy-800 transition-colors hover:bg-navy-50"
+                      }
+                    >
+                      {action.label}
+                    </Link>
+                  ))}
+                </div>
+                {portal === "public" ? (
+                  <p className={`${subClass} mt-2`}>
+                    Sign in to log a repair, request a transfer, or view the
+                    full custody history.
+                  </p>
+                ) : null}
               </>
             ) : (
               <p className={subClass}>

@@ -363,18 +363,20 @@ export async function bustPersonnelScopes(
     | 'issues'
     | 'logs'
     | 'sidebar'
+    | 'recommendations'
   >
 ): Promise<void> {
   const map: Record<string, string[]> = {
     dashboard: ['personnel:dashboard', 'personnel:ops-stats', 'personnel:monthly'],
-    deliveries: ['personnel:deliveries', 'personnel:delivery-', 'super-admin:deliveries-page'],
-    inspections: ['personnel:inspection', 'personnel:iar-', 'personnel:monthly', 'super-admin:inspections-page'],
-    inventory: ['inventory:', 'personnel:inventory', 'personnel:low-stock'],
-    assets: ['assets:', 'personnel:asset', 'personnel:unified'],
+    deliveries: ['personnel:deliveries', 'personnel:delivery-', 'personnel:reports', 'super-admin:deliveries-page'],
+    inspections: ['personnel:inspection', 'personnel:iar-', 'personnel:monthly', 'personnel:reports', 'super-admin:inspections-page'],
+    inventory: ['inventory:', 'personnel:inventory', 'personnel:low-stock', 'personnel:recommendations', 'personnel:consumption'],
+    assets: ['assets:', 'personnel:asset', 'personnel:unified', 'personnel:reports', 'personnel:recommendations'],
     documents: ['personnel:delivery-documents', 'personnel:iar-reports', 'personnel:viewed-doc'],
-    issuances: ['personnel:issuance', 'personnel:public-issues', 'super-admin:issuances-page'],
-    requests: ['personnel:request', 'super-admin:requests-page'],
-    repairs: ['personnel:repair'],
+    issuances: ['personnel:issuance', 'personnel:public-issues', 'personnel:reports', 'super-admin:issuances-page', 'personnel:recommendations', 'personnel:consumption'],
+    requests: ['personnel:request', 'personnel:reports', 'super-admin:requests-page', 'personnel:recommendations'],
+    repairs: ['personnel:repair', 'personnel:reports', 'personnel:recommendations'],
+    recommendations: ['personnel:recommendations', 'personnel:consumption'],
     issues: ['personnel:public-issues', 'personnel:completed-request'],
     logs: ['personnel:my-logs', 'personnel:logs'],
     sidebar: ['personnel:sidebar-user', 'personnel:dashboard-stats'],
@@ -408,6 +410,8 @@ export async function bustSuperAdminScopes(
       'super-admin:requests-list',
       'super-admin:overview',
       'personnel:request',
+      'personnel:reports',
+      'personnel:recommendations',
       'personnel:dashboard-stats',
     ],
     inventory: [
@@ -418,6 +422,9 @@ export async function bustSuperAdminScopes(
       'inventory:',
       'personnel:inventory',
       'personnel:low-stock',
+      'personnel:reports',
+      'personnel:recommendations',
+      'personnel:consumption',
       'personnel:dashboard',
     ],
     'master-data': [

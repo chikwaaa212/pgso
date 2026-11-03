@@ -20,6 +20,8 @@ import { FilePicker, MAX_SELECT } from "../analytics/file-picker";
 import { ValidationPreview } from "../analytics/validation-preview";
 import { PlanningView } from "./planning-view";
 import { getPlanningItems, type PlanningItem } from "./actions";
+import { fetchIssuanceConsumption } from "@/lib/prescriptive-actions";
+import type { ConsumptionResult } from "@/lib/ppmp/analytics/consumption";
 import type { PlanningMethod } from "@/lib/ppmp/analytics/planning";
 import { cn } from "@/lib/utils";
 
@@ -50,6 +52,8 @@ export default function PpmpPlanningPage() {
   const [result, setResult] = useState<SessionResult | null>(null);
   const [items, setItems] = useState<PlanningItem[] | null>(null);
   const [itemsNote, setItemsNote] = useState("");
+  const [consumption, setConsumption] = useState<ConsumptionResult | null>(null);
+  const [consumptionNote, setConsumptionNote] = useState("");
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const { toast } = useToast();
 
@@ -140,6 +144,8 @@ export default function PpmpPlanningPage() {
     setResult(null);
     setItems(null);
     setItemsNote("");
+    setConsumption(null);
+    setConsumptionNote("");
     setRunning(true);
     setStage(STAGE_LABEL.queued);
     try {
@@ -181,6 +187,21 @@ export default function PpmpPlanningPage() {
                 );
               }
             });
+            // Issuance history (Objective 5): powers the consumption method and
+            // the consumption-check panel. Failure never blocks the draft.
+            void fetchIssuanceConsumption()
+              .then((res) => {
+                setConsumption(res);
+                setConsumptionNote(
+                  res.suggestions.length > 0
+                    ? `Issuance history: ${res.suggestions.length} item(s) with usage across FY ${res.years.join(", ")}.`
+                    : "No issuance history matched the last three fiscal years."
+                );
+              })
+              .catch(() => {
+                setConsumption(null);
+                setConsumptionNote("Issuance history unavailable — consumption suggestions are off.");
+              });
             toast({ title: "Planning draft ready", variant: "success" });
           }
           setRunning(false);
@@ -243,6 +264,7 @@ export default function PpmpPlanningPage() {
               <option value="average">Average / carryover</option>
               <option value="trend">Trend (statistical where available)</option>
               <option value="growth">Growth rate</option>
+              <option value="consumption">Issuance history (actual usage)</option>
             </select>
           </div>
           <div className="grid gap-1.5">
@@ -318,11 +340,13 @@ export default function PpmpPlanningPage() {
           <p className="mt-1 text-sm text-zinc-600">
             Upload clean spreadsheet PDFs where possible. Run one category at a time for large histories. Have budget and procurement staff check this output before submission.
             {itemsNote ? ` ${itemsNote}` : ""}
+            {consumptionNote ? ` ${consumptionNote}` : ""}
           </p>
           <div className="mt-3">
             <PlanningView
               result={result}
               items={items}
+              consumption={consumption}
               agency={agency.trim() || "General"}
               targetYear={Number.isInteger(targetYearNum) && targetYearNum >= 1990 && targetYearNum <= 2100 ? targetYearNum : null}
               ceilingPesos={ceilingNum !== null && Number.isFinite(ceilingNum) && ceilingNum >= 0 ? ceilingNum : null}

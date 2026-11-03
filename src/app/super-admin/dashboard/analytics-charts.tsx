@@ -19,6 +19,7 @@ import {
   YAxis,
 } from "recharts";
 import { Card } from "@/components/ui/card";
+import Link from "next/link";
 import {
   ChartContainer,
   ChartLegend,
@@ -61,11 +62,26 @@ function cardStyle(): React.CSSProperties {
   return { padding: "1.25rem", display: "flex", flexDirection: "column", gap: "0.75rem" };
 }
 
-function CardHead({ title, sub }: { title: string; sub: string }) {
+function CardHead({ title, sub, href }: { title: string; sub: string; href?: string }) {
   return (
     <div>
       <h3 style={{ fontSize: "1rem", fontWeight: 700, margin: 0 }}>{title}</h3>
       <p style={{ fontSize: "0.8125rem", color: "var(--color-navy-500)", margin: "0.25rem 0 0" }}>{sub}</p>
+      {href ? (
+        <Link
+          href={href}
+          style={{
+            display: "inline-block",
+            marginTop: "0.35rem",
+            fontSize: "0.8125rem",
+            fontWeight: 600,
+            color: "var(--color-navy-700)",
+            textDecoration: "underline",
+          }}
+        >
+          View full report →
+        </Link>
+      ) : null}
     </div>
   );
 }
@@ -129,10 +145,11 @@ type CardProps = {
   sub: string;
   data: Slice[];
   insight: string;
+  href?: string;
 };
 
 /** Horizontal bars — best for a handful of named outcomes. */
-export function HBarCard({ title, sub, data, insight }: CardProps) {
+export function HBarCard({ title, sub, data, insight, href }: CardProps) {
   const rows = data.map((s, i) => ({ name: label(s.name), value: s.value, fill: colorFor(s.name, i) }));
   const config: ChartConfig = {
     value: { label: "Count", color: "#243b66" },
@@ -140,7 +157,7 @@ export function HBarCard({ title, sub, data, insight }: CardProps) {
 
   return (
     <Card style={cardStyle()}>
-      <CardHead title={title} sub={sub} />
+      <CardHead title={title} sub={sub} href={href} />
       {rows.length === 0 || totalOf(data) === 0 ? (
         <EmptyNote />
       ) : (
@@ -166,7 +183,7 @@ export function HBarCard({ title, sub, data, insight }: CardProps) {
 }
 
 /** Vertical columns — best for comparing a few buckets side by side. */
-export function ColumnCard({ title, sub, data, insight }: CardProps) {
+export function ColumnCard({ title, sub, data, insight, href }: CardProps) {
   const rows = data.map((s, i) => ({ name: label(s.name), value: s.value, fill: colorFor(s.name, i) }));
   const config: ChartConfig = {
     value: { label: "Count", color: "#243b66" },
@@ -174,7 +191,7 @@ export function ColumnCard({ title, sub, data, insight }: CardProps) {
 
   return (
     <Card style={cardStyle()}>
-      <CardHead title={title} sub={sub} />
+      <CardHead title={title} sub={sub} href={href} />
       {rows.length === 0 || totalOf(data) === 0 ? (
         <EmptyNote />
       ) : (
@@ -200,7 +217,7 @@ export function ColumnCard({ title, sub, data, insight }: CardProps) {
 }
 
 /** The single donut — kept for the request mix, the key decision queue. */
-export function DonutCard({ title, sub, data, insight }: CardProps) {
+export function DonutCard({ title, sub, data, insight, href }: CardProps) {
   const total = totalOf(data);
   const config: ChartConfig = Object.fromEntries(
     data.map((s, i) => [s.name, { label: label(s.name), color: colorFor(s.name, i) }])
@@ -208,7 +225,7 @@ export function DonutCard({ title, sub, data, insight }: CardProps) {
 
   return (
     <Card style={cardStyle()}>
-      <CardHead title={title} sub={sub} />
+      <CardHead title={title} sub={sub} href={href} />
       {total === 0 ? (
         <EmptyNote />
       ) : (
@@ -444,6 +461,27 @@ export function AnalyticsGrid({ data, gridClass }: { data: Analytics; gridClass:
           sub="Generated RIS, PAR, ICS, AIR and others"
           data={data.documentsByType}
           insight={data.insights.documents}
+        />
+        <HBarCard
+          title="Delayed & aging transactions"
+          sub="Open records past the 7-day threshold, by workflow"
+          data={data.agingByModule}
+          insight={data.insights.aging}
+          href="/super-admin/reports"
+        />
+        <ColumnCard
+          title="Quarterly issuance"
+          sub="PAR / ICS documents issued per calendar quarter — last 8 quarters"
+          data={data.quarterlyIssuance}
+          insight={data.insights.quarterly}
+          href="/super-admin/reports"
+        />
+        <DonutCard
+          title="Asset conditions"
+          sub="Registered assets by current condition"
+          data={data.assetConditions}
+          insight={data.insights.conditions}
+          href="/super-admin/reports"
         />
       </div>
     </div>

@@ -5,6 +5,7 @@ import { getSuperAdminSession } from '@/lib/auth-guard'
 import { Card } from '@/components/ui/card'
 import { AddPersonnelForm } from './add-personnel-form'
 import { getSuperAdminOverview } from './stats'
+import { getRecommendationCount } from '@/lib/prescriptive-queries'
 import { DashboardAnalytics, DashboardMonthly } from './secondary'
 import styles from './page.module.css'
 
@@ -53,7 +54,10 @@ export default async function SuperAdminDashboard() {
   // reuses the memoized layout guard (no extra Auth round-trip).
   const session = await getSuperAdminSession()
   const userEmail = session?.email ?? null
+  const displayName =
+    session?.profile.full_name?.trim() || userEmail || 'Administrator'
   const overview = await getSuperAdminOverview()
+  const recommendationCount = await getRecommendationCount('super-admin')
   const { ops } = overview
   const activeRepairs = ops.pendingRepairs + ops.inProgressRepairs
   const lowTotal = ops.lowStockCount + ops.outOfStockCount
@@ -66,6 +70,7 @@ export default async function SuperAdminDashboard() {
     { label: 'Pending requests', value: ops.pendingRequests, delta: 'awaiting decision', href: '/super-admin/transactions' },
     { label: 'Active repairs', value: activeRepairs, delta: `${ops.pendingRepairs} pending · ${ops.inProgressRepairs} in progress`, href: '/super-admin/transactions' },
     { label: 'Assets tracked', value: ops.totalAssets, delta: `${ops.totalStockSkus} stock SKUs`, href: '/super-admin/records' },
+    { label: 'Recommendations', value: recommendationCount, delta: recommendationCount === 0 ? 'no action flagged' : 'replenishment, disposal, idle', href: '/super-admin/recommendations' },
     { label: 'Low / out of stock', value: lowTotal, delta: lowTotal === 0 ? 'levels healthy' : `${ops.outOfStockCount} out · ${ops.lowStockCount} low`, href: '/super-admin/records' },
     { label: 'PAR / ICS issued', value: ops.totalIssuances, delta: 'accountability docs', href: '/super-admin/transactions' },
     { label: 'Open documents', value: ops.totalDocuments, delta: 'unviewed', href: '/super-admin/records' },
@@ -76,7 +81,7 @@ export default async function SuperAdminDashboard() {
   return (
     <section className={styles.section}>
       <p className={styles.crumb}>Dashboard</p>
-      <h1 className={styles.title}>Welcome, MARIO GENTILES</h1>
+      <h1 className={styles.title}>Welcome, {displayName}</h1>
       <p className={styles.subtitle}>
         Signed in as {userEmail} · system-wide oversight at a glance.
       </p>

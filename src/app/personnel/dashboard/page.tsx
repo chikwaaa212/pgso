@@ -112,6 +112,9 @@ export default function PersonnelDashboard() {
     recentRepairs,
     lowStock,
     recentIssuances,
+    aging,
+    conditions,
+    recommendationCount,
   } = snapshot;
 
   const lowTotal = stats.lowStockCount + stats.outOfStockCount;
@@ -160,6 +163,15 @@ export default function PersonnelDashboard() {
       value: stats.totalAssets.toLocaleString("en-PH"),
       delta: `${stats.totalItems.toLocaleString("en-PH")} items logged`,
       href: "/personnel/assets",
+    },
+    {
+      label: "Recommendations",
+      value: recommendationCount.toLocaleString("en-PH"),
+      delta:
+        recommendationCount === 0
+          ? "No action flagged"
+          : "Replenishment, replacement, idle",
+      href: "/personnel/recommendations",
     },
     {
       label: "PAR / ICS Issued",
@@ -413,6 +425,84 @@ export default function PersonnelDashboard() {
 
       {/* Chart — passes real data down to client component */}
       <OverviewChart data={monthly} />
+
+      {/* Reports summary — Objective 4 descriptive analytics */}
+      <div className={styles.twoCol}>
+        <Card className={styles.panel}>
+          <h2 className={styles.panelTitle}>Aging &amp; delays</h2>
+          <p className={styles.panelSub}>
+            Open records older than {aging.thresholdDays} days are delayed.
+          </p>
+          <ul className={styles.list}>
+            {aging.summaries.map((summary) => (
+              <li key={summary.module} className={styles.listItem}>
+                <div>
+                  <p className={styles.listMain}>
+                    {summary.label}{" "}
+                    {summary.delayed > 0 && (
+                      <span className={styles.status} data-tone="bad">
+                        {summary.delayed} delayed
+                      </span>
+                    )}
+                  </p>
+                  <p className={styles.listSub}>
+                    {summary.total} open · oldest {summary.oldestDays} day
+                    {summary.oldestDays === 1 ? "" : "s"}
+                  </p>
+                </div>
+                <Link
+                  href={summary.href}
+                  className={styles.inspectLinkSecondary}
+                >
+                  Open
+                </Link>
+              </li>
+            ))}
+          </ul>
+          <div className={styles.panelFooter}>
+            <Link href="/personnel/reports" className={styles.inspectLink}>
+              View full reports
+            </Link>
+          </div>
+        </Card>
+
+        <Card className={styles.panel}>
+          <h2 className={styles.panelTitle}>Asset conditions</h2>
+          <p className={styles.panelSub}>
+            {conditions.serviceablePct}% serviceable across{" "}
+            {conditions.total} registered assets.
+          </p>
+          {conditions.rows.length === 0 ? (
+            <p className={styles.panelSub}>No assets registered yet.</p>
+          ) : (
+            <div className={styles.tableWrap}>
+              <table className={styles.table}>
+                <thead>
+                  <tr>
+                    <th>Condition</th>
+                    <th>Assets</th>
+                    <th>Share</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {conditions.rows.slice(0, 5).map((row) => (
+                    <tr key={row.condition}>
+                      <td>{row.label}</td>
+                      <td>{row.count.toLocaleString("en-PH")}</td>
+                      <td>{row.pct}%</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          <div className={styles.panelFooter}>
+            <Link href="/personnel/reports" className={styles.inspectLink}>
+              Condition report
+            </Link>
+          </div>
+        </Card>
+      </div>
 
       {/* Requests + repairs */}
       <div className={styles.twoCol}>

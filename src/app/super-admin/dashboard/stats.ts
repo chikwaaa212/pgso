@@ -66,62 +66,69 @@ export async function getSuperAdminOverview(): Promise<SuperOverview> {
     // getDashboardStats is per-request memoized and shared with the layout,
     // so the six overlapping global counts run once (was a second full
     // getOperationsStats fan-out on top of the layout's queries).
-    const [
-      dash,
-      pendingAccounts,
-      totalPersonnel,
-      totalEmployees,
-      activeUnits,
-      activeCatalog,
-      inactiveCatalog,
-      auditRows,
-    ] = await Promise.all([
-      getDashboardStats(),
-      prisma.profile.count({ where: { status: 'pending', role: { in: ['employee', 'pgso_personnel'] } } }).catch(() => 0),
-      prisma.profile.count({ where: { role: 'pgso_personnel' } }).catch(() => 0),
-      prisma.profile.count({ where: { role: 'employee' } }).catch(() => 0),
-      prisma.unit.count({ where: { status: 'active' } }).catch(() => 0),
-      prisma.accountCatalog.count({ where: { status: 'active' } }).catch(() => 0),
-      prisma.accountCatalog.count({ where: { status: 'inactive' } }).catch(() => 0),
-      prisma.auditLog
-        .findMany({
-          orderBy: { created_at: 'desc' },
-          take: 5,
-          select: { id: true, user_id: true, action: true, module: true, details: true, created_at: true },
-        })
-        .catch(() => [] as { id: string; user_id: string; action: string; module: string; details: unknown; created_at: Date | null }[]),
-    ])
+    // Kick off the badge-stat query and the extras query together: both hit
+    // the remote DB (~350ms RTT), so sequential awaits would double the cold
+    // dashboard time.
+    const dashPromise = getDashboardStats()
 
-    // Extras the badge stats don't carry — one small sequential batch.
-    // Low/out-of-stock are counted in SQL (was a full inventoryItem.findMany
-    // download + JS loop — the largest overview payload).
-    const [
-      inProgressRepairs,
-      totalAssets,
-      totalStockSkus,
-      totalIssuances,
-      stockLevels,
-    ] = await Promise.all([
-      prisma.repair.count({ where: { status: 'in_progress' } }).catch(() => 0),
-      prisma.asset.count().catch(() => 0),
-      prisma.inventoryItem.count().catch(() => 0),
-      prisma.$queryRaw<Array<{ count: bigint }>>`SELECT COUNT(*)::bigint AS count FROM issuance_records`
-        .then((r) => Number(r[0]?.count ?? 0))
-        .catch(() => 0),
-      prisma.$queryRaw<Array<{ out_count: bigint; low_count: bigint }>>`
-        SELECT
-          COUNT(*) FILTER (WHERE quantity <= 0)::bigint AS out_count,
-          COUNT(*) FILTER (WHERE quantity > 0 AND reorder_threshold IS NOT NULL AND quantity <= reorder_threshold)::bigint AS low_count
-        FROM inventory`
-        .then((r) => ({
-          out: Number(r[0]?.out_count ?? 0),
-          low: Number(r[0]?.low_count ?? 0),
-        }))
-        .catch(() => ({ out: 0, low: 0 })),
+    // Extras the badge stats don't carry — one SQL round-trip. The DB is
+    // remote (~350ms RTT), so profile/catalog/unit counts, stock levels and
+    // the recent audit stream (author names joined) all come back in one
+    // query instead of a dozen parallel/sequential ones.
+    interface OverviewExtras {
+      pending_accounts: bigint
+      total_personnel: bigint
+      total_employees: bigint
+      active_units: bigint
+      active_catalog: bigint
+      inactive_catalog: bigint
+      in_progress_repairs: bigint
+      total_assets: bigint
+      total_stock_skus: bigint
+      total_issuances: bigint
+      out_count: bigint
+      low_count: bigint
+      audit: Array<{
+        id: string
+        action: string
+        module: string
+        details: unknown
+        created_at: string | null
+        user_name: string | null
+      }> | null
+    }
+    const [dash, extrasRows] = await Promise.all([
+      dashPromise,
+      prisma.$queryRaw<OverviewExtras[]>`
+      SELECT
+        (SELECT COUNT(*) FROM profiles WHERE status = 'pending' AND role IN ('employee', 'pgso_personnel'))::bigint AS pending_accounts,
+        (SELECT COUNT(*) FROM profiles WHERE role = 'pgso_personnel')::bigint AS total_personnel,
+        (SELECT COUNT(*) FROM profiles WHERE role = 'employee')::bigint AS total_employees,
+        (SELECT COUNT(*) FROM units WHERE status = 'active')::bigint AS active_units,
+        (SELECT COUNT(*) FROM account_catalog WHERE status = 'active')::bigint AS active_catalog,
+        (SELECT COUNT(*) FROM account_catalog WHERE status = 'inactive')::bigint AS inactive_catalog,
+        (SELECT COUNT(*) FROM repairs WHERE status = 'in_progress')::bigint AS in_progress_repairs,
+        (SELECT COUNT(*) FROM assets)::bigint AS total_assets,
+        (SELECT COUNT(*) FROM inventory)::bigint AS total_stock_skus,
+        (SELECT COUNT(*) FROM issuance_records)::bigint AS total_issuances,
+        (SELECT COUNT(*) FROM inventory WHERE quantity <= 0)::bigint AS out_count,
+        (SELECT COUNT(*) FROM inventory WHERE quantity > 0 AND reorder_threshold IS NOT NULL AND quantity <= reorder_threshold)::bigint AS low_count,
+        COALESCE((
+          SELECT json_agg(t)
+          FROM (
+            SELECT a.id, a.action, a.module, a.details, a.created_at, p.full_name AS user_name
+            FROM audit_logs a
+            LEFT JOIN profiles p ON p.id = a.user_id
+            ORDER BY a.created_at DESC
+            LIMIT 5
+          ) t
+        ), '[]'::json) AS audit`,
     ])
+    const extras = extrasRows[0]
 
-    const low = stockLevels.low
-    const out = stockLevels.out
+    const n = (v: bigint | null | undefined) => Number(v ?? 0)
+    const low = n(extras?.low_count)
+    const out = n(extras?.out_count)
 
     const ops: OperationsStats = {
       totalDeliveries: dash.totalDeliveries,
@@ -130,49 +137,41 @@ export async function getSuperAdminOverview(): Promise<SuperOverview> {
       totalItems: dash.totalItems,
       pendingRequests: dash.pendingRequests,
       pendingRepairs: dash.pendingRepairs,
-      inProgressRepairs,
+      inProgressRepairs: n(extras?.in_progress_repairs),
       totalDocuments: dash.totalDocuments,
       lowStockCount: low,
       outOfStockCount: out,
-      totalAssets,
-      totalStockSkus,
-      totalIssuances,
+      totalAssets: n(extras?.total_assets),
+      totalStockSkus: n(extras?.total_stock_skus),
+      totalIssuances: n(extras?.total_issuances),
     }
 
-    let recentAudit: RecentAuditEntry[] = []
-    if (auditRows.length > 0) {
-      const ids = [...new Set(auditRows.map((r) => r.user_id))]
-      const profiles = await prisma.profile
-        .findMany({ where: { id: { in: ids } }, select: { id: true, full_name: true } })
-        .catch(() => [] as { id: string; full_name: string | null }[])
-      const names = new Map(profiles.map((p) => [p.id, p.full_name ?? 'Unknown']))
-      recentAudit = auditRows.map((r) => {
-        const d = (r.details ?? {}) as Record<string, unknown>
-        const summary =
-          typeof d.summary === 'string'
-            ? d.summary
-            : typeof d.description === 'string'
-              ? d.description
-              : null
-        return {
-          id: r.id,
-          action: r.action,
-          module: r.module,
-          summary,
-          user_name: names.get(r.user_id) ?? 'Unknown',
-          created_at: r.created_at?.toISOString() ?? null,
-        }
-      })
-    }
+    const recentAudit: RecentAuditEntry[] = (extras?.audit ?? []).map((r) => {
+      const d = (r.details ?? {}) as Record<string, unknown>
+      const summary =
+        typeof d.summary === 'string'
+          ? d.summary
+          : typeof d.description === 'string'
+            ? d.description
+            : null
+      return {
+        id: r.id,
+        action: r.action,
+        module: r.module,
+        summary,
+        user_name: r.user_name ?? 'Unknown',
+        created_at: r.created_at ? new Date(r.created_at).toISOString() : null,
+      }
+    })
 
     return {
       ops,
-      pendingAccounts,
-      totalPersonnel,
-      totalEmployees,
-      activeUnits,
-      activeCatalog,
-      inactiveCatalog,
+      pendingAccounts: n(extras?.pending_accounts),
+      totalPersonnel: n(extras?.total_personnel),
+      totalEmployees: n(extras?.total_employees),
+      activeUnits: n(extras?.active_units),
+      activeCatalog: n(extras?.active_catalog),
+      inactiveCatalog: n(extras?.inactive_catalog),
       recentAudit,
     }
   } catch (e) {

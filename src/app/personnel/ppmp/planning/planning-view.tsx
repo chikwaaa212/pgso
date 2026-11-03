@@ -18,10 +18,15 @@ import {
   type PlanningMethod,
   type PlanningOptions,
 } from "@/lib/ppmp/analytics/planning";
+import {
+  compareToPlanned,
+  type ConsumptionResult,
+} from "@/lib/ppmp/analytics/consumption";
 
 export function PlanningView({
   result,
   items,
+  consumption,
   agency,
   targetYear,
   ceilingPesos,
@@ -32,6 +37,7 @@ export function PlanningView({
 }: {
   result: SessionResult;
   items: PlanningItemInput[] | null;
+  consumption: ConsumptionResult | null;
   agency: string;
   targetYear: number | null;
   ceilingPesos: number | null;
@@ -43,8 +49,17 @@ export function PlanningView({
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState("");
   const opts: PlanningOptions = useMemo(
-    () => ({ targetYear, agency, ceilingPesos, method, growthPct, pricePct, categoryFilter }),
-    [targetYear, agency, ceilingPesos, method, growthPct, pricePct, categoryFilter]
+    () => ({
+      targetYear,
+      agency,
+      ceilingPesos,
+      method,
+      growthPct,
+      pricePct,
+      categoryFilter,
+      consumption: consumption?.suggestions ?? null,
+    }),
+    [targetYear, agency, ceilingPesos, method, growthPct, pricePct, categoryFilter, consumption]
   );
   const forecasts = useMemo(
     () =>
@@ -76,6 +91,40 @@ export function PlanningView({
     const share = allTotal > 0 ? Math.round((topTotal / allTotal) * 100) : 0;
     return { top, topTotal, allTotal, share };
   }, [draft]);
+
+  // Consumption check: compare every planned quantity against the issuance
+  // history suggestion so a planner can see over/under-planning before export.
+  const consumptionCheck = useMemo(() => {
+    if (!consumption) return null;
+    const byKey = new Map(consumption.suggestions.map((s) => [s.itemKey, s]));
+    const rows = forecasts.map((f) => {
+      const suggestion = byKey.get(f.item_key) ?? null;
+      return {
+        item_key: f.item_key,
+        description: f.description,
+        unit: f.unit,
+        planned: f.qty_base,
+        comparison: compareToPlanned(f.qty_base, suggestion),
+      };
+    });
+    const noticed = rows.filter((r) => r.comparison.status !== "unknown");
+    const under = noticed.filter((r) => r.comparison.status === "under").length;
+    const over = noticed.filter((r) => r.comparison.status === "over").length;
+    const aligned = noticed.filter((r) => r.comparison.status === "aligned").length;
+    const unmatched = rows.length - noticed.length;
+    return {
+      years: consumption.years,
+      matchedItems: consumption.suggestions.length,
+      totalLines: consumption.totalLines,
+      matchedLines: consumption.matchedLines,
+      unmatchedLines: consumption.unmatchedLines,
+      rows: noticed.slice(0, 12),
+      under,
+      over,
+      aligned,
+      unmatched,
+    };
+  }, [consumption, forecasts]);
 
   function downloadCsv() {
     const csv = draftToCsv(draft, targetYear);
@@ -163,6 +212,89 @@ export function PlanningView({
           ))}
         </div>
       </Card>
+
+      {consumptionCheck ? (
+        <Card className="p-6" aria-label="Consumption check against issuance history">
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <h2 className="text-lg font-semibold">Consumption check — actual issuance history</h2>
+              <p className="mt-1 text-xs text-zinc-500">
+                Planned quantities vs. what was actually issued in FY{" "}
+                {consumptionCheck.years.join(", ") || "—"}. Advisory only: you decide the
+                final quantity.
+              </p>
+            </div>
+            <span className="rounded-full border border-navy-200 bg-navy-50 px-2.5 py-1 text-xs font-medium text-navy-800">
+              {method === "consumption" ? "Applied to this draft" : "Comparison only"}
+            </span>
+          </div>
+          <p className="mt-3 text-sm leading-relaxed text-navy-900">
+            {consumptionCheck.matchedItems} item(s) matched issuance history ·{" "}
+            {consumptionCheck.matchedLines.toLocaleString("en-PH")} of{" "}
+            {consumptionCheck.totalLines.toLocaleString("en-PH")} issuance line(s) matched ·{" "}
+            {consumptionCheck.unmatchedLines.toLocaleString("en-PH")} unmatched or outside the
+            window. {consumptionCheck.under} under-planned · {consumptionCheck.over} over-planned ·{" "}
+            {consumptionCheck.aligned} aligned · {consumptionCheck.unmatched} line(s) without
+            history.
+          </p>
+          {consumptionCheck.rows.length === 0 ? (
+            <p className="mt-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+              No planned line could be matched to issuance history. Imported issuance records and
+              PPMP descriptions must share the same normalized description and unit.
+            </p>
+          ) : (
+            <div className="mt-4 overflow-x-auto">
+              <table className="w-full min-w-[640px] border-collapse text-left text-sm">
+                <thead>
+                  <tr className="border-b border-zinc-200 text-xs uppercase tracking-wide text-zinc-500">
+                    <th className="py-2 pr-3 font-semibold">Item</th>
+                    <th className="py-2 pr-3 font-semibold">Planned</th>
+                    <th className="py-2 pr-3 font-semibold">Suggested (base)</th>
+                    <th className="py-2 pr-3 font-semibold">Range</th>
+                    <th className="py-2 font-semibold">Check</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {consumptionCheck.rows.map((row) => (
+                    <tr key={row.item_key} className="border-b border-zinc-100 align-top">
+                      <td className="py-2 pr-3">
+                        {row.description}
+                        {row.unit ? <span className="text-zinc-500"> ({row.unit})</span> : null}
+                      </td>
+                      <td className="py-2 pr-3 tabular-nums">
+                        {row.planned === null ? "missing" : row.planned.toLocaleString("en-PH")}
+                      </td>
+                      <td className="py-2 pr-3 tabular-nums">
+                        {row.comparison.suggestedBase === null
+                          ? "—"
+                          : row.comparison.suggestedBase.toLocaleString("en-PH")}
+                      </td>
+                      <td className="py-2 pr-3 tabular-nums text-zinc-600">
+                        {row.comparison.suggestedLow === null || row.comparison.suggestedHigh === null
+                          ? "—"
+                          : `${row.comparison.suggestedLow.toLocaleString("en-PH")}–${row.comparison.suggestedHigh.toLocaleString("en-PH")}`}
+                      </td>
+                      <td className="py-2">
+                        <span
+                          className={
+                            row.comparison.status === "under"
+                              ? "text-amber-800"
+                              : row.comparison.status === "over"
+                                ? "text-navy-800"
+                                : "text-emerald-800"
+                          }
+                        >
+                          {row.comparison.label}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Card>
+      ) : null}
 
       <Card className="p-6">
         <h2 className="text-lg font-semibold">Most recommended for budget planning</h2>

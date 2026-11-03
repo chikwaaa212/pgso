@@ -38,6 +38,9 @@ export async function updateMyDisplayName(
       where: { id: userId },
       data: { full_name: clean },
     })
+    // Drop the cached profile row so the navbar greeting updates immediately.
+    const { bustRoleCache } = await import('@/lib/personnel-scope')
+    bustRoleCache(userId)
     void writeAuditLog({
       userId,
       action: 'personnel:update_name',

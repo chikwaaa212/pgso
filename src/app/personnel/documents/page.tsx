@@ -1086,6 +1086,7 @@ function PersonnelDocumentsContent() {
               open={selectedIarId !== null}
               title="Inspection and Acceptance Report"
               onClose={iarR.close}
+              printable={!iarDocLoading && !!iarDoc && !!selectedIarRecord}
             >
               {iarDocLoading ? (
                 <ReceiptLoading label="Loading IAR report…" />
@@ -1190,6 +1191,7 @@ function PersonnelDocumentsContent() {
               open={selectedParId !== null}
               title="Property Acknowledgment Receipt"
               onClose={parR.close}
+              printable={!parDocLoading && !!parDoc}
             >
               {parDocLoading ? (
                 <ReceiptLoading label="Loading PAR report…" />
@@ -1300,6 +1302,7 @@ function PersonnelDocumentsContent() {
               open={selectedIcsId !== null}
               title="Inventory Custodian Slip"
               onClose={icsR.close}
+              printable={!icsDocLoading && !!icsDoc}
             >
               {icsDocLoading ? (
                 <ReceiptLoading label="Loading ICS report…" />

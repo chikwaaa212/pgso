@@ -14,3 +14,129 @@
   width: 0;
   height: 0;
 }
+
+/* ─── Printable header row ──────────────────────────────────────────────── */
+
+.headRow {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+/* Only the printable variant hosts the Print button, so only it needs room
+   for the dialog's absolute Close button. */
+.headRowPrintable {
+  padding-right: 3.5rem;
+}
+
+.printButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-shrink: 0;
+  border-radius: 0.375rem;
+  background: #243b66;
+  color: #fff;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  line-height: 1;
+  padding: 0.5rem 0.875rem;
+  cursor: pointer;
+}
+
+.printButton:hover {
+  background: #2d4a7a;
+}
+
+/* ─── Print: only the official form, full page ───────────────────────────── */
+
+@media print {
+  /* Chrome/Firefox draw their own date/URL/page-number header and footer in
+     the @page margin boxes. Zeroing the page margin leaves no room for them,
+     so they are not printed. The form's own 10mm inset keeps content clear of
+     the printer's non-printable edge. */
+  @page {
+    margin: 0;
+  }
+
+  /* Hide the app shell (sidebar/navbar/page) and every other body child.
+     The Radix portal wrapper is tagged `data-print-portal` by the overlay. */
+  :global(body[data-print-active="true"]) > :not([data-print-portal="true"]) {
+    display: none !important;
+  }
+
+  :global(body[data-print-active="true"]) [data-slot="dialog-overlay"] {
+    display: none !important;
+  }
+
+  /* Undo the on-screen dialog shell: fixed centering, 92vh height and the
+     scroll clipping that cut the form short in print. */
+  :global(body[data-print-active="true"]) [data-print-root] {
+    position: static !important;
+    inset: auto !important;
+    transform: none !important;
+    /* Tailwind v4 emits translate-x/y utilities as the standalone `translate`
+       property (fed by the --tw-translate-* variables), not `transform`.
+       Without resetting both the dialog stays shifted by -50%/-50% in print,
+       printing only the bottom-right quadrant. The variable reset is what
+       survives CSS minification — a bare `translate: none` gets folded away. */
+    --tw-translate-x: 0 !important;
+    --tw-translate-y: 0 !important;
+    translate: none !important;
+    display: block !important;
+    width: 100% !important;
+    max-width: none !important;
+    height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+    margin: 0 !important;
+    /* Stands in for the @page margin we zeroed to suppress the browser
+       header/footer; keeps the form off the printer's unprintable edge. */
+    padding: 10mm !important;
+    gap: 0 !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    background: #fff !important;
+  }
+
+  :global(body[data-print-active="true"]) [data-print-root] .headRow,
+  :global(body[data-print-active="true"]) [data-print-root] [data-slot="dialog-close"] {
+    display: none !important;
+  }
+
+  /* Preview-only links ("Open full report", "Download Excel", "Open full
+     size") are not part of the official form. */
+  :global(body[data-print-active="true"]) [data-print-root] a {
+    display: none !important;
+  }
+
+  /* Forms print edge-to-edge at their natural page width. */
+  :global(body[data-print-active="true"]) [data-print-root] :is(article, figure) {
+    max-width: none !important;
+    width: 100% !important;
+  }
+
+  :global(body[data-print-active="true"]) [data-print-root] img {
+    max-width: 100% !important;
+    height: auto !important;
+  }
+
+  :global(body[data-print-active="true"]) [data-print-root] table {
+    width: 100% !important;
+  }
+
+  /* Never split a row or a signed scan across pages. */
+  :global(body[data-print-active="true"]) [data-print-root] tr,
+  :global(body[data-print-active="true"]) [data-print-root] img,
+  :global(body[data-print-active="true"]) [data-print-root] figcaption {
+    break-inside: avoid;
+  }
+
+  :global(body[data-print-active="true"]) [data-print-root],
+  :global(body[data-print-active="true"]) [data-print-root] * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}

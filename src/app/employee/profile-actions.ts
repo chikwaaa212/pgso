@@ -171,6 +171,9 @@ export async function completeMyProfile(
         profile_completed_at: new Date(),
       },
     })
+    // Bust the cached profile row so the navbar shows the real name at once.
+    const { bustRoleCache } = await import('@/lib/personnel-scope')
+    bustRoleCache(userId)
   } catch (e) {
     // P2002 = unique violation on employee_no (race between check + write).
     // P2022 = column missing (migration 25 not applied yet).
@@ -245,6 +248,9 @@ export async function updateMyDisplayName(
       where: { id: userId },
       data: { full_name: clean },
     })
+    // Drop the cached profile row so the navbar greeting updates immediately.
+    const { bustRoleCache } = await import('@/lib/personnel-scope')
+    bustRoleCache(userId)
   } catch (e) {
     console.error('[updateMyDisplayName]', e)
     return { ok: false, error: 'Could not update your name. Please try again.' }

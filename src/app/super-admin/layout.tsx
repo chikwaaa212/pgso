@@ -8,7 +8,7 @@ import { SuperAdminNavbarLoader } from "./navbar-loader";
 export const dynamic = "force-dynamic";
 
 async function getNavbarUser(): Promise<{ name: string; detail: string }> {
-  const fallback = { name: "MARIO GENTILES", detail: "Administrator" };
+  const fallback = { name: "Administrator", detail: "Administrator" };
   // Defense-in-depth behind middleware: never render the shell to anyone
   // who is not an active super_admin. Uses the per-request memoized guard
   // so layout + page share one Auth + profile lookup.
