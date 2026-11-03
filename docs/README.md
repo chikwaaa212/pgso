@@ -23,6 +23,13 @@ For each objective it shows where to find it in the personnel, Super Admin, and
 employee portals, how the feature works, what to demonstrate, the supporting code,
 and the honest limits. Includes a role matrix and a ten-minute demo script.
 
+## `DATABASE-DIAGRAM.md`
+
+Mermaid ER diagram of every Prisma model, the core delivery → inspection → AIR/IAR →
+stock → issuance flow, and a connection reference that separates real foreign keys from
+the soft (app-enforced) UUID and account-code joins. Paste the blocks into
+<https://mermaid.live> to render.
+
 ## `plans/`
 
 Implementation plans written before each feature push.
