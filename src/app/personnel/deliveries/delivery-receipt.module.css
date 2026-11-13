@@ -1,0 +1,378 @@
+/* Delivery receipt sheet — used by the /deliveries/[id] page and the
+   View Details overlay. Kept delivery-specific so shared inspection receipt
+   styles stay untouched. */
+
+.sheet {
+  background: #fff;
+  border: 1px solid var(--color-navy-200);
+  border-radius: 8px;
+  box-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.06),
+    0 12px 32px -18px rgba(15, 23, 42, 0.35);
+  padding: 1.5rem;
+  color: var(--color-navy-900);
+  font-size: 0.8125rem;
+}
+
+/* ── Masthead ─────────────────────────────────────────────────────────── */
+
+.top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding-bottom: 0.875rem;
+  border-bottom: 2px solid var(--color-navy-900);
+}
+
+.brand {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.brandName {
+  margin: 0;
+  font-size: 1.375rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  line-height: 1;
+  color: var(--color-navy-900);
+}
+
+.brandSub {
+  margin: 0;
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--color-navy-500);
+}
+
+.doc {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.2rem;
+  text-align: right;
+}
+
+.docTitle {
+  margin: 0;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--color-navy-600);
+}
+
+.docNo {
+  margin: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  color: var(--color-navy-900);
+}
+
+.docDate {
+  margin: 0;
+  font-size: 0.6875rem;
+  color: var(--color-navy-500);
+}
+
+/* ── Sections ─────────────────────────────────────────────────────────── */
+
+.section {
+  margin-top: 1.25rem;
+}
+
+.sectionTitle {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0 0 0.5rem;
+  font-size: 0.625rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-navy-500);
+}
+
+.sectionTitle::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--color-navy-200);
+}
+
+/* ── Key/value grid ───────────────────────────────────────────────────── */
+
+.grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  margin: 0;
+}
+
+@media (min-width: 640px) {
+  .grid {
+    grid-template-columns: 1fr 1fr;
+    column-gap: 1.75rem;
+  }
+}
+
+.field {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.32rem 0;
+  border-bottom: 1px dashed var(--color-navy-200);
+}
+
+.label {
+  margin: 0;
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-navy-500);
+}
+
+.value {
+  margin: 0;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--color-navy-900);
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+/* Pills match the deliveries data table tones exactly. */
+.pill {
+  display: inline-block;
+  padding: 0.15rem 0.625rem;
+  border-radius: 9999px;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.pill[data-tone="ok"] {
+  color: #166534;
+  background-color: #dcfce7;
+}
+
+.pill[data-tone="warn"] {
+  color: #92400e;
+  background-color: #fef3c7;
+}
+
+.pill[data-tone="info"] {
+  color: var(--color-navy-800);
+  background-color: var(--color-navy-100);
+}
+
+.pill[data-tone="bad"] {
+  color: #991b1b;
+  background-color: #fee2e2;
+}
+
+/* ── Items table ──────────────────────────────────────────────────────── */
+
+.tableWrap {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.items {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8125rem;
+}
+
+.items thead th {
+  padding: 0.45rem 0.5rem;
+  background: #f4f6fa;
+  border-bottom: 1px solid var(--color-navy-200);
+  font-size: 0.625rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-navy-600);
+  text-align: left;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+/* The generic thead rule above outranks `.num`, so restate the numeric
+   alignment here — headers must sit exactly over their right-aligned cells. */
+.items thead th.num {
+  text-align: right;
+}
+
+.items tbody td {
+  padding: 0.45rem 0.5rem;
+  border-bottom: 1px solid var(--color-navy-100);
+  vertical-align: middle;
+}
+
+.items tbody tr:nth-child(even) td {
+  background: #fafbfd;
+}
+
+.items tfoot td {
+  padding: 0.55rem 0.5rem;
+  border-top: 2px solid var(--color-navy-900);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.idx {
+  width: 2rem;
+  color: var(--color-navy-400);
+}
+
+.itemName {
+  font-weight: 600;
+}
+
+/* ── See-all row for capped inline records ────────────────────────────── */
+
+.seeAllRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+}
+
+.seeAllHint {
+  font-size: 0.6875rem;
+  color: var(--color-navy-500);
+}
+
+.seeAllBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 24px;
+  padding-inline: 0.75rem;
+  border-radius: 4px;
+  border: 1px solid var(--color-yellow-600);
+  background-color: var(--color-yellow-500);
+  color: var(--color-navy-900);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.seeAllBtn:hover {
+  background-color: var(--color-yellow-400);
+}
+
+@media print {
+  .seeAllRow {
+    display: none;
+  }
+}
+
+/* ── Footer ───────────────────────────────────────────────────────────── */
+
+.footer {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: 1.25rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--color-navy-200);
+}
+
+.kicker {
+  margin: 0;
+  font-size: 0.5625rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--color-navy-400);
+}
+
+.footerMeta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.25rem;
+}
+
+.barcode {
+  width: 170px;
+  height: 26px;
+  background: repeating-linear-gradient(
+    90deg,
+    var(--color-navy-900) 0 2px,
+    transparent 2px 5px,
+    var(--color-navy-900) 5px 6px,
+    transparent 6px 10px
+  );
+}
+
+.footerRef {
+  margin: 0;
+  font-size: 0.5625rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-navy-500);
+}
+
+/* ── Overlay scrollbar (sidebar-style: hidden until hover) ─────────────── */
+
+.dialogScroll {
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+.dialogScroll:hover {
+  scrollbar-color: var(--color-navy-300) transparent;
+}
+
+.dialogScroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.dialogScroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.dialogScroll::-webkit-scrollbar-thumb {
+  background-color: transparent;
+  border-radius: 9999px;
+}
+
+.dialogScroll:hover::-webkit-scrollbar-thumb {
+  background-color: var(--color-navy-300);
+}
+
+.dialogScroll::-webkit-scrollbar-thumb:hover {
+  background-color: var(--color-navy-400);
+}
+
+/* ── Print: drop the floating-card chrome ─────────────────────────────── */
+
+@media print {
+  .sheet {
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    padding: 0;
+  }
+}

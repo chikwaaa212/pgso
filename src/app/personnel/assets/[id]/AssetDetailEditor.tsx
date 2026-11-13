@@ -326,7 +326,7 @@ export function AssetDetailEditor({
   categories,
   readOnly = false,
   backHref,
-  crumbBase = "Personnel / Assets",
+  crumbBase,
   history = null,
 }: {
   asset: UnifiedAssetRow;
@@ -335,7 +335,7 @@ export function AssetDetailEditor({
   readOnly?: boolean;
   /** Overrides the back link (defaults to the personnel list). */
   backHref?: string;
-  /** Overrides the leading crumb segment (defaults to the personnel trail). */
+  /** Leading crumb segments; omit to render no breadcrumb. */
   crumbBase?: string;
   /** Assignment + repair timeline; each event opens its receipt. */
   history?: AssetHistory | null;
@@ -411,9 +411,11 @@ export function AssetDetailEditor({
 
   return (
     <section className={styles.section}>
-      <p className={styles.crumb}>
-        {crumbBase} / {displayed.account_code ?? displayed.id}
-      </p>
+      {crumbBase ? (
+        <p className={styles.crumb}>
+          {crumbBase} / {displayed.account_code ?? displayed.id}
+        </p>
+      ) : null}
 
       <div className={styles.headerRow}>
         <div>

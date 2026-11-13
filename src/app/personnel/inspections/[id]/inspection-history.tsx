@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { getInspectionHistory } from '../actions'
 import styles from './page.module.css'
 import type { DeliveryForInspection } from '../actions'
+import { inspectionHref } from '@/lib/inspection-ref'
 
 export async function InspectionHistory({
   delivery,
@@ -18,14 +19,6 @@ export async function InspectionHistory({
 
   return (
     <section className={styles.section}>
-      <p className={styles.crumb}>
-        Personnel /{' '}
-        <Link href="/personnel/inspections" className={styles.crumbLink}>
-          Inspections
-        </Link>{' '}
-        / {delivery.id.slice(0, 8).toUpperCase()}
-      </p>
-
       <div className={styles.headerRow}>
         <div>
           <Link href="/personnel/inspections" className={styles.backLink}>
@@ -65,8 +58,10 @@ export async function InspectionHistory({
                       className={styles.status}
                       data-tone={toneMap[record.result] ?? 'info'}
                     >
-                      {record.result.charAt(0).toUpperCase() +
-                        record.result.slice(1)}
+                      {record.result === 'failed'
+                        ? 'Returned to supplier'
+                        : record.result.charAt(0).toUpperCase() +
+                          record.result.slice(1)}
                     </span>
                   </td>
                   <td>{record.remarks ?? '—'}</td>
@@ -91,7 +86,7 @@ export async function InspectionHistory({
 
       <div className={styles.successActions}>
         <Link
-          href={`/personnel/inspections/${delivery.id}`}
+          href={inspectionHref(delivery.id)}
           className={styles.backLink}
         >
           ← Back to inspection

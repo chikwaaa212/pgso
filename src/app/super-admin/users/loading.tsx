@@ -48,7 +48,6 @@ export default function UsersLoading() {
       aria-busy="true"
       aria-label="Loading users"
     >
-      <p className={styles.crumb}>Users</p>
       <div>
         <h1 className={styles.title}>Users</h1>
         <p className={styles.subtitle}>

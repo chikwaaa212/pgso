@@ -402,7 +402,6 @@ function PersonnelInventoryContent() {
 
   return (
     <section className={styles.section}>
-      <p className={styles.crumb}>Personnel / Inventory</p>
       <div className={styles.headerRow}>
         <div>
           <h1 className={styles.title}>Stocks</h1>
@@ -1025,7 +1024,6 @@ export default function PersonnelInventoryPage() {
     <Suspense
       fallback={
         <section className={styles.section}>
-          <p className={styles.crumb}>Personnel / Inventory</p>
           <div className={styles.headerRow}>
             <div>
               <h1 className={styles.title}>Stocks</h1>

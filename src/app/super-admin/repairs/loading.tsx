@@ -50,7 +50,6 @@ export default function RepairsLoading() {
       aria-busy="true"
       aria-label="Loading repairs"
     >
-      <p className={styles.crumb}>Repairs</p>
       <div>
         <h1 className={styles.title}>Repairs</h1>
         <p className={styles.subtitle}>

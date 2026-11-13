@@ -34,6 +34,7 @@ import type {
   MonthlyIssuancePoint,
   Slice,
 } from "./analytics";
+import styles from "./page.module.css";
 
 /**
  * System palette only — hero yellow for the largest slice, then descending
@@ -58,14 +59,10 @@ function totalOf(data: Slice[]): number {
   return data.reduce((n, s) => n + s.value, 0);
 }
 
-function cardStyle(): React.CSSProperties {
-  return { padding: "1.25rem", display: "flex", flexDirection: "column", gap: "0.75rem" };
-}
-
 function CardHead({ title, sub, href }: { title: string; sub: string; href?: string }) {
   return (
     <div>
-      <h3 style={{ fontSize: "1rem", fontWeight: 700, margin: 0 }}>{title}</h3>
+      <h3 style={{ fontSize: "1rem", fontWeight: 600, margin: 0 }}>{title}</h3>
       <p style={{ fontSize: "0.8125rem", color: "var(--color-navy-500)", margin: "0.25rem 0 0" }}>{sub}</p>
       {href ? (
         <Link
@@ -87,7 +84,11 @@ function CardHead({ title, sub, href }: { title: string; sub: string; href?: str
 }
 
 function EmptyNote() {
-  return <p style={{ fontSize: "0.875rem", color: "var(--color-navy-500)" }}>No data yet.</p>;
+  return (
+    <div className={styles.emptyCard}>
+      <p className={styles.emptyCardText}>No data yet.</p>
+    </div>
+  );
 }
 
 function Insight({ text }: { text: string }) {
@@ -101,42 +102,12 @@ function Insight({ text }: { text: string }) {
         border: "1px solid var(--color-navy-100)",
         borderRadius: "0.5rem",
         padding: "0.625rem 0.75rem",
-        margin: 0,
+        margin: "auto 0 0",
       }}
     >
       <strong>What this means: </strong>
       {text}
     </p>
-  );
-}
-
-function LegendList({ data }: { data: Slice[] }) {
-  const total = totalOf(data);
-  return (
-    <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: "0.375rem" }}>
-      {data.map((s, i) => (
-        <li
-          key={s.name}
-          style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "0.8125rem" }}
-        >
-          <span
-            aria-hidden="true"
-            style={{
-              width: "0.625rem",
-              height: "0.625rem",
-              borderRadius: "9999px",
-              background: colorFor(s.name, i),
-              flexShrink: 0,
-            }}
-          />
-          <span style={{ flex: 1 }}>{label(s.name)}</span>
-          <strong>{s.value.toLocaleString()}</strong>
-          <span style={{ color: "var(--color-navy-500)", minWidth: "2.5rem", textAlign: "right" }}>
-            {total > 0 ? `${Math.round((s.value / total) * 100)}%` : "—"}
-          </span>
-        </li>
-      ))}
-    </ul>
   );
 }
 
@@ -154,10 +125,11 @@ export function HBarCard({ title, sub, data, insight, href }: CardProps) {
   const config: ChartConfig = {
     value: { label: "Count", color: "#243b66" },
   };
+  const empty = rows.length === 0 || totalOf(data) === 0;
 
   return (
-    <Card style={cardStyle()}>
-      <CardHead title={title} sub={sub} href={href} />
+    <Card className={`${styles.panel} p-4`}>
+      <CardHead title={title} sub={sub} href={empty ? undefined : href} />
       {rows.length === 0 || totalOf(data) === 0 ? (
         <EmptyNote />
       ) : (
@@ -176,8 +148,7 @@ export function HBarCard({ title, sub, data, insight, href }: CardProps) {
           </BarChart>
         </ChartContainer>
       )}
-      <LegendList data={data} />
-      <Insight text={insight} />
+      {!empty && <Insight text={insight} />}
     </Card>
   );
 }
@@ -188,10 +159,11 @@ export function ColumnCard({ title, sub, data, insight, href }: CardProps) {
   const config: ChartConfig = {
     value: { label: "Count", color: "#243b66" },
   };
+  const empty = rows.length === 0 || totalOf(data) === 0;
 
   return (
-    <Card style={cardStyle()}>
-      <CardHead title={title} sub={sub} href={href} />
+    <Card className={`${styles.panel} p-4`}>
+      <CardHead title={title} sub={sub} href={empty ? undefined : href} />
       {rows.length === 0 || totalOf(data) === 0 ? (
         <EmptyNote />
       ) : (
@@ -210,8 +182,7 @@ export function ColumnCard({ title, sub, data, insight, href }: CardProps) {
           </BarChart>
         </ChartContainer>
       )}
-      <LegendList data={data} />
-      <Insight text={insight} />
+      {!empty && <Insight text={insight} />}
     </Card>
   );
 }
@@ -219,13 +190,14 @@ export function ColumnCard({ title, sub, data, insight, href }: CardProps) {
 /** The single donut — kept for the request mix, the key decision queue. */
 export function DonutCard({ title, sub, data, insight, href }: CardProps) {
   const total = totalOf(data);
+  const empty = total === 0;
   const config: ChartConfig = Object.fromEntries(
     data.map((s, i) => [s.name, { label: label(s.name), color: colorFor(s.name, i) }])
   );
 
   return (
-    <Card style={cardStyle()}>
-      <CardHead title={title} sub={sub} href={href} />
+    <Card className={`${styles.panel} p-4`}>
+      <CardHead title={title} sub={sub} href={empty ? undefined : href} />
       {total === 0 ? (
         <EmptyNote />
       ) : (
@@ -241,8 +213,7 @@ export function DonutCard({ title, sub, data, insight, href }: CardProps) {
           </PieChart>
         </ChartContainer>
       )}
-      <LegendList data={data} />
-      <Insight text={insight} />
+      {total > 0 && <Insight text={insight} />}
     </Card>
   );
 }
@@ -256,7 +227,7 @@ export function StackedBarCard({ title, sub, data, insight }: CardProps) {
   );
 
   return (
-    <Card style={cardStyle()}>
+    <Card className={`${styles.panel} p-4`}>
       <CardHead title={title} sub={sub} />
       {total === 0 ? (
         <EmptyNote />
@@ -271,8 +242,7 @@ export function StackedBarCard({ title, sub, data, insight }: CardProps) {
           </BarChart>
         </ChartContainer>
       )}
-      <LegendList data={data} />
-      <Insight text={insight} />
+      {total > 0 && <Insight text={insight} />}
     </Card>
   );
 }
@@ -286,7 +256,7 @@ export function RingsCard({ title, sub, data, insight }: CardProps) {
   );
 
   return (
-    <Card style={cardStyle()}>
+    <Card className={`${styles.panel} p-4`}>
       <CardHead title={title} sub={sub} />
       {total === 0 ? (
         <EmptyNote />
@@ -318,8 +288,7 @@ export function RingsCard({ title, sub, data, insight }: CardProps) {
           </RadialBarChart>
         </ChartContainer>
       )}
-      <LegendList data={data} />
-      <Insight text={insight} />
+      {total > 0 && <Insight text={insight} />}
     </Card>
   );
 }
@@ -337,7 +306,7 @@ export function IssuanceTrendCard({
   const hasData = data.some((d) => d.issuances > 0);
 
   return (
-    <Card style={cardStyle()}>
+    <Card className={`${styles.panel} p-4`}>
       <CardHead title="Issuance trend" sub="PAR / ICS documents issued per month — last 6 months" />
       {hasData ? (
         <ChartContainer config={config} className="max-h-[220px] w-full">
@@ -352,7 +321,7 @@ export function IssuanceTrendCard({
       ) : (
         <EmptyNote />
       )}
-      <Insight text={insight} />
+      {hasData && <Insight text={insight} />}
     </Card>
   );
 }
@@ -372,20 +341,21 @@ export function StockGaugeCard({
   } satisfies ChartConfig;
 
   return (
-    <Card style={cardStyle()}>
+    <Card className={`${styles.panel} p-4`}>
       <CardHead title="Stock health gauge" sub="Share of stock lines above reorder threshold" />
       {total === 0 ? (
         <EmptyNote />
       ) : (
-        <ChartContainer config={config} className="mx-auto aspect-square max-h-[250px] w-full max-w-[280px]">
+        <ChartContainer config={config} className="mx-auto aspect-square max-h-[180px] w-full max-w-[200px]">
           <RadialBarChart
             data={[{ name: "healthy", value: pct, fill: "var(--color-healthy)" }]}
             startAngle={90}
             endAngle={-270}
-            innerRadius={80}
-            outerRadius={110}
+            innerRadius={56}
+            outerRadius={82}
           >
             <PolarGrid gridType="circle" radialLines={false} stroke="none" />
+            <ChartTooltip content={<ChartTooltipContent nameKey="name" />} />
             <RadialBar dataKey="value" background cornerRadius={10} />
             <PolarRadiusAxis tick={false} tickLine={false} axisLine={false}>
               <Label
@@ -408,8 +378,7 @@ export function StockGaugeCard({
           </RadialBarChart>
         </ChartContainer>
       )}
-      <LegendList data={breakdown} />
-      <Insight text={insight} />
+      {total > 0 && <Insight text={insight} />}
     </Card>
   );
 }
@@ -417,9 +386,7 @@ export function StockGaugeCard({
 export function AnalyticsGrid({ data, gridClass }: { data: Analytics; gridClass: string }) {
   return (
     <div>
-      <h2 style={{ fontSize: "1.125rem", fontWeight: 700, margin: "1.5rem 0 0.25rem" }}>
-        Analytics
-      </h2>
+      <h2 className={styles.panelTitle}>Analytics</h2>
       <p style={{ fontSize: "0.8125rem", color: "var(--color-navy-500)", margin: "0 0 1rem" }}>
         Live breakdowns across every transaction type — each with what it means for operations.
       </p>
@@ -436,6 +403,7 @@ export function AnalyticsGrid({ data, gridClass }: { data: Analytics; gridClass:
           data={data.requestStatus}
           insight={data.insights.requests}
         />
+        <StockGaugeCard pct={data.stockHealthyPct} breakdown={data.stockHealth} insight={data.insights.stock} />
         <ColumnCard
           title="Repairs by status"
           sub="Repair tickets — all time"
@@ -448,7 +416,6 @@ export function AnalyticsGrid({ data, gridClass }: { data: Analytics; gridClass:
           data={data.assetStatus}
           insight={data.insights.assets}
         />
-        <StockGaugeCard pct={data.stockHealthyPct} breakdown={data.stockHealth} insight={data.insights.stock} />
         <RingsCard
           title="Issuances by type"
           sub="PAR vs ICS accountability documents"

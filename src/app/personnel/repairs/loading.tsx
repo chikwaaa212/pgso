@@ -59,7 +59,6 @@ export default function RepairsLoading() {
       aria-busy="true"
       aria-label="Loading repairs"
     >
-      <p className={styles.crumb}>Personnel / Repairs</p>
 
       {/* Header — same as the real page */}
       <div className={styles.headerRow}>

@@ -24,7 +24,6 @@ export default function ScanLoading() {
       aria-busy="true"
       aria-label="Loading QR scanner"
     >
-      <p className={styles.crumb}>QR Scanner</p>
 
       {/* Header — same centered copy as the real page */}
       <div className="text-center">

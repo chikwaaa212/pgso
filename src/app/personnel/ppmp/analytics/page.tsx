@@ -158,10 +158,6 @@ export default function PpmpAnalyticsPage() {
 
   return (
     <section>
-      {/* Plain-text crumb (no role-specific href): this page is shared by
-          the personnel and super-admin routes, whose role guards differ. */}
-      <p className="text-sm text-zinc-500">PPMP / Analytics</p>
-
       <Card className="mt-4 p-6">
         <h2 className="text-lg font-semibold">1. Select PPMP files</h2>
         <p className="mt-1 text-sm text-zinc-600">

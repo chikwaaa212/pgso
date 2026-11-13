@@ -36,9 +36,11 @@ describe("useCachedAction: no-flicker paging + dedupe + focus (source shape)", (
 describe("next-page prefetch fires (no dead pagination)", () => {
   it("personnel assets prefetches page+1 and warms the cache", () => {
     const page = src("../app/personnel/assets/page.tsx");
-    assert.match(page, /Prefetch next page/);
+    assert.match(page, /Prefetch the next page/);
     assert.match(page, /page \+ 1/);
     assert.match(page, /setClientCache\(nextKey, fresh\)/);
+    // Deferred to idle so it never competes with first paint.
+    assert.match(page, /requestIdleCallback/);
   });
   it("shared prefetchQuery dedupes + warms client-cache (source shape)", () => {
     const qc = src("../lib/query-client.ts");

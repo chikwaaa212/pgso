@@ -224,8 +224,6 @@ export default function PpmpPlanningPage() {
 
   return (
     <section>
-      <p className="text-sm text-zinc-500">PPMP / Planning</p>
-
       <Card className="mt-4 p-6">
         <h2 className="text-lg font-semibold">1. Select PPMP files</h2>
         <p className="mt-1 text-sm text-zinc-600">

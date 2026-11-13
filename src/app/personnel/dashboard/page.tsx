@@ -60,6 +60,29 @@ function shortRequestType(t: string): string {
   return REQUEST_TYPE_SHORT[t] ?? t.replace(/_/g, " ");
 }
 
+/**
+ * Empty state for a dashboard card: the message is centred inside the card
+ * and, when the destination is known, a compact 24px action follows it.
+ */
+function CardEmptyState({
+  message,
+  action,
+}: {
+  message: string;
+  action?: { label: string; href: string };
+}) {
+  return (
+    <div className={styles.emptyCard}>
+      <p className={styles.emptyCardText}>{message}</p>
+      {action ? (
+        <Link href={action.href} className={styles.emptyCardButton}>
+          {action.label}
+        </Link>
+      ) : null}
+    </div>
+  );
+}
+
 export default function PersonnelDashboard() {
   // Cached snapshot: back-navigation paints instantly from memory /
   // sessionStorage and only revalidates silently when stale — no skeleton
@@ -82,7 +105,6 @@ export default function PersonnelDashboard() {
   if (!snapshot) {
     return (
       <section className={styles.section}>
-        <p className={styles.crumb}>Personnel / Dashboard</p>
         <div className={styles.headerRow}>
           <div>
             <h1 className={styles.title}>Dashboard</h1>
@@ -119,6 +141,7 @@ export default function PersonnelDashboard() {
 
   const lowTotal = stats.lowStockCount + stats.outOfStockCount;
   const activeRepairs = stats.pendingRepairs + stats.inProgressRepairs;
+  const agingHasRecords = aging.summaries.some((summary) => summary.total > 0);
 
   const statCards = [
     {
@@ -234,72 +257,10 @@ export default function PersonnelDashboard() {
     },
   ];
 
-  const modules = [
-    {
-      title: "Deliveries",
-      description: "Log deliveries and track suppliers",
-      href: "/personnel/deliveries",
-      meta: `${stats.totalDeliveries} total`,
-    },
-    {
-      title: "Inspections",
-      description: "Record inspection and AIR results",
-      href: "/personnel/inspections",
-      meta:
-        stats.pendingInspections === 0
-          ? `${stats.completedInspections} completed`
-          : `${stats.pendingInspections} pending`,
-    },
-    {
-      title: "Inventory",
-      description: "Monitor stock levels and thresholds",
-      href: "/personnel/inventory",
-      meta:
-        lowTotal === 0
-          ? `${stats.totalStockSkus} SKUs`
-          : `${lowTotal} need reorder`,
-    },
-    {
-      title: "Assets",
-      description: "Encode items, validate, assign QR codes",
-      href: "/personnel/assets",
-      meta: `${stats.totalAssets} tracked`,
-    },
-    {
-      title: "Documents",
-      description: "Generate and track RIS, PAR, ICS, AIR",
-      href: "/personnel/documents",
-      meta:
-        stats.totalDocuments === 0
-          ? "All viewed"
-          : `${stats.totalDocuments} unviewed`,
-    },
-    {
-      title: "PAR / ICS",
-      description: "Issue items with signed accountability forms",
-      href: "/personnel/issuances",
-      meta: `${stats.totalIssuances} issued`,
-    },
-    {
-      title: "Requests",
-      description: "Review transfer and supply requests",
-      href: "/personnel/requests",
-      meta:
-        stats.pendingRequests === 0
-          ? "Queue clear"
-          : `${stats.pendingRequests} pending`,
-    },
-    {
-      title: "Repairs",
-      description: "Track repairs and technicians",
-      href: "/personnel/repairs",
-      meta: activeRepairs === 0 ? "No open tickets" : `${activeRepairs} open`,
-    },
-  ];
+  const attentionHasRecords = attention.some((item) => item.count > 0);
 
   return (
     <section className={styles.section}>
-      <p className={styles.crumb}>Personnel / Dashboard</p>
       <div className={styles.headerRow}>
         <div>
           <h1 className={styles.title}>Dashboard</h1>
@@ -320,32 +281,34 @@ export default function PersonnelDashboard() {
       {/* Stats — one card per operations area */}
       <div className={styles.stats}>
         {statCards.map((stat) => (
-          <Link
-            key={stat.label}
-            href={stat.href}
-            className={styles.cardLink}
-            aria-label={`${stat.label}: ${stat.value}`}
-          >
-            <Card className={styles.statCard}>
-              <span className={styles.statLabel}>{stat.label}</span>
-              <span className={styles.statValue}>{stat.value}</span>
+          <Card key={stat.label} className={`${styles.statCard} p-4`}>
+            <span className={styles.statLabel}>{stat.label}</span>
+            <span className={styles.statValue}>{stat.value}</span>
+            <div className={styles.statFooter}>
               <span className={styles.statDelta}>{stat.delta}</span>
-            </Card>
-          </Link>
+              <Link
+                href={stat.href}
+                className={styles.statButton}
+                aria-label={`Open ${stat.label}`}
+              >
+                Open
+              </Link>
+            </div>
+          </Card>
         ))}
       </div>
 
       {/* Attention + chart */}
       <div className={styles.twoCol}>
-        <Card className={styles.panel}>
+        <Card className={`${styles.panel} p-4`}>
           <h2 className={styles.panelTitle}>Needs attention</h2>
           <p className={styles.panelSub}>
             Queues that need a personnel action right now.
           </p>
-          <ul className={styles.list}>
-            {attention.map((a) => (
-              <li key={a.title} className={styles.listItem}>
-                <div>
+          {attentionHasRecords ? (
+            <div className={styles.bentoGrid}>
+              {attention.map((a) => (
+                <div key={a.title} className={styles.bentoTile}>
                   <p className={styles.listMain}>
                     {a.title}{" "}
                     {a.count > 0 && (
@@ -355,22 +318,30 @@ export default function PersonnelDashboard() {
                     )}
                   </p>
                   <p className={styles.listSub}>{a.detail}</p>
+                  <Link
+                    href={a.href}
+                    className={styles.attentionAction}
+                  >
+                    {a.cta}
+                  </Link>
                 </div>
-                <Link
-                  href={a.href}
-                  className={styles.inspectLinkSecondary}
-                >
-                  {a.cta}
-                </Link>
-              </li>
-            ))}
-          </ul>
+              ))}
+            </div>
+          ) : (
+            <CardEmptyState
+              message="Nothing needs attention right now."
+              action={{ label: "View reports", href: "/personnel/reports" }}
+            />
+          )}
         </Card>
 
-        <Card className={styles.panel}>
+        <Card className={`${styles.panel} p-4`}>
           <h2 className={styles.panelTitle}>Recent deliveries</h2>
           {recentDeliveries.length === 0 ? (
-            <p className={styles.panelSub}>No deliveries logged yet.</p>
+            <CardEmptyState
+              message="No deliveries logged yet."
+              action={{ label: "Log delivery", href: "/personnel/deliveries" }}
+            />
           ) : (
             <div className={styles.tableWrap}>
               <table className={styles.table}>
@@ -401,9 +372,11 @@ export default function PersonnelDashboard() {
                                   : "info"
                           }
                         >
-                          {d.inspection_status
-                            ? cap(d.inspection_status)
-                            : "Pending"}
+                          {d.inspection_status === "failed"
+                            ? "Returned to supplier"
+                            : d.inspection_status
+                              ? cap(d.inspection_status)
+                              : "Pending"}
                         </span>
                       </td>
                     </tr>
@@ -412,14 +385,16 @@ export default function PersonnelDashboard() {
               </table>
             </div>
           )}
-          <div className={styles.panelFooter}>
-            <Link
-              href="/personnel/deliveries"
-              className={styles.inspectLink}
-            >
-              View all deliveries
-            </Link>
-          </div>
+          {recentDeliveries.length > 0 && (
+            <div className={styles.panelFooter}>
+              <Link
+                href="/personnel/deliveries"
+                className={styles.inspectLink}
+              >
+                View all deliveries
+              </Link>
+            </div>
+          )}
         </Card>
       </div>
 
@@ -428,52 +403,67 @@ export default function PersonnelDashboard() {
 
       {/* Reports summary — Objective 4 descriptive analytics */}
       <div className={styles.twoCol}>
-        <Card className={styles.panel}>
+        <Card className={`${styles.panel} p-4`}>
           <h2 className={styles.panelTitle}>Aging &amp; delays</h2>
           <p className={styles.panelSub}>
             Open records older than {aging.thresholdDays} days are delayed.
           </p>
-          <ul className={styles.list}>
-            {aging.summaries.map((summary) => (
-              <li key={summary.module} className={styles.listItem}>
-                <div>
-                  <p className={styles.listMain}>
-                    {summary.label}{" "}
-                    {summary.delayed > 0 && (
-                      <span className={styles.status} data-tone="bad">
-                        {summary.delayed} delayed
-                      </span>
-                    )}
-                  </p>
-                  <p className={styles.listSub}>
-                    {summary.total} open · oldest {summary.oldestDays} day
-                    {summary.oldestDays === 1 ? "" : "s"}
-                  </p>
-                </div>
-                <Link
-                  href={summary.href}
-                  className={styles.inspectLinkSecondary}
-                >
-                  Open
-                </Link>
-              </li>
-            ))}
-          </ul>
-          <div className={styles.panelFooter}>
-            <Link href="/personnel/reports" className={styles.inspectLink}>
-              View full reports
-            </Link>
-          </div>
+          {agingHasRecords ? (
+            <ul className={styles.list}>
+              {aging.summaries.map((summary) => (
+                <li key={summary.module} className={styles.listItem}>
+                  <div>
+                    <p className={styles.listMain}>
+                      {summary.label}{" "}
+                      {summary.delayed > 0 && (
+                        <span className={styles.status} data-tone="bad">
+                          {summary.delayed} delayed
+                        </span>
+                      )}
+                    </p>
+                    <p className={styles.listSub}>
+                      {summary.total} open · oldest {summary.oldestDays} day
+                      {summary.oldestDays === 1 ? "" : "s"}
+                    </p>
+                  </div>
+                  <Link
+                    href={summary.href}
+                    className={styles.attentionAction}
+                  >
+                    Open
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <CardEmptyState
+              message="No open records to age yet."
+              action={{
+                label: "View reports",
+                href: "/personnel/reports",
+              }}
+            />
+          )}
+          {agingHasRecords && (
+            <div className={styles.panelFooter}>
+              <Link href="/personnel/reports" className={styles.inspectLink}>
+                View full reports
+              </Link>
+            </div>
+          )}
         </Card>
 
-        <Card className={styles.panel}>
+        <Card className={`${styles.panel} p-4`}>
           <h2 className={styles.panelTitle}>Asset conditions</h2>
           <p className={styles.panelSub}>
             {conditions.serviceablePct}% serviceable across{" "}
             {conditions.total} registered assets.
           </p>
           {conditions.rows.length === 0 ? (
-            <p className={styles.panelSub}>No assets registered yet.</p>
+            <CardEmptyState
+              message="No assets registered yet."
+              action={{ label: "View assets", href: "/personnel/assets" }}
+            />
           ) : (
             <div className={styles.tableWrap}>
               <table className={styles.table}>
@@ -496,20 +486,25 @@ export default function PersonnelDashboard() {
               </table>
             </div>
           )}
-          <div className={styles.panelFooter}>
-            <Link href="/personnel/reports" className={styles.inspectLink}>
-              Condition report
-            </Link>
-          </div>
+          {conditions.rows.length > 0 && (
+            <div className={styles.panelFooter}>
+              <Link href="/personnel/reports" className={styles.inspectLink}>
+                Condition report
+              </Link>
+            </div>
+          )}
         </Card>
       </div>
 
       {/* Requests + repairs */}
       <div className={styles.twoCol}>
-        <Card className={styles.panel}>
+        <Card className={`${styles.panel} p-4`}>
           <h2 className={styles.panelTitle}>Recent requests</h2>
           {recentRequests.length === 0 ? (
-            <p className={styles.panelSub}>No employee requests yet.</p>
+            <CardEmptyState
+              message="No employee requests yet."
+              action={{ label: "Review requests", href: "/personnel/requests" }}
+            />
           ) : (
             <div className={styles.tableWrap}>
               <table className={styles.table}>
@@ -541,20 +536,25 @@ export default function PersonnelDashboard() {
               </table>
             </div>
           )}
-          <div className={styles.panelFooter}>
-            <Link
-              href="/personnel/requests"
-              className={styles.inspectLink}
-            >
-              Review requests
-            </Link>
-          </div>
+          {recentRequests.length > 0 && (
+            <div className={styles.panelFooter}>
+              <Link
+                href="/personnel/requests"
+                className={styles.inspectLink}
+              >
+                Review requests
+              </Link>
+            </div>
+          )}
         </Card>
 
-        <Card className={styles.panel}>
+        <Card className={`${styles.panel} p-4`}>
           <h2 className={styles.panelTitle}>Recent repairs</h2>
           {recentRepairs.length === 0 ? (
-            <p className={styles.panelSub}>No repair tickets yet.</p>
+            <CardEmptyState
+              message="No repair tickets yet."
+              action={{ label: "Track repairs", href: "/personnel/repairs" }}
+            />
           ) : (
             <div className={styles.tableWrap}>
               <table className={styles.table}>
@@ -587,25 +587,28 @@ export default function PersonnelDashboard() {
               </table>
             </div>
           )}
-          <div className={styles.panelFooter}>
-            <Link
-              href="/personnel/repairs"
-              className={styles.inspectLink}
-            >
-              Track repairs
-            </Link>
-          </div>
+          {recentRepairs.length > 0 && (
+            <div className={styles.panelFooter}>
+              <Link
+                href="/personnel/repairs"
+                className={styles.inspectLink}
+              >
+                Track repairs
+              </Link>
+            </div>
+          )}
         </Card>
       </div>
 
       {/* Stock + issuances */}
       <div className={styles.twoCol}>
-        <Card className={styles.panel}>
+        <Card className={`${styles.panel} p-4`}>
           <h2 className={styles.panelTitle}>Low-stock watchlist</h2>
           {lowStock.length === 0 ? (
-            <p className={styles.panelSub}>
-              All stock levels healthy — nothing at or below threshold.
-            </p>
+            <CardEmptyState
+              message="All stock levels healthy — nothing at or below threshold."
+              action={{ label: "Manage stocks", href: "/personnel/inventory" }}
+            />
           ) : (
             <div className={styles.tableWrap}>
               <table className={styles.table}>
@@ -638,22 +641,25 @@ export default function PersonnelDashboard() {
               </table>
             </div>
           )}
-          <div className={styles.panelFooter}>
-            <Link
-              href="/personnel/inventory"
-              className={styles.inspectLink}
-            >
-              Manage stocks
-            </Link>
-          </div>
+          {lowStock.length > 0 && (
+            <div className={styles.panelFooter}>
+              <Link
+                href="/personnel/inventory"
+                className={styles.inspectLink}
+              >
+                Manage stocks
+              </Link>
+            </div>
+          )}
         </Card>
 
-        <Card className={styles.panel}>
+        <Card className={`${styles.panel} p-4`}>
           <h2 className={styles.panelTitle}>Recent PAR / ICS</h2>
           {recentIssuances.length === 0 ? (
-            <p className={styles.panelSub}>
-              No accountability documents issued yet.
-            </p>
+            <CardEmptyState
+              message="No accountability documents issued yet."
+              action={{ label: "View issuances", href: "/personnel/issuances" }}
+            />
           ) : (
             <div className={styles.tableWrap}>
               <table className={styles.table}>
@@ -679,30 +685,17 @@ export default function PersonnelDashboard() {
               </table>
             </div>
           )}
-          <div className={styles.panelFooter}>
-            <Link
-              href="/personnel/issuances"
-              className={styles.inspectLink}
-            >
-              View issuances
-            </Link>
-          </div>
+          {recentIssuances.length > 0 && (
+            <div className={styles.panelFooter}>
+              <Link
+                href="/personnel/issuances"
+                className={styles.inspectLink}
+              >
+                View issuances
+              </Link>
+            </div>
+          )}
         </Card>
-      </div>
-
-      {/* Module grid — every area with a live status line */}
-      <div className={styles.grid}>
-        {modules.map((mod) => (
-          <Link key={mod.href} href={mod.href} className={styles.cardLink}>
-            <Card>
-              <h2 className="text-lg font-semibold">{mod.title}</h2>
-              <p className="text-sm text-zinc-600 dark:text-zinc-400">
-                {mod.description}
-              </p>
-              <p className={styles.statDelta}>{mod.meta}</p>
-            </Card>
-          </Link>
-        ))}
       </div>
     </section>
   );

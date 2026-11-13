@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import {
   Dialog,
   DialogContent,
@@ -11,6 +12,9 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
+import { inspectionHref } from "@/lib/inspection-ref";
+import { portalFromPathname } from "@/lib/portal-path";
+import styles from "@/app/personnel/dashboard/page.module.css";
 
 /**
  * Confirmation gate before opening the inspection form.
@@ -23,6 +27,8 @@ export function InspectConfirmButton({
   deliveryRef,
   supplier,
   poReference,
+  arrival,
+  arrivalTone = "warn",
   triggerClassName,
   label = "Inspect",
 }: {
@@ -30,11 +36,15 @@ export function InspectConfirmButton({
   deliveryRef: string;
   supplier?: string | null;
   poReference?: string | null;
+  arrival?: string | null;
+  /** Matches the deliveries table: amber while upcoming, green once arrived. */
+  arrivalTone?: "ok" | "warn";
   triggerClassName?: string;
   label?: string;
 }) {
   const [open, setOpen] = useState(false);
-  const href = `/personnel/inspections/${deliveryId}`;
+  const pathname = usePathname();
+  const href = inspectionHref(deliveryId, "", portalFromPathname(pathname));
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -72,24 +82,26 @@ export function InspectConfirmButton({
               {poReference ?? "—"}
             </dd>
           </div>
+          <div className="flex items-center justify-between gap-4">
+            <dt className="text-navy-600">Target arrival</dt>
+            <dd>
+              {arrival && arrival !== "—" ? (
+                <span className={styles.status} data-tone={arrivalTone}>
+                  {arrival}
+                </span>
+              ) : (
+                <span className="font-semibold text-navy-900">—</span>
+              )}
+            </dd>
+          </div>
         </dl>
         <DialogFooter>
-          <button
-            type="button"
-            onClick={() => setOpen(false)}
-            className={cn(
-              "inline-flex h-8 items-center justify-center rounded-[4px] px-3.5 text-xs font-semibold",
-              "border border-navy-200 bg-transparent text-navy-700 hover:bg-navy-100"
-            )}
-          >
-            Cancel
-          </button>
           <Link
             href={href}
             aria-label={`Continue to inspection for delivery ${deliveryRef}`}
             className={cn(
-              "inline-flex h-8 items-center justify-center rounded-[4px] px-3.5 text-xs font-semibold",
-              "border border-navy-700 bg-navy-800 text-white hover:bg-navy-700"
+              "inline-flex h-6 items-center justify-center rounded-[4px] px-3 text-xs font-semibold",
+              "border border-yellow-500 bg-yellow-500 text-navy-900 hover:bg-yellow-400"
             )}
           >
             Continue to inspection

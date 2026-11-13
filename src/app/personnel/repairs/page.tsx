@@ -359,7 +359,6 @@ function PersonnelRepairsContent() {
 
   return (
     <section className={styles.section}>
-      <p className={styles.crumb}>Personnel / Repairs</p>
       <div className={styles.headerRow}>
         <div>
           <h1 className={styles.title}>Repairs</h1>

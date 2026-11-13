@@ -432,6 +432,7 @@ export async function bustSuperAdminScopes(
       'super-admin:overview',
       'master-data:',
       'catalog:',
+      'personnel:delivery-form-options',
     ],
     dashboard: [
       'super-admin:pending-employees',

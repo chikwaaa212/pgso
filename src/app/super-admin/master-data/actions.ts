@@ -5,6 +5,7 @@ import ExcelJS from 'exceljs'
 import prisma from '@/lib/prisma'
 import { writeAuditLog } from '@/lib/audit'
 import { requireSuperAdmin } from '@/lib/auth-guard'
+import { archiveCutoff } from '@/lib/master-data-archive'
 import {
   CATALOG_EXCEL_HEADERS,
   CATALOG_LEGACY_SHEET,
@@ -18,6 +19,7 @@ export interface UnitRow {
   status: string
   usage: number
   created_at: string | null
+  deleted_at: string | null
 }
 
 export interface DepartmentRow {
@@ -27,6 +29,21 @@ export interface DepartmentRow {
   status: string
   usage: number
   created_at: string | null
+  deleted_at: string | null
+}
+
+export interface StockTypeRow {
+  id: string
+  name: string
+  account_code: string | null
+  asset_type: string | null
+  account_title: string | null
+  account_name: string | null
+  description: string | null
+  status: string
+  usage: number
+  created_at: string | null
+  deleted_at: string | null
 }
 
 export interface CatalogRow {
@@ -39,6 +56,15 @@ export interface CatalogRow {
   status: string
   usage: number
   created_at: string | null
+  deleted_at: string | null
+}
+
+/** Soft-deleted rows grouped by list, for the "Deleted" overlays. */
+export interface DeletedMasterData {
+  units: UnitRow[]
+  catalog: CatalogRow[]
+  departments: DepartmentRow[]
+  stockTypes: StockTypeRow[]
 }
 
 function revalidatePath(path: string) {
@@ -111,7 +137,10 @@ export async function getUnits(): Promise<UnitRow[]> {
   const { withScopedCache } = await import('@/lib/personnel-cache')
   return withScopedCache('super-admin:master-units', 60, async () => {
   try {
-    const rows = await prisma.unit.findMany({ orderBy: { name: 'asc' } })
+    const rows = await prisma.unit.findMany({
+      where: { deleted_at: null },
+      orderBy: { name: 'asc' },
+    })
     return await Promise.all(
       rows.map(async (r) => ({
         id: r.id,
@@ -120,6 +149,7 @@ export async function getUnits(): Promise<UnitRow[]> {
         status: r.status,
         usage: await unitUsage(r.name),
         created_at: r.created_at?.toISOString() ?? null,
+        deleted_at: r.deleted_at?.toISOString() ?? null,
       }))
     )
   } catch (e) {
@@ -139,6 +169,7 @@ export async function getCatalog(): Promise<CatalogRow[]> {
   return withScopedCache('super-admin:master-catalog', 60, async () => {
     try {
       const rows = await prisma.accountCatalog.findMany({
+        where: { deleted_at: null },
         orderBy: { account_code: 'asc' },
       })
       const out: CatalogRow[] = []
@@ -153,6 +184,7 @@ export async function getCatalog(): Promise<CatalogRow[]> {
           status: r.status,
           usage: await catalogUsage(r.account_code),
           created_at: r.created_at?.toISOString() ?? null,
+          deleted_at: r.deleted_at?.toISOString() ?? null,
         })
       }
       return out
@@ -161,6 +193,142 @@ export async function getCatalog(): Promise<CatalogRow[]> {
       return []
     }
   })
+}
+
+async function stockTypeUsage(name: string): Promise<number> {
+  try {
+    return await prisma.delivery.count({
+      where: { stock_type: { equals: name, mode: 'insensitive' } },
+    })
+  } catch {
+    return 0
+  }
+}
+
+export async function getStockTypes(): Promise<StockTypeRow[]> {
+  try {
+    await requireSuperAdmin()
+  } catch {
+    return []
+  }
+  const { withScopedCache } = await import('@/lib/personnel-cache')
+  return withScopedCache('super-admin:master-stock-types', 60, async () => {
+    try {
+      const rows = await prisma.stockType.findMany({
+        where: { deleted_at: null },
+        orderBy: { name: 'asc' },
+      })
+      return await Promise.all(
+        rows.map(async (r) => ({
+          id: r.id,
+          name: r.name,
+          account_code: r.account_code,
+          asset_type: r.asset_type,
+          account_title: r.account_title,
+          account_name: r.account_name,
+          description: r.description,
+          status: r.status,
+          usage: await stockTypeUsage(r.name),
+          created_at: r.created_at?.toISOString() ?? null,
+          deleted_at: r.deleted_at?.toISOString() ?? null,
+        }))
+      )
+    } catch (e) {
+      console.error('[getStockTypes]', e)
+      return []
+    }
+  })
+}
+
+export async function createStockType(
+  _prev: { ok: boolean; error?: string },
+  formData: FormData
+): Promise<{ ok: boolean; error?: string }> {
+  let actorId = ''
+  try {
+    ;({ userId: actorId } = await requireSuperAdmin())
+    const field = (key: string) => (((formData.get(key) as string) ?? '').trim())
+    const account_code = field('account_code') || null
+    const asset_type = field('asset_type') || null
+    const account_title = field('account_title') || null
+    const account_name = field('account_name') || null
+    // Stock headers mirror asset headers; the name stays the label used by
+    // deliveries, defaulting to the account title.
+    const name = field('name') || account_title
+    const description = field('description') || null
+    if (!account_code) throw new Error('Account code is required.')
+    if (!asset_type) throw new Error('Asset type is required.')
+    if (!name) throw new Error('Account title is required.')
+    if (name.length > 120) throw new Error('Stock header name must be 120 characters or fewer.')
+    const existing = await prisma.stockType.findFirst({
+      where: {
+        OR: [
+          { name: { equals: name, mode: 'insensitive' } },
+          ...(account_code ? [{ account_code }] : []),
+        ],
+      },
+    })
+    if (existing) {
+      if (existing.deleted_at) {
+        throw new Error(
+          `A deleted stock header with this ${existing.account_code === account_code ? 'account code' : 'name'} already exists — restore it from Deleted records instead.`
+        )
+      }
+      throw new Error(
+        existing.account_code === account_code && existing.name.toLowerCase() !== name.toLowerCase()
+          ? `Account code "${account_code}" already exists.`
+          : `Stock header "${name}" already exists.`
+      )
+    }
+    const row = await prisma.stockType.create({
+      data: {
+        name,
+        account_code,
+        asset_type,
+        account_title: account_title ?? name,
+        account_name,
+        description,
+        status: 'active',
+        created_by: actorId,
+      },
+    })
+    void writeAuditLog({
+      userId: actorId,
+      action: 'master-data:create_stock_type',
+      module: 'master-data',
+      details: { purpose: 'Create stock header', summary: `Added stock header "${name}"`, reference_id: row.id },
+    })
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Failed to add stock header.' }
+  }
+  revalidate()
+  return { ok: true }
+}
+
+export async function setStockTypeStatus(
+  id: string,
+  status: 'active' | 'inactive'
+): Promise<{ ok: boolean; error?: string }> {
+  let actorId = ''
+  try {
+    ;({ userId: actorId } = await requireSuperAdmin())
+    const row = await prisma.stockType.findUnique({ where: { id } })
+    if (!row) throw new Error('Stock type not found.')
+    if (status === 'inactive' && (await stockTypeUsage(row.name)) > 0) {
+      throw new Error(`"${row.name}" is used by deliveries and cannot be deactivated.`)
+    }
+    await prisma.stockType.update({ where: { id }, data: { status } })
+    void writeAuditLog({
+      userId: actorId,
+      action: status === 'active' ? 'master-data:reactivate_stock_type' : 'master-data:deactivate_stock_type',
+      module: 'master-data',
+      details: { purpose: 'Toggle stock type', summary: `${status} stock type "${row.name}"`, reference_id: id },
+    })
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Update failed.' }
+  }
+  revalidate()
+  return { ok: true }
 }
 
 export async function createUnit(
@@ -177,7 +345,13 @@ export async function createUnit(
       throw new Error('Use letters, numbers, spaces, dots, dashes only.')
     }
     const existing = await prisma.unit.findUnique({ where: { name } })
-    if (existing) throw new Error(`Unit "${name}" already exists.`)
+    if (existing) {
+      throw new Error(
+        existing.deleted_at
+          ? `Unit "${name}" was deleted — restore it from Deleted records instead of adding it again.`
+          : `Unit "${name}" already exists.`
+      )
+    }
     const row = await prisma.unit.create({
       data: { name, abbreviation, status: 'active', created_by: actorId },
     })
@@ -234,7 +408,10 @@ export async function getDepartments(): Promise<DepartmentRow[]> {
     try {
       const table = departmentsTable()
       if (!table) return []
-      const rows = await table.findMany({ orderBy: { name: 'asc' } })
+      const rows = await table.findMany({
+        where: { deleted_at: null },
+        orderBy: { name: 'asc' },
+      })
       return await Promise.all(
         rows.map(
           async (r: {
@@ -243,6 +420,7 @@ export async function getDepartments(): Promise<DepartmentRow[]> {
             description: string | null
             status: string
             created_at?: Date | null
+            deleted_at?: Date | null
           }) => ({
             id: r.id,
             name: r.name,
@@ -250,6 +428,7 @@ export async function getDepartments(): Promise<DepartmentRow[]> {
             status: r.status,
             usage: await departmentUsage(r.name),
             created_at: r.created_at?.toISOString() ?? null,
+            deleted_at: r.deleted_at?.toISOString() ?? null,
           })
         )
       )
@@ -280,7 +459,13 @@ export async function createDepartment(
     const existing = await table.findFirst({
       where: { name: { equals: name, mode: 'insensitive' } },
     })
-    if (existing) throw new Error(`Department "${name}" already exists.`)
+    if (existing) {
+      throw new Error(
+        existing.deleted_at
+          ? `Department "${name}" was deleted — restore it from Deleted records instead of adding it again.`
+          : `Department "${name}" already exists.`
+      )
+    }
     const row = await table.create({
       data: { name, description, status: 'active', created_by: actorId },
     })
@@ -342,7 +527,13 @@ export async function createCatalogEntry(
     const description = ((formData.get('description') as string) ?? '').trim() || null
     if (!account_code) throw new Error('Account code is required.')
     const existing = await prisma.accountCatalog.findUnique({ where: { account_code } })
-    if (existing) throw new Error(`Code "${account_code}" already exists.`)
+    if (existing) {
+      throw new Error(
+        existing.deleted_at
+          ? `Code "${account_code}" was deleted — restore it from Deleted records instead of adding it again.`
+          : `Code "${account_code}" already exists.`
+      )
+    }
     const row = await prisma.accountCatalog.create({
       data: { account_code, account_title, account_name, asset_type, description, status: 'active', created_by: actorId },
     })
@@ -422,7 +613,448 @@ export async function setCatalogStatus(
   return { ok: true }
 }
 
-// ── Bulk import from Excel (template OR the client's existing file) ──
+/**
+ * Permanently remove soft-deleted rows that have passed the archive retention
+ * window. Runs lazily whenever the archive is read (no scheduler needed); a
+ * row whose delete is still blocked by usage simply stays until it is cleared.
+ */
+async function purgeExpiredMasterData(actorId: string): Promise<number> {
+  const where = { deleted_at: { not: null, lte: archiveCutoff() } }
+  const results = await Promise.allSettled([
+    prisma.unit.deleteMany({ where }),
+    prisma.accountCatalog.deleteMany({ where }),
+    prisma.stockType.deleteMany({ where }),
+    (async () => {
+      const table = departmentsTable()
+      return table ? table.deleteMany({ where }) : { count: 0 }
+    })(),
+  ])
+  let removed = 0
+  for (const result of results) {
+    if (result.status === 'fulfilled') {
+      removed += result.value.count ?? 0
+    } else {
+      // Most likely a foreign-key guard: keep the row and try again next read.
+      console.error('[purgeExpiredMasterData]', result.reason)
+    }
+  }
+  if (removed > 0) {
+    void writeAuditLog({
+      userId: actorId,
+      action: 'master-data:purge_expired',
+      module: 'master-data',
+      details: {
+        purpose: 'Auto-delete expired archived records',
+        summary: `Permanently deleted ${removed} archived record${removed === 1 ? '' : 's'} past the retention window`,
+      },
+    })
+  }
+  return removed
+}
+
+export async function getDeletedMasterData(): Promise<DeletedMasterData> {
+  let actorId = ''
+  try {
+    ;({ userId: actorId } = await requireSuperAdmin())
+  } catch {
+    return { units: [], catalog: [], departments: [], stockTypes: [] }
+  }
+  const { withScopedCache } = await import('@/lib/personnel-cache')
+  return withScopedCache('super-admin:master-deleted', 60, async () => {
+    await purgeExpiredMasterData(actorId)
+    try {
+      const [unitRows, catalogRows, stockTypeRows] = await Promise.all([
+        prisma.unit.findMany({
+          where: { deleted_at: { not: null } },
+          orderBy: { name: 'asc' },
+        }),
+        prisma.accountCatalog.findMany({
+          where: { deleted_at: { not: null } },
+          orderBy: { account_code: 'asc' },
+        }),
+        prisma.stockType.findMany({
+          where: { deleted_at: { not: null } },
+          orderBy: { name: 'asc' },
+        }),
+      ])
+
+      const table = departmentsTable()
+      const departmentRows: Array<{
+        id: string
+        name: string
+        description: string | null
+        status: string
+        created_at?: Date | null
+        deleted_at?: Date | null
+      }> = table
+        ? await table.findMany({
+            where: { deleted_at: { not: null } },
+            orderBy: { name: 'asc' },
+          })
+        : []
+
+      return {
+        units: unitRows.map((r) => ({
+          id: r.id,
+          name: r.name,
+          abbreviation: r.abbreviation,
+          status: r.status,
+          usage: 0,
+          created_at: r.created_at?.toISOString() ?? null,
+          deleted_at: r.deleted_at?.toISOString() ?? null,
+        })),
+        catalog: catalogRows.map((r) => ({
+          id: r.id,
+          account_code: r.account_code,
+          account_title: r.account_title,
+          account_name: r.account_name,
+          asset_type: r.asset_type,
+          description: r.description,
+          status: r.status,
+          usage: 0,
+          created_at: r.created_at?.toISOString() ?? null,
+          deleted_at: r.deleted_at?.toISOString() ?? null,
+        })),
+        stockTypes: stockTypeRows.map((r) => ({
+          id: r.id,
+          name: r.name,
+          account_code: r.account_code,
+          asset_type: r.asset_type,
+          account_title: r.account_title,
+          account_name: r.account_name,
+          description: r.description,
+          status: r.status,
+          usage: 0,
+          created_at: r.created_at?.toISOString() ?? null,
+          deleted_at: r.deleted_at?.toISOString() ?? null,
+        })),
+        departments: departmentRows.map((r) => ({
+          id: r.id,
+          name: r.name,
+          description: r.description,
+          status: r.status,
+          usage: 0,
+          created_at: r.created_at?.toISOString() ?? null,
+          deleted_at: r.deleted_at?.toISOString() ?? null,
+        })),
+      }
+    } catch (e) {
+      console.error('[getDeletedMasterData]', e)
+      return { units: [], catalog: [], departments: [], stockTypes: [] }
+    }
+  })
+}
+
+/**
+ * Soft delete / restore for the four master-data lists. Deleting only stamps
+ * `deleted_at` (rows stay in the DB so history keeps resolving); restoring
+ * clears it. Deleting is blocked while the record is still in use, exactly
+ * like deactivation.
+ */
+export type MasterDataKind = 'unit' | 'department' | 'stock_type' | 'catalog'
+
+export interface RestoreSelection {
+  kind: MasterDataKind
+  id: string
+}
+
+/** Restore many soft-deleted rows in one round-trip. */
+export async function restoreMasterData(
+  items: RestoreSelection[]
+): Promise<{ ok: boolean; error?: string; restored?: number }> {
+  let actorId = ''
+  try {
+    ;({ userId: actorId } = await requireSuperAdmin())
+    const byKind = (kind: MasterDataKind) =>
+      items.filter((i) => i.kind === kind).map((i) => i.id)
+    const unitIds = byKind('unit')
+    const catalogIds = byKind('catalog')
+    const stockTypeIds = byKind('stock_type')
+    const departmentIds = byKind('department')
+    if (!unitIds.length && !catalogIds.length && !stockTypeIds.length && !departmentIds.length) {
+      throw new Error('Select at least one record to restore.')
+    }
+
+    let restored = 0
+    if (unitIds.length) {
+      const r = await prisma.unit.updateMany({
+        where: { id: { in: unitIds }, deleted_at: { not: null } },
+        data: { deleted_at: null },
+      })
+      restored += r.count
+    }
+    if (catalogIds.length) {
+      const r = await prisma.accountCatalog.updateMany({
+        where: { id: { in: catalogIds }, deleted_at: { not: null } },
+        data: { deleted_at: null },
+      })
+      restored += r.count
+    }
+    if (stockTypeIds.length) {
+      const r = await prisma.stockType.updateMany({
+        where: { id: { in: stockTypeIds }, deleted_at: { not: null } },
+        data: { deleted_at: null },
+      })
+      restored += r.count
+    }
+    if (departmentIds.length) {
+      const table = departmentsTable()
+      if (!table) throw new Error('Departments table is not ready yet — restart the dev server.')
+      const r = await table.updateMany({
+        where: { id: { in: departmentIds }, deleted_at: { not: null } },
+        data: { deleted_at: null },
+      })
+      restored += r.count
+    }
+
+    void writeAuditLog({
+      userId: actorId,
+      action: 'master-data:restore_records',
+      module: 'master-data',
+      details: {
+        purpose: 'Bulk restore master data',
+        summary: `Restored ${restored} deleted record${restored === 1 ? '' : 's'}`,
+      },
+    })
+    revalidate()
+    return { ok: true, restored }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Restore failed.' }
+  }
+}
+
+/**
+ * Permanently delete archived rows (hard delete). This is only allowed for
+ * records that are already soft-deleted and no longer referenced anywhere;
+ * the same usage guards as soft delete apply, so history cannot be broken.
+ */
+export async function deleteMasterDataPermanently(
+  items: RestoreSelection[]
+): Promise<{ ok: boolean; error?: string; deleted?: number }> {
+  let actorId = ''
+  try {
+    ;({ userId: actorId } = await requireSuperAdmin())
+    const byKind = (kind: MasterDataKind) =>
+      items.filter((i) => i.kind === kind).map((i) => i.id)
+    const unitIds = byKind('unit')
+    const catalogIds = byKind('catalog')
+    const stockTypeIds = byKind('stock_type')
+    const departmentIds = byKind('department')
+    if (!unitIds.length && !catalogIds.length && !stockTypeIds.length && !departmentIds.length) {
+      throw new Error('Select at least one record to delete.')
+    }
+
+    // Validate every record up front so a bulk delete is all-or-nothing for
+    // usage violations (no partial surprise removals).
+    if (unitIds.length) {
+      const rows = await prisma.unit.findMany({
+        where: { id: { in: unitIds }, deleted_at: { not: null } },
+        select: { name: true },
+      })
+      for (const row of rows) {
+        if ((await unitUsage(row.name)) > 0) {
+          throw new Error(`"${row.name}" is in use and cannot be permanently deleted.`)
+        }
+      }
+    }
+    if (catalogIds.length) {
+      const rows = await prisma.accountCatalog.findMany({
+        where: { id: { in: catalogIds }, deleted_at: { not: null } },
+        select: { account_code: true },
+      })
+      for (const row of rows) {
+        if ((await catalogUsage(row.account_code)) > 0) {
+          throw new Error(`Code "${row.account_code}" is in use and cannot be permanently deleted.`)
+        }
+      }
+    }
+    if (stockTypeIds.length) {
+      const rows = await prisma.stockType.findMany({
+        where: { id: { in: stockTypeIds }, deleted_at: { not: null } },
+        select: { name: true },
+      })
+      for (const row of rows) {
+        if ((await stockTypeUsage(row.name)) > 0) {
+          throw new Error(`"${row.name}" is used by deliveries and cannot be permanently deleted.`)
+        }
+      }
+    }
+    if (departmentIds.length) {
+      const table = departmentsTable()
+      if (!table) throw new Error('Departments table is not ready yet — restart the dev server.')
+      const rows = await table.findMany({
+        where: { id: { in: departmentIds }, deleted_at: { not: null } },
+        select: { name: true },
+      })
+      for (const row of rows) {
+        if ((await departmentUsage(row.name)) > 0) {
+          throw new Error(`"${row.name}" is assigned to personnel and cannot be permanently deleted.`)
+        }
+      }
+    }
+
+    const whereDeleted = (ids: string[]) => ({
+      id: { in: ids },
+      deleted_at: { not: null },
+    })
+    let deleted = 0
+    if (unitIds.length) {
+      deleted += (await prisma.unit.deleteMany({ where: whereDeleted(unitIds) })).count
+    }
+    if (catalogIds.length) {
+      deleted += (await prisma.accountCatalog.deleteMany({ where: whereDeleted(catalogIds) })).count
+    }
+    if (stockTypeIds.length) {
+      deleted += (await prisma.stockType.deleteMany({ where: whereDeleted(stockTypeIds) })).count
+    }
+    if (departmentIds.length) {
+      const table = departmentsTable()
+      if (!table) throw new Error('Departments table is not ready yet — restart the dev server.')
+      deleted += (await table.deleteMany({ where: whereDeleted(departmentIds) })).count
+    }
+
+    void writeAuditLog({
+      userId: actorId,
+      action: 'master-data:permanently_delete_records',
+      module: 'master-data',
+      details: {
+        purpose: 'Permanently delete archived master data',
+        summary: `Permanently deleted ${deleted} archived record${deleted === 1 ? '' : 's'}`,
+      },
+    })
+    revalidate()
+    return { ok: true, deleted }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Permanent delete failed.' }
+  }
+}
+
+export async function setUnitDeleted(
+  id: string,
+  deleted: boolean
+): Promise<{ ok: boolean; error?: string }> {
+  let actorId = ''
+  try {
+    ;({ userId: actorId } = await requireSuperAdmin())
+    const row = await prisma.unit.findUnique({ where: { id } })
+    if (!row) throw new Error('Unit not found.')
+    if (deleted && (await unitUsage(row.name)) > 0) {
+      throw new Error(`"${row.name}" is in use and cannot be deleted.`)
+    }
+    await prisma.unit.update({ where: { id }, data: { deleted_at: deleted ? new Date() : null } })
+    void writeAuditLog({
+      userId: actorId,
+      action: deleted ? 'master-data:delete_unit' : 'master-data:restore_unit',
+      module: 'master-data',
+      details: {
+        purpose: deleted ? 'Soft delete unit' : 'Restore unit',
+        summary: `${deleted ? 'Deleted' : 'Restored'} unit "${row.name}"`,
+        reference_id: id,
+      },
+    })
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Delete failed.' }
+  }
+  revalidate()
+  return { ok: true }
+}
+
+export async function setDepartmentDeleted(
+  id: string,
+  deleted: boolean
+): Promise<{ ok: boolean; error?: string }> {
+  let actorId = ''
+  try {
+    ;({ userId: actorId } = await requireSuperAdmin())
+    const table = departmentsTable()
+    if (!table) throw new Error('Departments table is not ready yet — restart the dev server.')
+    const row = await table.findUnique({ where: { id } })
+    if (!row) throw new Error('Department not found.')
+    if (deleted && (await departmentUsage(row.name)) > 0) {
+      throw new Error(`"${row.name}" is assigned to personnel and cannot be deleted.`)
+    }
+    await table.update({ where: { id }, data: { deleted_at: deleted ? new Date() : null } })
+    void writeAuditLog({
+      userId: actorId,
+      action: deleted ? 'master-data:delete_department' : 'master-data:restore_department',
+      module: 'master-data',
+      details: {
+        purpose: deleted ? 'Soft delete department' : 'Restore department',
+        summary: `${deleted ? 'Deleted' : 'Restored'} department "${row.name}"`,
+        reference_id: id,
+      },
+    })
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Delete failed.' }
+  }
+  revalidate()
+  return { ok: true }
+}
+
+export async function setStockTypeDeleted(
+  id: string,
+  deleted: boolean
+): Promise<{ ok: boolean; error?: string }> {
+  let actorId = ''
+  try {
+    ;({ userId: actorId } = await requireSuperAdmin())
+    const row = await prisma.stockType.findUnique({ where: { id } })
+    if (!row) throw new Error('Stock header not found.')
+    if (deleted && (await stockTypeUsage(row.name)) > 0) {
+      throw new Error(`"${row.name}" is used by deliveries and cannot be deleted.`)
+    }
+    await prisma.stockType.update({ where: { id }, data: { deleted_at: deleted ? new Date() : null } })
+    void writeAuditLog({
+      userId: actorId,
+      action: deleted ? 'master-data:delete_stock_type' : 'master-data:restore_stock_type',
+      module: 'master-data',
+      details: {
+        purpose: deleted ? 'Soft delete stock header' : 'Restore stock header',
+        summary: `${deleted ? 'Deleted' : 'Restored'} stock header "${row.name}"`,
+        reference_id: id,
+      },
+    })
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Delete failed.' }
+  }
+  revalidate()
+  return { ok: true }
+}
+
+export async function setCatalogDeleted(
+  id: string,
+  deleted: boolean
+): Promise<{ ok: boolean; error?: string }> {
+  let actorId = ''
+  try {
+    ;({ userId: actorId } = await requireSuperAdmin())
+    const row = await prisma.accountCatalog.findUnique({ where: { id } })
+    if (!row) throw new Error('Entry not found.')
+    if (deleted && (await catalogUsage(row.account_code)) > 0) {
+      throw new Error(`Code "${row.account_code}" is in use and cannot be deleted.`)
+    }
+    await prisma.accountCatalog.update({
+      where: { id },
+      data: { deleted_at: deleted ? new Date() : null },
+    })
+    void writeAuditLog({
+      userId: actorId,
+      action: deleted ? 'master-data:delete_catalog' : 'master-data:restore_catalog',
+      module: 'master-data',
+      details: {
+        purpose: deleted ? 'Soft delete catalog entry' : 'Restore catalog entry',
+        summary: `${deleted ? 'Deleted' : 'Restored'} ${row.account_code}`,
+        reference_id: id,
+      },
+    })
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Delete failed.' }
+  }
+  revalidate()
+  return { ok: true }
+}
+
+
 // Only columns whose header matches one of CATALOG_EXCEL_HEADERS
 // (case-insensitive, trimmed, any order — extra columns are ignored).
 // Each row is handled independently: duplicates (repeated in the file or
@@ -561,11 +1193,17 @@ export async function importCatalogFromExcel(
   const messages: string[] = []
   const seenInFile = new Set<string>()
 
-  // Load existing codes once so every row can be duplicate-checked.
+  // Load existing codes once so every row can be duplicate-checked. Codes of
+  // soft-deleted rows still exist in the DB (unique constraint), so we track
+  // them separately to point the user at "restore" instead of re-importing.
   let existingCodes = new Set<string>()
+  const deletedCodes = new Set<string>()
   try {
-    const rows = await prisma.accountCatalog.findMany({ select: { account_code: true } })
+    const rows = await prisma.accountCatalog.findMany({
+      select: { account_code: true, deleted_at: true },
+    })
     existingCodes = new Set(rows.map((r) => r.account_code))
+    for (const r of rows) if (r.deleted_at) deletedCodes.add(r.account_code)
   } catch (e) {
     console.error('[importCatalogFromExcel] preload codes', e)
     return { ok: false, success: false, error: 'Could not read the current catalog. Try again.' }
@@ -595,7 +1233,11 @@ export async function importCatalogFromExcel(
     // Already in the catalog → message + skip (imports never overwrite).
     if (existingCodes.has(account_code)) {
       skipped++
-      messages.push(`Row ${i} (${account_code}): already exists — skipped.`)
+      messages.push(
+        deletedCodes.has(account_code)
+          ? `Row ${i} (${account_code}): already exists but was deleted — restore it in Master Data instead.`
+          : `Row ${i} (${account_code}): already exists — skipped.`
+      )
       continue
     }
 

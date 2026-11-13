@@ -96,7 +96,6 @@ export default function PersonnelIssuancesPage() {
   const isIcs = doc?.doc_type === "ICS";
   return (
     <section className={styles.section}>
-      <p className={styles.crumb}>Personnel / Issuances</p>
       <div className={styles.headerRow}>
         <div>
           <h1 className={styles.title}>PAR / ICS Issuances</h1>

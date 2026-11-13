@@ -153,6 +153,95 @@
   margin: 0.25rem 0 0;
 }
 
+/* ─── Delivery review: receipt + verification side by side ────────────────── */
+
+.reviewGrid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1.25rem;
+  align-items: stretch;
+}
+
+@media (min-width: 1100px) {
+  .reviewGrid {
+    grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+  }
+}
+
+/* Verification card sits on a low-opacity yellow wash to separate the
+   checklist from the delivery record beside it. */
+.verificationCard {
+  background-color: color-mix(in srgb, var(--color-yellow-500) 7%, #fff);
+  border-color: color-mix(in srgb, var(--color-yellow-500) 28%, #fff);
+}
+
+/* ─── Documentary photos (centered in the equal-height card) ─────────────── */
+
+.photoBody {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+}
+
+.photoGrid {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 0.75rem;
+}
+
+.addPhotoTile {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  width: 9rem;
+  height: 9rem;
+  border-radius: 0.5rem;
+  border: 1px dashed var(--color-navy-300);
+  background-color: color-mix(in srgb, var(--color-yellow-500) 8%, #fff);
+  color: var(--color-navy-600);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    background-color 0.15s ease,
+    color 0.15s ease;
+}
+
+.addPhotoTile:hover {
+  border-color: var(--color-yellow-600);
+  background-color: color-mix(in srgb, var(--color-yellow-500) 16%, #fff);
+  color: var(--color-navy-900);
+}
+
+.addPhotoTile:disabled {
+  cursor: wait;
+  opacity: 0.75;
+}
+
+.photoHint {
+  width: 100%;
+  max-width: 34rem;
+  margin: 0;
+  justify-content: center;
+  text-align: center;
+}
+
+.photoError {
+  margin: 0;
+  text-align: center;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: #991b1b;
+}
+
 /* ─── Delivery summary grid ───────────────────────────────────────────────── */
 
 .summaryGrid {
@@ -369,6 +458,183 @@
   width: 8rem;
 }
 
+/* ─── Item status radio chips (inside the verification overlay) ──────────── */
+
+.statusGroup {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.25rem 0.875rem;
+  min-width: 9.5rem;
+  padding: 0;
+  border: none;
+  background: transparent;
+}
+
+.statusChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.125rem 0;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--color-navy-600);
+  cursor: pointer;
+  user-select: none;
+  transition: color 0.15s ease;
+}
+
+.statusChip:hover {
+  color: var(--color-navy-900);
+}
+
+.statusChip[data-checked="true"] {
+  font-weight: 700;
+  color: var(--color-navy-900);
+}
+
+.statusRadio {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-block;
+  flex-shrink: 0;
+  width: 0.9375rem;
+  height: 0.9375rem;
+  margin: 0;
+  padding: 0.1875rem;
+  border-radius: 9999px;
+  border: 1.5px solid var(--color-navy-300);
+  background-color: transparent;
+  background-clip: content-box;
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    background-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.statusRadio:checked {
+  border-color: var(--color-yellow-600, #ca8a04);
+  background-color: var(--color-yellow-600, #ca8a04);
+}
+
+.statusRadio:focus-visible {
+  outline: 2px solid var(--color-yellow-500);
+  outline-offset: 2px;
+}
+
+.statusChip[data-tone="ok"] .statusRadio:checked {
+  border-color: #16a34a;
+  background-color: #16a34a;
+}
+
+.statusChip[data-tone="warn"] .statusRadio:checked {
+  border-color: #d97706;
+  background-color: #d97706;
+}
+
+.statusChip[data-tone="bad"] .statusRadio:checked {
+  border-color: #dc2626;
+  background-color: #dc2626;
+}
+
+/* ─── Cross-verification banner (Supplier & Document card) ───────────────── */
+
+.crossVerifyBanner {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  margin-top: 0.25rem;
+  padding: 0.75rem 0.875rem;
+  border-radius: 8px;
+  border: 1px dashed color-mix(in srgb, var(--color-yellow-600) 55%, #fff);
+  background-color: color-mix(in srgb, var(--color-yellow-500) 14%, #fff);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.crossVerifyBanner:hover {
+  background-color: color-mix(in srgb, var(--color-yellow-500) 22%, #fff);
+  border-color: var(--color-yellow-600);
+}
+
+.crossVerifyBanner[data-complete="true"] {
+  border-style: solid;
+  border-color: #86efac;
+  background-color: #f0fdf4;
+}
+
+.crossVerifyIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 9999px;
+  background-color: var(--color-yellow-500);
+  color: var(--color-navy-900);
+  flex-shrink: 0;
+}
+
+.crossVerifyBanner[data-complete="true"] .crossVerifyIcon {
+  background-color: #dcfce7;
+  color: #166534;
+}
+
+.crossVerifyText {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  min-width: 0;
+  flex: 1;
+}
+
+.crossVerifyTitle {
+  font-size: 0.8125rem;
+  font-weight: 700;
+  color: var(--color-navy-900);
+}
+
+.crossVerifySub {
+  font-size: 0.75rem;
+  color: var(--color-navy-500);
+  line-height: 1.35;
+}
+
+.crossVerifyProgress {
+  flex-shrink: 0;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  padding: 0.1875rem 0.5rem;
+  border-radius: 9999px;
+  background-color: #fff;
+  border: 1px solid var(--color-navy-200);
+  color: var(--color-navy-600);
+  white-space: nowrap;
+}
+
+/* ─── Overlay footer ─────────────────────────────────────────────────────── */
+
+.dialogFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding-top: 0.25rem;
+  border-top: 1px solid var(--color-navy-100);
+}
+
+.dialogHint {
+  margin: 0;
+  max-width: 46rem;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  color: var(--color-navy-500);
+}
+
 .remarksInput {
   min-width: 10rem;
 }
@@ -425,6 +691,57 @@
 }
 
 /* ─── Verdict & inspector section ────────────────────────────────────────── */
+
+/* Locked until item cross-verification is complete. */
+.lockNotice {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 0.875rem;
+  border-radius: 8px;
+  border: 1px dashed color-mix(in srgb, var(--color-navy-300) 80%, #fff);
+  background-color: var(--color-navy-50, #f8fafc);
+}
+
+.lockIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 9999px;
+  background-color: var(--color-navy-100);
+  color: var(--color-navy-600);
+  flex-shrink: 0;
+}
+
+.lockText {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  min-width: 0;
+  flex: 1;
+}
+
+.lockTitle {
+  margin: 0;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  color: var(--color-navy-900);
+}
+
+.lockSub {
+  margin: 0;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  color: var(--color-navy-500);
+}
+
+.lockedBody {
+  opacity: 0.55;
+  pointer-events: none;
+  user-select: none;
+}
 
 .verdictGrid {
   display: grid;

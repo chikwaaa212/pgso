@@ -64,12 +64,12 @@ export async function GET(req: Request) {
       async () => {
         const [units, catalog] = await Promise.all([
           prisma.unit.findMany({
-            where: { status: 'active' },
+            where: { status: 'active', deleted_at: null },
             orderBy: { name: 'asc' },
             select: { name: true, abbreviation: true },
           }),
           prisma.accountCatalog.findMany({
-            where: { status: 'active' },
+            where: { status: 'active', deleted_at: null },
             orderBy: { account_code: 'asc' },
             select: { account_code: true, account_title: true, asset_type: true, account_name: true },
           }),

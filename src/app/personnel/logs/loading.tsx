@@ -29,7 +29,6 @@ export default function LogsLoading() {
       aria-busy="true"
       aria-label="Loading activity logs"
     >
-      <p className={styles.crumb}>Personnel / Logs</p>
 
       {/* Header — same as the real page (no actions row) */}
       <div className={styles.headerRow}>

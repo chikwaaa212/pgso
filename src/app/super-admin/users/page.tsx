@@ -89,7 +89,6 @@ export default function SuperAdminUsersPage() {
 
   return (
     <section className={styles.section}>
-      <p className={styles.crumb}>Users</p>
       <div>
         <h1 className={styles.title}>Users</h1>
         <p className={styles.subtitle}>

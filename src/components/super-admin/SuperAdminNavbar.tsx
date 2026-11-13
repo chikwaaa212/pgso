@@ -1,37 +1,17 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { ComponentType, SVGProps } from "react";
 import Image from "next/image";
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { usePathname, useRouter } from "next/navigation";
 import {
-  Archive,
-  ArrowLeftRight,
-  BarChart3,
-  Boxes,
   ChevronDown,
-  ClipboardCheck,
-  ClipboardList,
-  Database,
-  Download,
-  FileSpreadsheet,
-  FileText,
   KeyRound,
-  LayoutDashboard,
-  Lightbulb,
   LogOut,
   Menu,
-  Package,
   Pencil,
-  ReceiptText,
-  ScanLine,
-  ScrollText,
-  TriangleAlert,
-  Truck,
   User,
-  Users,
-  Wrench,
   X,
 } from "lucide-react";
 import { logout } from "@/app/(auth)/auth";
@@ -39,29 +19,20 @@ import { broadcastLogout } from "@/components/ClientCacheManager";
 import { navPrefetchProps } from "@/lib/nav-prefetch";
 import { SubmitButton } from "@/components/ui/submit-button";
 import { useToast } from "@/components/ui/toaster";
-import { ChangePasswordDialog } from "@/components/account/ChangePasswordDialog";
+// Supabase-backed dialog is only needed once the account menu is opened, so
+// keep it out of the first-load bundle.
+const ChangePasswordDialog = dynamic(
+  () =>
+    import("@/components/account/ChangePasswordDialog").then(
+      (m) => m.ChangePasswordDialog
+    ),
+  { ssr: false }
+);
 import { EditNameDialog } from "@/components/account/EditNameDialog";
 import { updateMyDisplayName } from "@/app/super-admin/users/actions";
 import { cn } from "@/lib/utils";
+import { buildSuperAdminNav, formatBadge, type NavGroup } from "./super-admin-nav";
 import styles from "./SuperAdminNavbar.module.css";
-
-interface NavLink {
-  label: string;
-  href: string;
-  description: string;
-  icon: ComponentType<SVGProps<SVGSVGElement> & { size?: number | string }>;
-  badge?: number;
-}
-
-interface NavGroup {
-  title: string;
-  links: NavLink[];
-}
-
-/** Badges cap at 99+ so large queues can't stretch the navbar. */
-function formatBadge(count: number): string {
-  return count > 99 ? "99+" : String(count);
-}
 
 export function SuperAdminNavbar({
   pendingAccounts = 0,
@@ -85,7 +56,6 @@ export function SuperAdminNavbar({
   const pathname = usePathname();
   const router = useRouter();
   const { toast } = useToast();
-  const [openMenu, setOpenMenu] = useState<string | null>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [mobileSection, setMobileSection] = useState<string | null>(null);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -93,156 +63,13 @@ export function SuperAdminNavbar({
   const [editNameOpen, setEditNameOpen] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
 
-  const dashboard: NavLink = {
-    label: "Dashboard",
-    href: "/super-admin/dashboard",
-    description: "Operations at a glance",
-    icon: LayoutDashboard,
-  };
-
-  // Same modules as the personnel navbar (oversight sits where personnel
-  // work), plus an Administration group for super-admin-only pages.
-  const groups: NavGroup[] = [
-    {
-      title: "Operations",
-      links: [
-        {
-          label: "Deliveries",
-          href: "/super-admin/deliveries",
-          description: "Log and track deliveries",
-          icon: Truck,
-        },
-        {
-          label: "Inspections",
-          href: "/super-admin/inspections",
-          description: "Review and confirm inspections",
-          icon: ClipboardCheck,
-          badge: pendingInspections,
-        },
-      ],
-    },
-    {
-      title: "Inventory",
-      links: [
-        {
-          label: "Stock",
-          href: "/super-admin/inventory",
-          description: "Monitor stock levels",
-          icon: Boxes,
-        },
-        {
-          label: "Assets",
-          href: "/super-admin/assets",
-          description: "Encode and track assets",
-          icon: Package,
-        },
-      ],
-    },
-    {
-      title: "Records",
-      links: [
-        {
-          label: "Documents",
-          href: "/super-admin/documents",
-          description: "RIS, PAR, ICS, AIR files",
-          icon: FileText,
-          badge: totalDocuments,
-        },
-        {
-          label: "PPMP Files",
-          href: "/super-admin/ppmp",
-          description: "All uploaded PPMP workbooks",
-          icon: FileSpreadsheet,
-        },
-        {
-          label: "PAR / ICS",
-          href: "/super-admin/issuances",
-          description: "Accountability documents",
-          icon: ArrowLeftRight,
-        },
-        {
-          label: "Issues",
-          href: "/super-admin/issues",
-          description: "Report and track issues",
-          icon: TriangleAlert,
-        },
-        {
-          label: "QR Scanner",
-          href: "/super-admin/scan",
-          description: "Scan asset QR codes",
-          icon: ScanLine,
-        },
-        {
-          label: "Requests",
-          href: "/super-admin/requests",
-          description: "Review supply requests",
-          icon: ClipboardList,
-          badge: pendingRequests,
-        },
-        {
-          label: "Repairs",
-          href: "/super-admin/repairs",
-          description: "Track repair tickets",
-          icon: Wrench,
-          badge: pendingRepairs,
-        },
-        {
-          label: "Reports",
-          href: "/super-admin/reports",
-          description: "Aging, issuance and conditions",
-          icon: BarChart3,
-        },
-        {
-          label: "Recommendations",
-          href: "/super-admin/recommendations",
-          description: "Replenishment, disposal and idle advice",
-          icon: Lightbulb,
-        },
-        {
-          label: "Logs",
-          href: "/super-admin/logs",
-          description: "Activity audit trail",
-          icon: ScrollText,
-        },
-        {
-          label: "Templates",
-          href: "/super-admin/templates",
-          description: "Download Excel templates",
-          icon: Download,
-        },
-      ],
-    },
-    {
-      title: "Administration",
-      links: [
-        {
-          label: "Users",
-          href: "/super-admin/users",
-          description: "Approve and manage accounts",
-          icon: Users,
-          badge: pendingAccounts,
-        },
-        {
-          label: "Master Data",
-          href: "/super-admin/master-data",
-          description: "Catalogs, units, departments",
-          icon: Database,
-        },
-        {
-          label: "Transactions",
-          href: "/super-admin/transactions",
-          description: "System-wide transactions",
-          icon: ReceiptText,
-        },
-        {
-          label: "All Records",
-          href: "/super-admin/records",
-          description: "Every record in one place",
-          icon: Archive,
-        },
-      ],
-    },
-  ];
+  const { dashboard, groups } = buildSuperAdminNav({
+    pendingAccounts,
+    pendingInspections,
+    pendingRequests,
+    pendingRepairs,
+    totalDocuments,
+  });
 
   const isActive = (href: string) =>
     pathname === href || pathname.startsWith(href + "/");
@@ -256,7 +83,6 @@ export function SuperAdminNavbar({
   // Close menus on navigation; lock body scroll while the mobile sheet is open.
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional menu reset on route change
-    setOpenMenu(null);
     setMobileOpen(false);
     setUserMenuOpen(false);
     setChangePwOpen(false);
@@ -306,102 +132,6 @@ export function SuperAdminNavbar({
           </span>
         </Link>
 
-        {/* Desktop nav */}
-        <nav className={styles.nav} aria-label="Super admin navigation">
-          <Link
-            href={dashboard.href}
-            className={styles.topLink}
-            data-active={isActive(dashboard.href)}
-            aria-current={isActive(dashboard.href) ? "page" : undefined}
-            {...navPrefetchProps(dashboard.href)}
-          >
-            {dashboard.label}
-          </Link>
-          {groups.map((group) => {
-            const active = groupActive(group);
-            const badge = groupBadge(group);
-            const open = openMenu === group.title;
-            return (
-              <div
-                key={group.title}
-                className={styles.menu}
-                onMouseEnter={() => {
-                  setOpenMenu(group.title);
-                  setUserMenuOpen(false);
-                }}
-                onMouseLeave={() => setOpenMenu((cur) => (cur === group.title ? null : cur))}
-              >
-                <button
-                  type="button"
-                  className={styles.topLink}
-                  data-active={active}
-                  aria-expanded={open}
-                  aria-haspopup="true"
-                  onClick={() => {
-                    setOpenMenu(open ? null : group.title);
-                    setUserMenuOpen(false);
-                  }}
-                >
-                  {group.title}
-                  {badge > 0 && (
-                    <span className={styles.triggerDot} aria-label={`${badge} pending`} />
-                  )}
-                  <ChevronDown
-                    size={14}
-                    className={styles.chevron}
-                    data-open={open}
-                    aria-hidden="true"
-                  />
-                </button>
-                {open && (
-                  <div
-                    className={styles.panel}
-                    data-wide={group.links.length > 4}
-                    role="menu"
-                    aria-label={`${group.title} submenu`}
-                  >
-                    {group.links.map((link) => {
-                      const Icon = link.icon;
-                      const linkActive = isActive(link.href);
-                      return (
-                        <Link
-                          key={link.href}
-                          href={link.href}
-                          className={styles.item}
-                          data-active={linkActive}
-                          aria-current={linkActive ? "page" : undefined}
-                          onClick={() => setOpenMenu(null)}
-                          {...navPrefetchProps(link.href)}
-                        >
-                          <span className={styles.itemIcon} aria-hidden="true">
-                            <Icon size={18} />
-                          </span>
-                          <span className={styles.itemText}>
-                            <span className={styles.itemLabel}>
-                              {link.label}
-                              {(link.badge ?? 0) > 0 && (
-                                <span
-                                  className={styles.badge}
-                                  aria-label={`${link.badge} pending`}
-                                >
-                                  {formatBadge(link.badge ?? 0)}
-                                </span>
-                              )}
-                            </span>
-                            <span className={styles.itemDesc}>
-                              {link.description}
-                            </span>
-                          </span>
-                        </Link>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </nav>
-
         <div className={styles.right}>
           <div className={styles.userMenu} ref={userMenuRef}>
             <button
@@ -410,7 +140,6 @@ export function SuperAdminNavbar({
               data-open={userMenuOpen}
               onClick={() => {
                 setUserMenuOpen((v) => !v);
-                setOpenMenu(null);
               }}
               aria-label="Account menu"
               aria-expanded={userMenuOpen}
@@ -618,7 +347,9 @@ export function SuperAdminNavbar({
           </div>
         </div>
       )}
-      <ChangePasswordDialog open={changePwOpen} onOpenChange={setChangePwOpen} />
+      {changePwOpen && (
+        <ChangePasswordDialog open={changePwOpen} onOpenChange={setChangePwOpen} />
+      )}
       <EditNameDialog
         open={editNameOpen}
         onOpenChange={setEditNameOpen}

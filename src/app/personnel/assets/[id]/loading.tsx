@@ -94,14 +94,6 @@ export default function AssetDetailLoading() {
       aria-busy="true"
       aria-label="Loading asset details"
     >
-      <p className={styles.crumb}>
-        Personnel / Assets /{" "}
-        <span
-          aria-hidden="true"
-          className="inline-block h-3 w-20 animate-pulse rounded bg-navy-100 align-middle"
-        />
-      </p>
-
       {/* Header — same as the real page */}
       <div className={styles.headerRow}>
         <div>

@@ -135,7 +135,6 @@ function SuperAdminRepairsContent() {
 
   return (
     <section className={styles.section}>
-      <p className={styles.crumb}>Repairs</p>
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className={styles.title}>Repairs</h1>

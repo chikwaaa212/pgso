@@ -457,7 +457,7 @@ export function ReportsWorkspace({ portal }: { portal: Portal }) {
         page: agingPage,
         pageSize: PAGE_SIZE,
       }),
-    { staleTime: 60_000 }
+    { staleTime: 60_000, enabled: tab === 'aging' }
   )
 
   const quarterly = useCachedAction(
@@ -470,7 +470,7 @@ export function ReportsWorkspace({ portal }: { portal: Portal }) {
       role,
     }),
     () => fetchQuarterlyIssuanceReport({ year }),
-    { staleTime: 60_000 }
+    { staleTime: 60_000, enabled: tab === 'quarterly' }
   )
 
   const conditions = useCachedAction(
@@ -483,7 +483,7 @@ export function ReportsWorkspace({ portal }: { portal: Portal }) {
       role,
     }),
     () => fetchAssetConditionReport(),
-    { staleTime: 60_000 }
+    { staleTime: 60_000, enabled: tab === 'conditions' }
   )
 
   const age = aging.data
@@ -516,9 +516,11 @@ export function ReportsWorkspace({ portal }: { portal: Portal }) {
     <section className={styles.page}>
       <header className={styles.header}>
         <div>
-          <p className={styles.crumb}>
-            {portal === 'super-admin' ? 'Super Admin' : 'Personnel'} / Reports
-          </p>
+          {portal !== 'personnel' && (
+            <p className={styles.crumb}>
+              {portal === 'super-admin' ? 'Super Admin' : 'Personnel'} / Reports
+            </p>
+          )}
           <h1 className={styles.title}>Reports</h1>
           <p className={styles.subtitle}>
             Delayed and aging transactions, quarterly supply issuance, and

@@ -33,6 +33,7 @@ export async function stockInspectionItems(
           account_code: true,
           delivery_kind: true,
           asset_type: true,
+          stock_type: true,
         items: {
             select: {
               id: true,
@@ -73,10 +74,13 @@ export async function stockInspectionItems(
   let costsFixed = 0;
   const accountCode = inspection.delivery.account_code?.trim() || null;
   const deliveryKind = inspection.delivery.delivery_kind?.trim() || null;
-  // Custom-mode deliveries carry a free-typed asset type — seed it as the
-  // inventory category so new stocks keep their type even before (or without)
-  // a catalog title lookup.
-  const assetType = inspection.delivery.asset_type?.trim() || null;
+  // Stock deliveries carry a Stock Type; assets carry the catalog-derived
+  // asset type. Either one seeds the inventory category so new rows keep
+  // their type even before (or without) a catalog title lookup.
+  const assetType =
+    inspection.delivery.stock_type?.trim() ||
+    inspection.delivery.asset_type?.trim() ||
+    null;
 
   await prisma.$transaction(async (tx) => {
     for (const item of inspection.delivery.items) {

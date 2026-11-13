@@ -314,7 +314,6 @@ export default function SuperAdminInventoryPage() {
 
   return (
     <section className={styles.section}>
-      <p className={styles.crumb}>Stocks</p>
       <div>
         <h1 className={styles.title}>Stocks</h1>
         <p className={styles.subtitle}>

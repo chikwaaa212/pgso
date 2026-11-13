@@ -1,35 +1,19 @@
 "use client";
 
 import { useEffect, useRef, useState, useTransition } from "react";
-import type { ComponentType, SVGProps } from "react";
 import Image from "next/image";
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { usePathname, useRouter } from "next/navigation";
 import {
-  ArrowLeftRight,
-  BarChart3,
-  Boxes,
   Building2,
-  CalendarCheck,
   Check,
   ChevronDown,
-  ClipboardCheck,
-  ClipboardList,
-  Download,
-  FileText,
   KeyRound,
-  LayoutDashboard,
-  Lightbulb,
   LogOut,
   Menu,
-  Package,
   Pencil,
-  ScanLine,
-  ScrollText,
-  TriangleAlert,
-  Truck,
   User,
-  Wrench,
   X,
 } from "lucide-react";
 import { logout } from "@/app/(auth)/auth";
@@ -39,28 +23,23 @@ import { updateMyDepartment } from "@/app/personnel/department/actions";
 import { updateMyDisplayName } from "@/app/personnel/account/actions";
 import { SubmitButton } from "@/components/ui/submit-button";
 import { useToast } from "@/components/ui/toaster";
-import { ChangePasswordDialog } from "@/components/account/ChangePasswordDialog";
+// Supabase-backed dialog is only needed once the account menu is opened, so
+// keep it out of the first-load bundle.
+const ChangePasswordDialog = dynamic(
+  () =>
+    import("@/components/account/ChangePasswordDialog").then(
+      (m) => m.ChangePasswordDialog
+    ),
+  { ssr: false }
+);
 import { EditNameDialog } from "@/components/account/EditNameDialog";
 import { cn } from "@/lib/utils";
+import {
+  buildPersonnelNav,
+  formatBadge,
+  type NavGroup,
+} from "./personnel-nav";
 import styles from "./PersonnelNavbar.module.css";
-
-interface NavLink {
-  label: string;
-  href: string;
-  description: string;
-  icon: ComponentType<SVGProps<SVGSVGElement> & { size?: number | string }>;
-  badge?: number;
-}
-
-interface NavGroup {
-  title: string;
-  links: NavLink[];
-}
-
-/** Badges cap at 99+ so large queues can't stretch the navbar. */
-function formatBadge(count: number): string {
-  return count > 99 ? "99+" : String(count);
-}
 
 /**
  * Custom department dropdown with a filter box (not a native select so it
@@ -212,7 +191,6 @@ export function PersonnelNavbar({
   departments?: { id: string; name: string }[];
 }) {
   const pathname = usePathname();
-  const [openMenu, setOpenMenu] = useState<string | null>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [mobileSection, setMobileSection] = useState<string | null>(null);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -224,124 +202,12 @@ export function PersonnelNavbar({
   const router = useRouter();
   const userMenuRef = useRef<HTMLDivElement>(null);
 
-  const dashboard: NavLink = {
-    label: "Dashboard",
-    href: "/personnel/dashboard",
-    description: "Operations at a glance",
-    icon: LayoutDashboard,
-  };
-
-  const groups: NavGroup[] = [
-    {
-      title: "Operations",
-      links: [
-        {
-          label: "Deliveries",
-          href: "/personnel/deliveries",
-          description: "Log and track deliveries",
-          icon: Truck,
-        },
-        {
-          label: "Inspections",
-          href: "/personnel/inspections",
-          description: "Review and confirm inspections",
-          icon: ClipboardCheck,
-          badge: pendingInspections,
-        },
-      ],
-    },
-    {
-      title: "Inventory",
-      links: [
-        {
-          label: "Stock",
-          href: "/personnel/inventory",
-          description: "Monitor stock levels",
-          icon: Boxes,
-        },
-        {
-          label: "Assets",
-          href: "/personnel/assets",
-          description: "Encode and track assets",
-          icon: Package,
-        },
-      ],
-    },
-    {
-      title: "Records",
-      links: [
-        {
-          label: "Documents",
-          href: "/personnel/documents",
-          description: "RIS, PAR, ICS, AIR files",
-          icon: FileText,
-          badge: totalDocuments,
-        },
-        {
-          label: "PAR / ICS",
-          href: "/personnel/issuances",
-          description: "Accountability documents",
-          icon: ArrowLeftRight,
-        },
-        {
-          label: "Issues",
-          href: "/personnel/issues",
-          description: "Report and track issues",
-          icon: TriangleAlert,
-        },
-        {
-          label: "QR Scanner",
-          href: "/personnel/scan",
-          description: "Scan asset QR codes",
-          icon: ScanLine,
-        },
-        {
-          label: "Requests",
-          href: "/personnel/requests",
-          description: "Review supply requests",
-          icon: ClipboardList,
-          badge: pendingRequests,
-        },
-        {
-          label: "Repairs",
-          href: "/personnel/repairs",
-          description: "Track repair tickets",
-          icon: Wrench,
-          badge: pendingRepairs,
-        },
-        {
-          label: "Reports",
-          href: "/personnel/reports",
-          description: "Aging, issuance and conditions",
-          icon: BarChart3,
-        },
-        {
-          label: "Recommendations",
-          href: "/personnel/recommendations",
-          description: "Replenishment, disposal and idle advice",
-          icon: Lightbulb,
-        },
-        {
-          label: "Logs",
-          href: "/personnel/logs",
-          description: "Activity audit trail",
-          icon: ScrollText,
-        },
-        {
-          label: "Templates",
-          href: "/personnel/templates",
-          description: "Download Excel templates",
-          icon: Download,
-        },
-        {
-          label: "PPMP",
-          href: "/personnel/ppmp",
-          description: "Procurement planning",
-          icon: CalendarCheck,
-        },
-      ],
-    },
-  ];
+  const { dashboard, groups } = buildPersonnelNav({
+    pendingInspections,
+    pendingRequests,
+    pendingRepairs,
+    totalDocuments,
+  });
 
   const isActive = (href: string) =>
     pathname === href || pathname.startsWith(href + "/");
@@ -355,7 +221,6 @@ export function PersonnelNavbar({
   // Close menus on navigation; lock body scroll while the mobile sheet is open.
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional menu reset on route change
-    setOpenMenu(null);
     setMobileOpen(false);
     setUserMenuOpen(false);
     setChangePwOpen(false);
@@ -434,102 +299,6 @@ export function PersonnelNavbar({
           </span>
         </Link>
 
-        {/* Desktop nav */}
-        <nav className={styles.nav} aria-label="Personnel navigation">
-          <Link
-            href={dashboard.href}
-            className={styles.topLink}
-            data-active={isActive(dashboard.href)}
-            aria-current={isActive(dashboard.href) ? "page" : undefined}
-            {...navPrefetchProps(dashboard.href)}
-          >
-            {dashboard.label}
-          </Link>
-          {groups.map((group) => {
-            const active = groupActive(group);
-            const badge = groupBadge(group);
-            const open = openMenu === group.title;
-            return (
-              <div
-                key={group.title}
-                className={styles.menu}
-                onMouseEnter={() => {
-                  setOpenMenu(group.title);
-                  setUserMenuOpen(false);
-                }}
-                onMouseLeave={() => setOpenMenu((cur) => (cur === group.title ? null : cur))}
-              >
-                <button
-                  type="button"
-                  className={styles.topLink}
-                  data-active={active}
-                  aria-expanded={open}
-                  aria-haspopup="true"
-                  onClick={() => {
-                    setOpenMenu(open ? null : group.title);
-                    setUserMenuOpen(false);
-                  }}
-                >
-                  {group.title}
-                  {badge > 0 && (
-                    <span className={styles.triggerDot} aria-label={`${badge} pending`} />
-                  )}
-                  <ChevronDown
-                    size={14}
-                    className={styles.chevron}
-                    data-open={open}
-                    aria-hidden="true"
-                  />
-                </button>
-                {open && (
-                  <div
-                    className={styles.panel}
-                    data-wide={group.links.length > 4}
-                    role="menu"
-                    aria-label={`${group.title} submenu`}
-                  >
-                    {group.links.map((link) => {
-                      const Icon = link.icon;
-                      const linkActive = isActive(link.href);
-                      return (
-                        <Link
-                          key={link.href}
-                          href={link.href}
-                          className={styles.item}
-                          data-active={linkActive}
-                          aria-current={linkActive ? "page" : undefined}
-                          onClick={() => setOpenMenu(null)}
-                          {...navPrefetchProps(link.href)}
-                        >
-                          <span className={styles.itemIcon} aria-hidden="true">
-                            <Icon size={18} />
-                          </span>
-                          <span className={styles.itemText}>
-                            <span className={styles.itemLabel}>
-                              {link.label}
-                              {(link.badge ?? 0) > 0 && (
-                                <span
-                                  className={styles.badge}
-                                  aria-label={`${link.badge} pending`}
-                                >
-                                  {formatBadge(link.badge ?? 0)}
-                                </span>
-                              )}
-                            </span>
-                            <span className={styles.itemDesc}>
-                              {link.description}
-                            </span>
-                          </span>
-                        </Link>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </nav>
-
         <div className={styles.right}>
           <div className={styles.userMenu} ref={userMenuRef}>
             <button
@@ -538,7 +307,6 @@ export function PersonnelNavbar({
               data-open={userMenuOpen}
               onClick={() => {
                 setUserMenuOpen((v) => !v);
-                setOpenMenu(null);
               }}
               aria-label="Account menu"
               aria-expanded={userMenuOpen}
@@ -767,7 +535,9 @@ export function PersonnelNavbar({
           </div>
         </div>
       )}
-      <ChangePasswordDialog open={changePwOpen} onOpenChange={setChangePwOpen} />
+      {changePwOpen && (
+        <ChangePasswordDialog open={changePwOpen} onOpenChange={setChangePwOpen} />
+      )}
       <EditNameDialog
         open={editNameOpen}
         onOpenChange={setEditNameOpen}

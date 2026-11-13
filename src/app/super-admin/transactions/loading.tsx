@@ -48,7 +48,6 @@ export default function TransactionsLoading() {
       aria-busy="true"
       aria-label="Loading transactions"
     >
-      <p className={styles.crumb}>Transactions</p>
       <div>
         <h1 className={styles.title}>Transactions</h1>
         <p className={styles.subtitle}>

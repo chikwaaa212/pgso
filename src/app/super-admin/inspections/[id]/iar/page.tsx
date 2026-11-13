@@ -1,0 +1,1 @@
+export { default } from "@/app/personnel/inspections/[id]/iar/page";

@@ -19,12 +19,22 @@ interface DatePickerProps {
   onChange?: (date: Date | undefined) => void
   placeholder?: string
   hasError?: boolean
+  /** Disable dates before today (target/delivery dates in the future). */
+  disablePast?: boolean
+  /** Disables the trigger (e.g. a section that is locked until a step is done). */
+  disabled?: boolean
   /** Merged into the trigger button (e.g. "h-9 px-3 text-sm" to match h-9 inputs). */
   className?: string
 }
 
-export function DatePicker({ id, value, onChange, placeholder, hasError, className }: DatePickerProps) {
+export function DatePicker({ id, value, onChange, placeholder, hasError, disablePast, disabled, className }: DatePickerProps) {
   const [open, setOpen] = React.useState(false)
+
+  const isBeforeToday = (date: Date): boolean => {
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    return date.getTime() < today.getTime()
+  }
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -32,6 +42,7 @@ export function DatePicker({ id, value, onChange, placeholder, hasError, classNa
         <Button
           variant="outline"
           id={id}
+          disabled={disabled}
           className={cn(
             "w-full justify-between rounded-md font-normal",
             !value && "text-muted-foreground",
@@ -48,7 +59,9 @@ export function DatePicker({ id, value, onChange, placeholder, hasError, classNa
           mode="single"
           selected={value}
           captionLayout="dropdown"
+          disabled={disablePast ? isBeforeToday : undefined}
           onSelect={(date) => {
+            if (disablePast && date && isBeforeToday(date)) return
             onChange?.(date)
             setOpen(false)
           }}

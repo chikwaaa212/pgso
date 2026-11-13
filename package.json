@@ -13,6 +13,8 @@
     "seed:assets": "tsx scripts/seed-assets.ts",
     "seed:requests-repairs": "npx -y tsx scripts/seed-requests-repairs.ts",
     "seed:demo-20": "tsx --env-file=.env.local scripts/seed-demo-20.ts",
+    "seed:stock-types": "tsx scripts/seed-stock-types.ts",
+    "seed:stock-catalog": "tsx scripts/seed-stock-catalog.ts",
     "contract:emit": "prisma contract emit",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",

@@ -51,7 +51,6 @@ export default function InventoryLoading() {
       aria-busy="true"
       aria-label="Loading inventory"
     >
-      <p className={styles.crumb}>Stocks</p>
       <div>
         <h1 className={styles.title}>Stocks</h1>
         <p className={styles.subtitle}>

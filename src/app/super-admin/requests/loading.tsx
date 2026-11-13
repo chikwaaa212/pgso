@@ -52,7 +52,6 @@ export default function RequestsLoading() {
       aria-busy="true"
       aria-label="Loading requests"
     >
-      <p className={styles.crumb}>Requests</p>
       <div>
         <h1 className={styles.title}>Requests</h1>
         <p className={styles.subtitle}>

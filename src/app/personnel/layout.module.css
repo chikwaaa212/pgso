@@ -5,6 +5,14 @@
   min-height: 100vh;
 }
 
+.body {
+  display: flex;
+  flex: 1;
+  align-items: flex-start;
+  width: 100%;
+  min-width: 0;
+}
+
 .main {
   flex: 1;
   min-width: 0;

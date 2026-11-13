@@ -38,7 +38,6 @@ export default function InventoryLoading() {
       aria-busy="true"
       aria-label="Loading stocks"
     >
-      <p className={styles.crumb}>Personnel / Inventory</p>
 
       {/* Header — same as the real page */}
       <div className={styles.headerRow}>

@@ -54,7 +54,6 @@ export default function IssuesLoading() {
       aria-busy="true"
       aria-label="Loading issues"
     >
-      <p className={styles.crumb}>Issues</p>
       <div>
         <h1 className={styles.title}>Issues</h1>
         <p className={styles.subtitle}>

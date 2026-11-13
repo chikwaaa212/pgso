@@ -40,6 +40,12 @@ interface UseCachedActionOptions {
    * loads — no skeleton flicker on pagination/filter changes. Defaults true.
    */
   keepPreviousData?: boolean
+  /**
+   * When false the hook does no work at all: no cache read, no fetch, no
+   * listeners. Use it to gate hooks behind the visible tab/panel so hidden
+   * tabs don't fire their own server actions on mount. Defaults true.
+   */
+  enabled?: boolean
 }
 
 interface UseCachedActionResult<T> {
@@ -83,6 +89,7 @@ export function useCachedAction<T>(
   const maxAge = options.maxAge ?? preset?.maxAge ?? 10 * 60_000
   const refetchOnFocus = options.refetchOnFocus ?? preset?.refetchOnFocus ?? false
   const keepPreviousData = options.keepPreviousData ?? true
+  const enabled = options.enabled ?? true
 
   // NOTE: initial state is intentionally SSR-safe (loading=true, data=undefined).
   // Reading sessionStorage/memory during useState would make the first client
@@ -112,6 +119,7 @@ export function useCachedAction<T>(
 
   const run = useCallback(
     (force: boolean) => {
+      if (!enabled) return
       // Capture the key for this run — if the query changes while the fetch
       // is in flight, the stale response is ignored (cancels logically:
       // superseded runs never paint, so fast paging cannot show stale pages).
@@ -184,18 +192,23 @@ export function useCachedAction<T>(
         }
       )
     },
-    [key, maxAge, staleTime, keepPreviousData]
+    [key, maxAge, staleTime, keepPreviousData, enabled]
   )
 
   useEffect(() => {
     mounted.current = true
     // Runs after hydration, so painting cached data here can't mismatch the
     // server HTML (first client render was the skeleton, matching SSR).
-    run(false)
+    // Deferred one microtask so the effect body itself never sets state.
+    if (enabled) {
+      queueMicrotask(() => {
+        if (mounted.current) run(false)
+      })
+    }
     return () => {
       mounted.current = false
     }
-  }, [run])
+  }, [run, enabled])
 
   // A write elsewhere (modal on this page, another tab section) busted our
   // key — revalidate silently so the visible list updates without a

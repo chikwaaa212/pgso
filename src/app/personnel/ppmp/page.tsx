@@ -54,8 +54,6 @@ export default function PpmpPage() {
 
   return (
     <section>
-      <p className="text-sm text-zinc-500">PPMP — placeholder</p>
-
       <Card className="mt-4 p-6">
         <h2 className="text-lg font-semibold">PPMP Import</h2>
         <p className="text-sm text-zinc-600 mt-1">

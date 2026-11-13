@@ -1,33 +1,39 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
+import { inspectionHref } from "@/lib/inspection-ref";
+import { portalFromPathname } from "@/lib/portal-path";
 import styles from "./receipt.module.css";
 
 export function ReceiptActions({
   deliveryId,
   excelHref,
-  viewIarHref,
+  showViewIar = false,
   children,
 }: {
   deliveryId: string;
   /** When set, shows a "Download Excel" button (filled AIR .xlsx). */
   excelHref?: string;
-  /** When set, shows a "View IAR" button (saved AIR). */
-  viewIarHref?: string;
+  /** When true, shows a "View IAR" button (saved AIR). */
+  showViewIar?: boolean;
   /** Extra toolbar buttons (e.g. Generate IAR dialog). */
   children?: React.ReactNode;
 }) {
+  const portal = portalFromPathname(usePathname());
   return (
     <div className={styles.toolbar}>
+      {portal === "personnel" ? (
+        <Link
+          href={inspectionHref(deliveryId, "", portal)}
+          className={cn(styles.toolbarBtn, styles.toolbarGhost)}
+        >
+          Back to inspection
+        </Link>
+      ) : null}
       <Link
-        href={`/personnel/inspections/${deliveryId}`}
-        className={cn(styles.toolbarBtn, styles.toolbarGhost)}
-      >
-        Back to inspection
-      </Link>
-      <Link
-        href="/personnel/inspections"
+        href={`/${portal}/inspections`}
         className={cn(styles.toolbarBtn, styles.toolbarGhost)}
       >
         Inspections list
@@ -47,9 +53,9 @@ export function ReceiptActions({
           Download Excel
         </a>
       ) : null}
-      {viewIarHref ? (
+      {showViewIar ? (
         <Link
-          href={viewIarHref}
+          href={inspectionHref(deliveryId, "/iar", portal)}
           className={cn(styles.toolbarBtn, styles.toolbarGhost)}
         >
           View IAR

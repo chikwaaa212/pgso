@@ -2,12 +2,14 @@
 
 import { usePathname } from "next/navigation";
 import { PersonnelNavbar } from "./PersonnelNavbar";
+import { PersonnelSidebar } from "./PersonnelSidebar";
 import { DbDownNotifier } from "./DbDownNotifier";
 import layoutStyles from "../../app/personnel/layout.module.css";
 
 export function PersonnelChrome({
   children,
   navbar,
+  sidebar,
   pendingInspections = 0,
   pendingRequests = 0,
   pendingRepairs = 0,
@@ -18,6 +20,8 @@ export function PersonnelChrome({
   children: React.ReactNode;
   /** Streamed navbar slot — when provided it renders immediately via Suspense. */
   navbar?: React.ReactNode;
+  /** Streamed left-rail slot (desktop only). */
+  sidebar?: React.ReactNode;
   pendingInspections?: number;
   pendingRequests?: number;
   pendingRepairs?: number;
@@ -47,7 +51,17 @@ export function PersonnelChrome({
           userDetail={userDetail}
         />
       )}
-      <div className={layoutStyles.main}>{children}</div>
+      <div className={layoutStyles.body}>
+        {sidebar ?? (
+          <PersonnelSidebar
+            pendingInspections={pendingInspections}
+            pendingRequests={pendingRequests}
+            pendingRepairs={pendingRepairs}
+            totalDocuments={totalDocuments}
+          />
+        )}
+        <div className={layoutStyles.main}>{children}</div>
+      </div>
     </div>
   );
 }

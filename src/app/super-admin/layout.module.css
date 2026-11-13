@@ -12,3 +12,11 @@
   padding-inline: 1rem;
   padding-bottom: 3rem;
 }
+
+.body {
+  display: flex;
+  flex: 1;
+  align-items: flex-start;
+  width: 100%;
+  min-width: 0;
+}

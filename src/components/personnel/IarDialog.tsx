@@ -1,10 +1,9 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRef, useState } from "react";
+import { useRouter, usePathname } from "next/navigation";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { ActionButton } from "@/components/ui/action-button";
 import {
   Dialog,
   DialogContent,
@@ -20,6 +19,12 @@ import { DatePicker } from "@/components/ui/date-picker";
 import { saveAir } from "@/app/personnel/inspections/actions";
 import { CLIENT_CACHE_KEYS, bustClientCache } from "@/lib/client-cache";
 import { resourcePrefix } from "@/lib/query-keys";
+import { cn } from "@/lib/utils";
+import { portalFromPathname } from "@/lib/portal-path";
+import {
+  removePendingAir,
+  upsertPendingAir,
+} from "@/app/personnel/inspections/optimistic-inspections";
 
 function Field({
   label,
@@ -54,103 +59,108 @@ export function IarDialog({
   deliveryId,
   deliveryRef,
   hasSavedInspection = false,
+  triggerClassName,
 }: {
   deliveryId: string;
   deliveryRef: string;
   /** True when the inspection questioning page has been recorded/saved.
    *  Date Inspected + Inspector on the AIR come from that saved record. */
   hasSavedInspection?: boolean;
+  /** Optional trigger styling (e.g. compact 24px row actions). */
+  triggerClassName?: string;
 }) {
   const router = useRouter();
+  const pathname = usePathname();
   const today = new Date().toISOString().slice(0, 10);
+  const submittingRef = useRef(false);
 
   const [open, setOpen] = useState(false);
-  const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const [warning, setWarning] = useState("");
-  const [savedRecordId, setSavedRecordId] = useState("");
   const [entity, setEntity] = useState("");
   const [department, setDepartment] = useState("");
   const [rcCode, setRcCode] = useState("");
   const [fundCluster, setFundCluster] = useState("");
-  const [iarNo, setIarNo] = useState("");
   const [iarDate, setIarDate] = useState<Date | undefined>(new Date(today));
-  const [invoiceNo, setInvoiceNo] = useState("");
   const [invoiceDate, setInvoiceDate] = useState<Date | undefined>(
     new Date(today)
   );
 
+  // Super admins have read-only oversight of inspections.
+  if (portalFromPathname(pathname) === "super-admin") return null;
+
+  // IAR No. and Invoice No. are assigned by the system on save.
   const canGenerate =
     hasSavedInspection &&
     entity.trim() !== "" &&
     department.trim() !== "" &&
-    iarNo.trim() !== "" &&
     iarDate !== undefined &&
     invoiceDate !== undefined;
 
-  async function generate() {
-    if (!canGenerate || saving) return;
-    setSaving(true);
+  function generate() {
+    if (!canGenerate || submittingRef.current) return;
+    submittingRef.current = true;
     setError("");
-    setWarning("");
-    setSavedRecordId("");
-    try {
-      const res = await saveAir(deliveryId, {
-        entity: entity.trim(),
-        department: department.trim(),
-        rcCode: rcCode.trim(),
-        fundCluster: fundCluster.trim(),
-        iarNo: iarNo.trim(),
-        iarDate: toIso(iarDate),
-        invoiceNo: invoiceNo.trim(),
-        invoiceDate: toIso(invoiceDate),
-      });
-      if (!res.success) {
-        const msg = res.error ?? "Failed to save the AIR. Please try again.";
-        setError(msg);
-        toast.error(msg, { duration: 2000, closeButton: true });
-        return;
-      }
-      const href = res.recordId
-        ? `/personnel/inspections/${deliveryId}/iar?record=${res.recordId}`
-        : `/personnel/inspections/${deliveryId}/iar`;
-      // AIR changed — drop the cached lists + dashboard + stocks so the
-      // next visit refetches instead of serving the pre-AIR payload.
-      bustClientCache([
-        CLIENT_CACHE_KEYS.inspections,
-        CLIENT_CACHE_KEYS.dashboard,
-        CLIENT_CACHE_KEYS.inventory,
-        CLIENT_CACHE_KEYS.iar,
-        resourcePrefix("personnel", "inspections"),
-        resourcePrefix("personnel", "inspections-air"),
-        resourcePrefix("personnel", "inspections-counts"),
-        resourcePrefix("personnel", "dashboard"),
-        resourcePrefix("personnel", "inventory"),
-        resourcePrefix("personnel", "inventory-stats"),
-      ]);
-      if (res.stockWarning) {
-        // AIR is saved — stay and show the warning with a way through.
-        setWarning(res.stockWarning);
-        setSavedRecordId(href);
-        toast.success("IAR generated successfully.", {
-          duration: 2000,
-          closeButton: true,
+    const payload = {
+      entity: entity.trim(),
+      department: department.trim(),
+      rcCode: rcCode.trim(),
+      fundCluster: fundCluster.trim(),
+      iarNo: "",
+      iarDate: toIso(iarDate),
+      invoiceNo: "",
+      invoiceDate: toIso(invoiceDate),
+    };
+    // Close + paint the row immediately; the server keeps working behind it.
+    upsertPendingAir({
+      deliveryId,
+      iarNo: "Generating…",
+      at: Date.now(),
+    });
+    setOpen(false);
+    window.setTimeout(() => {
+      void saveAir(deliveryId, payload)
+        .then((res) => {
+          if (!res.success) {
+            removePendingAir(deliveryId);
+            const msg = res.error ?? "Failed to save the AIR. Please try again.";
+            toast.error(msg, { duration: 3000, closeButton: true });
+            return;
+          }
+          // AIR changed — drop the cached lists + dashboard + stocks so the
+          // next visit refetches instead of serving the pre-AIR payload.
+          bustClientCache([
+            CLIENT_CACHE_KEYS.inspections,
+            CLIENT_CACHE_KEYS.dashboard,
+            CLIENT_CACHE_KEYS.inventory,
+            CLIENT_CACHE_KEYS.iar,
+            resourcePrefix("personnel", "inspections"),
+            resourcePrefix("personnel", "inspections-air"),
+            resourcePrefix("personnel", "inspections-counts"),
+            resourcePrefix("personnel", "dashboard"),
+            resourcePrefix("personnel", "inventory"),
+            resourcePrefix("personnel", "inventory-stats"),
+          ]);
+          router.refresh();
+          toast.success(
+            res.stockWarning
+              ? `IAR ${res.iarNo ?? ""} generated. ${res.stockWarning}`
+              : `IAR ${res.iarNo ?? ""} generated successfully.`,
+            { duration: res.stockWarning ? 5000 : 2000, closeButton: true }
+          );
+          // Keep the optimistic row a little longer for the refresh to land.
+          window.setTimeout(() => removePendingAir(deliveryId), 8000);
+        })
+        .catch(() => {
+          removePendingAir(deliveryId);
+          toast.error("Failed to save the AIR. Please try again.", {
+            duration: 3000,
+            closeButton: true,
+          });
+        })
+        .finally(() => {
+          submittingRef.current = false;
         });
-        return;
-      }
-      toast.success("IAR generated successfully.", {
-        duration: 2000,
-        closeButton: true,
-      });
-      router.push(href);
-      setOpen(false);
-    } catch {
-      const msg = "Failed to save the AIR. Please try again.";
-      setError(msg);
-      toast.error(msg, { duration: 2000, closeButton: true });
-    } finally {
-      setSaving(false);
-    }
+    }, 0);
   }
 
   return (
@@ -159,7 +169,10 @@ export function IarDialog({
         <Button
           type="button"
           variant="outline"
-          className="h-8 gap-2 rounded-[4px] px-3.5 text-xs font-semibold"
+          className={cn(
+            "gap-2 rounded-[4px] px-3.5 text-xs font-semibold",
+            triggerClassName ?? "h-8"
+          )}
         >
           Generate IAR
         </Button>
@@ -222,30 +235,12 @@ export function IarDialog({
             />
           </Field>
 
-          <Field label="IAR No." required>
-            <Input
-              type="text"
-              value={iarNo}
-              onChange={(e) => setIarNo(e.target.value)}
-              placeholder="e.g. IAR-2026-001"
-            />
-          </Field>
-
           <Field label="IAR Date" required>
             <DatePicker
               id="iar-date"
               value={iarDate}
               onChange={setIarDate}
               placeholder="Pick a date"
-            />
-          </Field>
-
-          <Field label="Invoice No.">
-            <Input
-              type="text"
-              value={invoiceNo}
-              onChange={(e) => setInvoiceNo(e.target.value)}
-              placeholder="e.g. INV-2026-015"
             />
           </Field>
 
@@ -259,6 +254,10 @@ export function IarDialog({
           </Field>
         </div>
 
+        <p className="text-xs text-navy-500">
+          IAR No. and Invoice No. are generated automatically when you save.
+        </p>
+
         {error ? (
           <p
             role="alert"
@@ -268,44 +267,18 @@ export function IarDialog({
           </p>
         ) : null}
 
-        {warning ? (
-          <div
-            role="alert"
-            className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900"
-          >
-            <p>{warning}</p>
-            {savedRecordId ? (
-              <Button
-                type="button"
-                className="mt-2"
-                onClick={() => {
-                  router.push(savedRecordId);
-                  setOpen(false);
-                }}
-              >
-                View IAR anyway
-              </Button>
-            ) : null}
-          </div>
-        ) : null}
-
         <DialogFooter>
           <Button
             type="button"
-            variant="outline"
-            onClick={() => setOpen(false)}
-            disabled={saving}
-          >
-            Cancel
-          </Button>
-          <ActionButton
-            type="button"
-            disabled={!canGenerate || saving}
-            onClick={() => generate()}
-            loadingLabel="Generating…"
+            disabled={!canGenerate}
+            onClick={generate}
+            className={cn(
+              "h-6 rounded-[4px] border border-yellow-500 bg-yellow-500 px-3 text-xs font-semibold",
+              "text-navy-900 transition-colors hover:bg-yellow-400 disabled:opacity-50"
+            )}
           >
             Generate IAR
-          </ActionButton>
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

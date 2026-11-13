@@ -452,7 +452,6 @@ function PersonnelDocumentsContent() {
 
   return (
     <section className={styles.section}>
-      <p className={styles.crumb}>Personnel / Documents</p>
       <div className={styles.headerRow}>
         <div>
           <h1 className={styles.title}>Documents</h1>

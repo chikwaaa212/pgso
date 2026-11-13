@@ -9,7 +9,6 @@ export default function SuperAdminTemplatesPage() {
 
   return (
     <section className={styles.section}>
-      <p className={styles.crumb}>Download Templates</p>
       <div>
         <h1 className={styles.title}>Download Templates</h1>
         <p className={styles.subtitle}>

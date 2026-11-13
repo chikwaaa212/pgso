@@ -21,8 +21,6 @@ const MIGRATED: Array<[file: string, module: string, resources: string[]]> = [
   ["../app/personnel/repairs/page.tsx", "personnel", ["repairs"]],
   ["../app/personnel/logs/logs-table.tsx", "personnel", ["logs", "logs-modules"]],
   ["../app/super-admin/users/page.tsx", "super-admin", ["users", "users-counts"]],
-  ["../app/super-admin/deliveries/page.tsx", "super-admin", ["deliveries"]],
-  ["../app/super-admin/inspections/page.tsx", "super-admin", ["inspections"]],
   ["../app/super-admin/issuances/page.tsx", "super-admin", ["issuances"]],
   ["../app/super-admin/requests/page.tsx", "super-admin", ["requests"]],
   ["../app/super-admin/repairs/page.tsx", "super-admin", ["repairs"]],
@@ -121,7 +119,7 @@ describe("Phase 4: documented exceptions (static + record keys stay)", () => {
   });
   it("per-record keys keep their record scheme", () => {
     assert.match(src("../app/super-admin/deliveries/record-modals.tsx"), /adminDeliveryDetail/);
-    assert.match(src("../app/personnel/inspections/[id]/iar/page.tsx"), /CLIENT_CACHE_KEYS\.iar/);
+    assert.match(src("../app/personnel/inspections/components/iar-report-view.tsx"), /CLIENT_CACHE_KEYS\.iar/);
     assert.match(src("../hooks/use-receipt.ts"), /receipt/);
   });
 });

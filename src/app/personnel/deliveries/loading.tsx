@@ -3,25 +3,20 @@ import styles from "../dashboard/page.module.css";
 
 /**
  * Deliveries-specific skeleton — mirrors PersonnelDeliveriesPage 1:1
- * (crumb, header + actions, panel head, filter row, 8-col table,
+ * (crumb, header + actions, panel head, filter row, 7-col table,
  * pager) so content swaps in without layout shift.
  *
  * Static chrome renders as real text with real classes; only live
  * values are pulse placeholders sized to the real cells.
  */
 
-const FILTERS = ["All", "Complete", "Partial", "Awaiting arrival"] as const;
-
 const HEADERS = [
-  "ID",
-  "Supplier",
-  "PO ref",
-  "Date",
-  "Target arrival",
+  "PO Ref",
   "Type",
-  "Items",
   "Delivery",
   "Inspection",
+  "Target Arrival",
+  "Logged By",
   "Action",
 ] as const;
 
@@ -50,66 +45,48 @@ export default function DeliveriesLoading() {
       aria-busy="true"
       aria-label="Loading deliveries"
     >
-      <p className={styles.crumb}>Personnel / Deliveries</p>
 
       {/* Header — same as the real page */}
       <div className={styles.headerRow}>
         <div>
           <h1 className={styles.title}>Deliveries</h1>
-          <p className={styles.subtitle} aria-hidden="true">
-            <span className="mt-1 block h-4 w-32 animate-pulse rounded bg-navy-100" />
-          </p>
         </div>
         <div className={styles.actions} aria-hidden="true">
-          <span className={styles.actionSecondary}>Export (soon)</span>
-          <span className={styles.actionPrimary}>Log delivery</span>
+          <span className={styles.actionSecondary} style={{ height: 24 }}>
+            Export (soon)
+          </span>
+          <span className={styles.actionPrimary} style={{ height: 24 }}>
+            Log delivery
+          </span>
         </div>
       </div>
 
       <Card className={styles.panel}>
         <div>
-          <h2 className={styles.panelTitle}>Delivery log</h2>
-          <p className={styles.panelSub}>
-            Your logged deliveries only — other personnel&apos;s records are
-            hidden.
-          </p>
-        </div>
-
-        <div>
-          {/* Filter row — same layout, same controls */}
-          <div className={styles.filterRow} aria-hidden="true">
-            <div
-              className={styles.filterBtns}
-              role="group"
-              aria-label="Filter by delivery status"
-            >
-              {FILTERS.map((f) => (
-                <span
-                  key={f}
-                  className={styles.filterBtn}
-                  data-active={f === "All"}
-                >
-                  {f}
-                </span>
-              ))}
-            </div>
+          {/* Search only — status tabs were removed */}
+          <div className="mb-3 flex justify-end" aria-hidden="true">
             <input
               type="search"
               disabled
               placeholder="Search supplier, PO, or ID…"
               aria-label="Search deliveries"
-              className={styles.addInput}
+              className="h-8 w-80 max-w-full rounded-md border border-navy-300 bg-white px-3 text-sm"
               tabIndex={-1}
             />
           </div>
 
-          {/* Table — same 8 columns, 10 rows (default page size) */}
+          {/* Table — same 7 columns, 10 rows (default page size) */}
           <div className={styles.tableWrap}>
             <table className={styles.table} aria-hidden="true">
               <thead>
                 <tr>
                   {HEADERS.map((h) => (
-                    <th key={h}>{h}</th>
+                    <th
+                      key={h}
+                      style={h === "Action" ? { textAlign: "right" } : undefined}
+                    >
+                      {h}
+                    </th>
                   ))}
                 </tr>
               </thead>
@@ -117,25 +94,10 @@ export default function DeliveriesLoading() {
                 {Array.from({ length: 10 }).map((_, r) => (
                   <tr key={r} style={{ opacity: 1 - r * 0.05 }}>
                     <td>
-                      <TextPulse className="h-3.5 w-16" />
-                    </td>
-                    <td>
-                      <TextPulse className="h-3.5 w-24" />
-                    </td>
-                    <td>
-                      <TextPulse className="h-3.5 w-20" />
-                    </td>
-                    <td>
-                      <TextPulse className="h-3.5 w-20" />
-                    </td>
-                    <td>
                       <TextPulse className="h-3.5 w-20" />
                     </td>
                     <td>
                       <PillPulse className="w-14" />
-                    </td>
-                    <td>
-                      <TextPulse className="h-3.5 w-8" />
                     </td>
                     <td>
                       <PillPulse />
@@ -144,11 +106,19 @@ export default function DeliveriesLoading() {
                       <PillPulse className="w-[70px]" />
                     </td>
                     <td>
-                      <div className="flex items-center gap-1.5">
-                        <span className={styles.inspectLinkSecondary}>
+                      <TextPulse className="h-3.5 w-20" />
+                    </td>
+                    <td>
+                      <TextPulse className="h-3.5 w-20" />
+                    </td>
+                    <td>
+                      <div className="flex items-center justify-end gap-1.5">
+                        <span className="inline-flex h-6 items-center justify-center rounded-[4px] border border-yellow-500/40 bg-yellow-500/20 px-3 text-xs font-semibold text-navy-900">
                           View Details
                         </span>
-                        <span className={styles.inspectLink}>Inspect</span>
+                        <span className="inline-flex h-6 items-center justify-center rounded-[4px] border border-yellow-500/40 bg-yellow-500/20 px-3 text-xs font-semibold text-navy-900">
+                          Edit
+                        </span>
                       </div>
                     </td>
                   </tr>

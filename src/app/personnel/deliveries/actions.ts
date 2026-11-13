@@ -18,14 +18,13 @@ import type { Prisma } from '@prisma/client'
 import { getPersonnelScope } from '@/lib/personnel-scope'
 import { withIdempotency } from '@/lib/idempotency'
 import { writeAuditLog } from '@/lib/audit'
+import { inspectionHref } from '@/lib/inspection-ref'
 import { stockInspectionItems } from '@/lib/stock'
 import { getActiveCatalogEntries, resolveUnitName } from '@/lib/master-data'
 import type { SignupState } from '@/types'
 
-const statuses = ['complete', 'partial', 'awaiting'] as const
 const deliveryKinds = ['stock', 'asset'] as const
-const inspectionResults = ['passed', 'partial'] as const
-const recipientRoles = ['Employee', 'PGSO Personnel'] as const
+const inspectionResults = ['passed', 'partial', 'failed'] as const
 
 interface ItemInput {
   description?: string
@@ -44,18 +43,32 @@ function makeProvisionalCode(kind: string): string {
   return `${prefix}-${date}-${rand}`
 }
 
+// System-generated PO reference (PGSO-XXXX-XXXX). Personnel never type it.
+const PO_REFERENCE_PATTERN = /^PGSO-[A-Z0-9]{4}-[A-Z0-9]{4}$/
+
+function makePoReference(): string {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+  const block = () =>
+    Array.from({ length: 4 }, () => chars[Math.floor(Math.random() * chars.length)]).join('')
+  return `PGSO-${block()}-${block()}`
+}
+
 export async function logDelivery(
   _prevState: SignupState,
   formData: FormData
 ): Promise<SignupState> {
   const accountCodeRaw = (formData.get('accountCode') as string)?.trim()
   const assetTypeRaw = (formData.get('assetType') as string)?.trim()
+  const stockTypeRaw = (formData.get('stockType') as string)?.trim()
   const accountTitleRaw = (formData.get('accountTitle') as string)?.trim()
   const deliveryKind = (formData.get('deliveryKind') as string)?.trim()?.toLowerCase()
   const dateSupplied = formData.get('dateSupplied') as string
   const expectedArrival = formData.get('expectedArrival') as string
   const supplierName = (formData.get('supplierName') as string)?.trim()
-  const poReference = (formData.get('poReference') as string)?.trim()
+  let poReference = (formData.get('poReference') as string)?.trim()?.toUpperCase() || ''
+  if (!PO_REFERENCE_PATTERN.test(poReference)) {
+    poReference = makePoReference()
+  }
   const deliveryStatus = (
     formData.get('deliveryStatus') as string
   )?.toLowerCase()
@@ -66,97 +79,162 @@ export async function logDelivery(
     return { error: 'Choose whether this delivery is for Stocks or Assets.' }
   }
 
-  // Account code is NOT from the catalog: personnel either types it or presses
-  // Generate. Free-form identities per asset/stock (2–60 chars, limited
-  // charset). No catalog existence check, no auto-seed.
+  // Asset codes are free-form (typed or generated). Stock codes come from the
+  // stock header in Master Data and are validated against it further below.
   let accountCode = accountCodeRaw || ''
   // Empty code + explicit auto-generate request → provisional unique code.
   // The form's Generate button normally fills this client-side; this is the
-  // server-side fallback so an empty code never blocks a save.
-  if (!accountCode && (formData.get('autoGenerateCode') as string) === '1') {
+  // server-side fallback so an empty asset code never blocks a save.
+  if (!accountCode && deliveryKind === 'asset' && (formData.get('autoGenerateCode') as string) === '1') {
     accountCode = makeProvisionalCode(deliveryKind)
   }
   if (!accountCode) {
-    return { error: 'Account code is required — type a code or press Generate.' }
+    return {
+      error:
+        deliveryKind === 'stock'
+          ? 'Select a stock code from Master Data.'
+          : 'Account code is required — type a code or press Generate.',
+    }
   }
   if (accountCode.length < 2 || accountCode.length > 60) {
-    return { error: 'Account code must be 2–60 characters.' }
+    return {
+      error:
+        deliveryKind === 'stock'
+          ? 'Stock code must be 2–60 characters.'
+          : 'Account code must be 2–60 characters.',
+    }
   }
   if (!/^[A-Za-z0-9][A-Za-z0-9\-._/\s]*$/.test(accountCode)) {
-    return { error: 'Account code may only contain letters, numbers, spaces, and - . _ /' }
-  }
-
-  // Account title + asset type ARE from the catalog (Super Admin Master Data):
-  // the form picks a title, then auto-fills the asset type from it. The server
-  // derives the type from the title so a stale/tampered hidden field can never
-  // store a mismatched pair. The account code itself is free-form.
-  const assetTypeInput = (assetTypeRaw || '').trim()
-  const accountTitleInput = (accountTitleRaw || '').trim()
-  if (!accountTitleInput) {
-    return { error: 'Select an account title from the catalog.' }
-  }
-  // Catalog convention: titles stored uppercase.
-  const accountTitleNorm = accountTitleInput.toUpperCase()
-  const catalogEntries = await getActiveCatalogEntries()
-  if (catalogEntries.length === 0) {
-    return { error: 'No active catalog entries — ask your Super Admin to add them in Master Data.' }
-  }
-  const titleMatches = catalogEntries.filter(
-    (e) => e.title.toUpperCase() === accountTitleNorm
-  )
-  if (titleMatches.length === 0) {
-    return { error: 'Unknown account title — pick one from the catalog.' }
-  }
-  // A title normally maps to one asset type. If the catalog has it on rows
-  // with different types, accept the submitted type only when it is one of
-  // them; otherwise fall back to the first (the form auto-selects it).
-  const titleTypes = [
-    ...new Map(
-      titleMatches.map((e) => [e.type.trim().toLowerCase(), e.type.trim()])
-    ).values(),
-  ].filter(Boolean)
-  let assetTypeCanon = titleTypes[0]
-  if (assetTypeInput) {
-    const submitted = titleTypes.find(
-      (t) => t.toLowerCase() === assetTypeInput.toLowerCase()
-    )
-    if (submitted) assetTypeCanon = submitted
-  }
-  if (!assetTypeCanon) {
-    return { error: 'This account title has no asset type — ask your Super Admin to update Master Data.' }
-  }
-  const accountTitleCanon = titleMatches[0].title
-
-  if (!dateSupplied || Number.isNaN(Date.parse(dateSupplied))) {
-    // Waiting-for-arrival logs carry a target date instead of a received date.
-    if (deliveryStatus !== 'awaiting') {
-      return { error: 'A valid date received is required.' }
+    return {
+      error:
+        deliveryKind === 'stock'
+          ? 'Stock code may only contain letters, numbers, spaces, and - . _ /'
+          : 'Account code may only contain letters, numbers, spaces, and - . _ /',
     }
   }
 
-  if (deliveryStatus === 'awaiting' && (!expectedArrival || Number.isNaN(Date.parse(expectedArrival)))) {
+  // Assets are catalog-driven (title → type); stocks are header-driven
+  // (code + title + type all come from Super Admin → Master Data → Stock
+  // headers). The server re-derives every value from the matched row so a
+  // stale/tampered hidden field can never store a mismatched triple.
+  const assetTypeInput = (assetTypeRaw || '').trim()
+  const accountTitleInput = (accountTitleRaw || '').trim()
+  let accountTitleCanon = ''
+  let assetTypeCanon: string | null = null
+  let stockTypeCanon: string | null = null
+
+  if (deliveryKind === 'stock') {
+    const activeStockHeaders = await prisma.stockType.findMany({
+      where: { status: 'active', deleted_at: null },
+      select: { name: true, account_code: true, account_title: true, asset_type: true },
+    })
+    if (activeStockHeaders.length === 0) {
+      return { error: 'No active stock headers — ask your Super Admin to add them in Master Data.' }
+    }
+    if (!stockTypeRaw) {
+      return { error: 'Choose a stock type from Master Data.' }
+    }
+    const titleNorm = accountTitleInput.toLowerCase()
+    const typeNorm = stockTypeRaw.trim().toLowerCase()
+    // Stock title + type must match one active stock header. The code is
+    // free-form like an asset code (typed or Generated), so it is kept as
+    // submitted unless it matches the header's canonical casing.
+    const header = activeStockHeaders.find((h) => {
+      const hTitle = (h.account_title ?? h.name).trim().toLowerCase()
+      const hType = (h.asset_type ?? h.name).trim().toLowerCase()
+      return hTitle === titleNorm && hType === typeNorm
+    })
+    if (!header) {
+      return {
+        error: 'Pick a stock title and stock type that match a stock header in Master Data.',
+      }
+    }
+    if (header.account_code && accountCode.toLowerCase() === header.account_code.toLowerCase()) {
+      accountCode = header.account_code
+    }
+    accountTitleCanon = header.account_title ?? header.name
+    stockTypeCanon = header.asset_type ?? header.name
+  } else {
+    if (!accountTitleInput) {
+      return { error: 'Select an account title from the catalog.' }
+    }
+    // Catalog convention: titles stored uppercase.
+    const accountTitleNorm = accountTitleInput.toUpperCase()
+    const catalogEntries = await getActiveCatalogEntries()
+    if (catalogEntries.length === 0) {
+      return { error: 'No active catalog entries — ask your Super Admin to add them in Master Data.' }
+    }
+    const titleMatches = catalogEntries.filter(
+      (e) => e.title.toUpperCase() === accountTitleNorm
+    )
+    if (titleMatches.length === 0) {
+      return { error: 'Unknown account title — pick one from the catalog.' }
+    }
+    accountTitleCanon = titleMatches[0].title
+
+    // A title normally maps to one asset type. If the catalog has it on rows
+    // with different types, accept the submitted type only when it is one of
+    // them; otherwise fall back to the first (the form auto-selects it).
+    const titleTypes = [
+      ...new Map(
+        titleMatches.map((e) => [e.type.trim().toLowerCase(), e.type.trim()])
+      ).values(),
+    ].filter(Boolean)
+    assetTypeCanon = titleTypes[0] ?? null
+    if (assetTypeInput) {
+      const submitted = titleTypes.find(
+        (t) => t.toLowerCase() === assetTypeInput.toLowerCase()
+      )
+      if (submitted) assetTypeCanon = submitted
+    }
+    if (!assetTypeCanon) {
+      return { error: 'This account title has no asset type — ask your Super Admin to update Master Data.' }
+    }
+  }
+
+  // Every new delivery is logged as waiting for arrival. Complete/partial are
+  // inspection outcomes, not log-time choices.
+  if (deliveryStatus !== 'awaiting') {
+    return { error: 'New deliveries are logged as waiting for arrival.' }
+  }
+
+  if (!expectedArrival || Number.isNaN(Date.parse(expectedArrival))) {
     return { error: 'A target date of arrival is required for waiting arrivals.' }
   }
 
-  if (expectedArrival && Number.isNaN(Date.parse(expectedArrival))) {
-    return { error: 'The target date of arrival is not a valid date.' }
+  // Target arrival cannot be in the past (compare calendar days in PH time).
+  const dateKeyManila = (d: Date) =>
+    new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(d)
+  if (dateKeyManila(new Date(expectedArrival)) < dateKeyManila(new Date())) {
+    return { error: 'The target date of arrival cannot be in the past.' }
   }
 
   if (!supplierName) {
-    return { error: 'Supplier/payee is required.' }
+    return { error: 'Supplier is required.' }
   }
 
   if (!poReference) {
     return { error: 'PO reference is required.' }
   }
 
-  if (!statuses.includes(deliveryStatus as (typeof statuses)[number])) {
-    return { error: 'Invalid delivery status.' }
+  // Recipient is an active PGSO personnel account picked by name (no free-text
+  // role/name entry). Re-check the roster server-side so a tampered field can
+  // never credit a non-personnel or inactive account.
+  if (recipientRole !== 'PGSO Personnel' || !recipientName) {
+    return { error: 'Select an active PGSO personnel account as the recipient.' }
   }
-
-  if (!recipientRoles.includes(recipientRole as (typeof recipientRoles)[number])) {
-    return { error: 'Recipient must be an Employee or PGSO Personnel.' }
+  const recipientProfile = await prisma.profile.findFirst({
+    where: {
+      status: 'active',
+      role: 'pgso_personnel',
+      full_name: { equals: recipientName, mode: 'insensitive' },
+    },
+    select: { full_name: true },
+  })
+  if (!recipientProfile) {
+    return { error: 'Select an active PGSO personnel account as the recipient.' }
   }
+  const recipientNameCanon = recipientProfile.full_name ?? recipientName
 
   let items: ItemInput[]
   try {
@@ -224,8 +302,9 @@ export async function logDelivery(
             inspection_status: 'pending',
             received_by: user.id,
             recipient_role: recipientRole,
-            recipient_name: recipientName || null,
+            recipient_name: recipientNameCanon,
             asset_type: assetTypeCanon,
+            stock_type: stockTypeCanon,
             account_code: accountCode,
             account_title: accountTitleCanon,
             items: {
@@ -260,6 +339,291 @@ export async function logDelivery(
     return { success: true, deliveryId: outcome.result.deliveryId }
   } catch {
     return { error: 'Failed to save delivery. Please try again.' }
+  }
+}
+
+/**
+ * Edit a delivery log while it is still pending (not yet inspected). The log
+ * stepper is reused as an edit form, so every field it shows is writable:
+ * kind, code/title/type, supplier, PO reference, dates, recipient, and items.
+ * Only the owner may edit, and the record locks once an inspection exists —
+ * outcomes snapshot the values, so later edits would desync the trail.
+ */
+export async function updateDelivery(
+  _prevState: SignupState,
+  formData: FormData
+): Promise<SignupState> {
+  const deliveryId = (formData.get('deliveryId') as string)?.trim()
+  const deliveryKind = (formData.get('deliveryKind') as string)?.trim()?.toLowerCase()
+  const accountCodeRaw = (formData.get('accountCode') as string)?.trim()
+  const assetTypeRaw = (formData.get('assetType') as string)?.trim()
+  const stockTypeRaw = (formData.get('stockType') as string)?.trim()
+  const accountTitleRaw = (formData.get('accountTitle') as string)?.trim()
+  const supplierName = (formData.get('supplierName') as string)?.trim()
+  const poReference = (formData.get('poReference') as string)?.trim()?.toUpperCase() || ''
+  const dateSupplied = (formData.get('dateSupplied') as string)?.trim()
+  const expectedArrival = (formData.get('expectedArrival') as string)?.trim()
+  const recipientRole = (formData.get('recipientRole') as string)?.trim()
+  const recipientName = (formData.get('recipientName') as string)?.trim()
+
+  if (!deliveryId) {
+    return { error: 'Delivery ID is required.' }
+  }
+
+  if (!deliveryKinds.includes(deliveryKind as (typeof deliveryKinds)[number])) {
+    return { error: 'Choose whether this delivery is for Stocks or Assets.' }
+  }
+
+  // Same code rules as the create form: free-form, 2–60 chars, safe charset.
+  const accountCode = accountCodeRaw || ''
+  if (!accountCode) {
+    return {
+      error:
+        deliveryKind === 'stock'
+          ? 'Select a stock code from Master Data.'
+          : 'Account code is required — type a code or press Generate.',
+    }
+  }
+  if (accountCode.length < 2 || accountCode.length > 60) {
+    return {
+      error:
+        deliveryKind === 'stock'
+          ? 'Stock code must be 2–60 characters.'
+          : 'Account code must be 2–60 characters.',
+    }
+  }
+  if (!/^[A-Za-z0-9][A-Za-z0-9\-._/\s]*$/.test(accountCode)) {
+    return {
+      error:
+        deliveryKind === 'stock'
+          ? 'Stock code may only contain letters, numbers, spaces, and - . _ /'
+          : 'Account code may only contain letters, numbers, spaces, and - . _ /',
+    }
+  }
+
+  // Re-derive the canonical title/type triple from Master Data so a stale or
+  // tampered hidden field can never store a mismatched combination.
+  let accountTitleCanon = ''
+  let assetTypeCanon: string | null = null
+  let stockTypeCanon: string | null = null
+
+  if (deliveryKind === 'stock') {
+    const activeStockHeaders = await prisma.stockType.findMany({
+      where: { status: 'active', deleted_at: null },
+      select: { name: true, account_code: true, account_title: true, asset_type: true },
+    })
+    if (activeStockHeaders.length === 0) {
+      return { error: 'No active stock headers — ask your Super Admin to add them in Master Data.' }
+    }
+    if (!stockTypeRaw) {
+      return { error: 'Choose a stock type from Master Data.' }
+    }
+    const header = activeStockHeaders.find((h) => {
+      const hTitle = (h.account_title ?? h.name).trim().toLowerCase()
+      const hType = (h.asset_type ?? h.name).trim().toLowerCase()
+      return (
+        hTitle === (accountTitleRaw || '').toLowerCase() &&
+        hType === stockTypeRaw.toLowerCase()
+      )
+    })
+    if (!header) {
+      return {
+        error: 'Pick a stock title and stock type that match a stock header in Master Data.',
+      }
+    }
+    accountTitleCanon = header.account_title ?? header.name
+    stockTypeCanon = header.asset_type ?? header.name
+  } else {
+    if (!accountTitleRaw) {
+      return { error: 'Select an account title from the catalog.' }
+    }
+    const accountTitleNorm = accountTitleRaw.toUpperCase()
+    const catalogEntries = await getActiveCatalogEntries()
+    if (catalogEntries.length === 0) {
+      return { error: 'No active catalog entries — ask your Super Admin to add them in Master Data.' }
+    }
+    const titleMatches = catalogEntries.filter(
+      (e) => e.title.toUpperCase() === accountTitleNorm
+    )
+    if (titleMatches.length === 0) {
+      return { error: 'Unknown account title — pick one from the catalog.' }
+    }
+    accountTitleCanon = titleMatches[0].title
+
+    const titleTypes = [
+      ...new Map(
+        titleMatches.map((e) => [e.type.trim().toLowerCase(), e.type.trim()])
+      ).values(),
+    ].filter(Boolean)
+    assetTypeCanon = titleTypes[0] ?? null
+    if (assetTypeRaw) {
+      const submitted = titleTypes.find(
+        (t) => t.toLowerCase() === assetTypeRaw.toLowerCase()
+      )
+      if (submitted) assetTypeCanon = submitted
+    }
+    if (!assetTypeCanon) {
+      return { error: 'This account title has no asset type — ask your Super Admin to update Master Data.' }
+    }
+  }
+
+  if (!supplierName) {
+    return { error: 'Supplier is required.' }
+  }
+
+  if (!PO_REFERENCE_PATTERN.test(poReference)) {
+    return { error: 'PO reference must look like PGSO-XXXX-XXXX.' }
+  }
+
+  if (!expectedArrival || Number.isNaN(Date.parse(expectedArrival))) {
+    return { error: 'A valid target date of arrival is required.' }
+  }
+
+  if (dateSupplied && Number.isNaN(Date.parse(dateSupplied))) {
+    return { error: 'Date supplied is not a valid date.' }
+  }
+
+  if (recipientRole !== 'PGSO Personnel' || !recipientName) {
+    return { error: 'Select an active PGSO personnel account as the recipient.' }
+  }
+  const recipientProfile = await prisma.profile.findFirst({
+    where: {
+      status: 'active',
+      role: 'pgso_personnel',
+      full_name: { equals: recipientName, mode: 'insensitive' },
+    },
+    select: { full_name: true },
+  })
+  if (!recipientProfile) {
+    return { error: 'Select an active PGSO personnel account as the recipient.' }
+  }
+  const recipientNameCanon = recipientProfile.full_name ?? recipientName
+
+  let items: ItemInput[]
+  try {
+    items = JSON.parse((formData.get('itemsJson') as string) || '[]')
+  } catch {
+    return { error: 'Invalid items payload.' }
+  }
+
+  if (!Array.isArray(items) || items.length === 0) {
+    return { error: 'Add at least one delivered item.' }
+  }
+
+  const parsedItems = items.map((item) => {
+    const description = String(item.description || '').trim()
+    const quantity = Number(item.quantity)
+    const unit = String(item.units || '').trim() || null
+    const costRaw = String(item.unitCost ?? '').trim()
+    return { description, quantity, unit, costRaw }
+  })
+
+  for (const item of parsedItems) {
+    if (!item.description) {
+      return { error: 'Every item needs an article.' }
+    }
+    if (!Number.isInteger(item.quantity) || item.quantity <= 0) {
+      return { error: 'Item quantities must be whole numbers above zero.' }
+    }
+    if (item.costRaw && (Number.isNaN(Number(item.costRaw)) || Number(item.costRaw) < 0)) {
+      return { error: 'Unit costs must be zero or more.' }
+    }
+    if (!item.unit) {
+      return { error: `Item "${item.description}" needs a unit — pick one from Master Data.` }
+    }
+    const canonicalUnit = await resolveUnitName(item.unit)
+    if (!canonicalUnit) {
+      return { error: `Unknown unit "${item.unit}" for "${item.description}" — ask your Super Admin to add it to Master Data.` }
+    }
+    item.unit = canonicalUnit
+  }
+
+  const scope = await getPersonnelScope()
+  const user = scope.userId ? ({ id: scope.userId } as { id: string }) : null
+
+  if (!user) {
+    return { error: 'You must be signed in to edit a delivery.' }
+  }
+
+  // Super admins have read-only oversight of deliveries.
+  if (scope.isSuperAdmin) {
+    return { error: 'Super admins have read-only access to deliveries.' }
+  }
+
+  try {
+    const existing = await prisma.delivery.findUnique({
+      where: { id: deliveryId },
+      select: { received_by: true, inspection_status: true },
+    })
+
+    if (!existing) {
+      return { error: 'Delivery not found.' }
+    }
+
+    // Own-data only: you can only edit deliveries you logged.
+    if (existing.received_by !== user.id) {
+      return { error: 'You can only edit your own logged deliveries.' }
+    }
+
+    if (existing.inspection_status !== 'pending') {
+      return { error: 'Only deliveries still pending inspection can be edited.' }
+    }
+
+    await prisma.$transaction(async (tx) => {
+      const updated = await tx.delivery.updateMany({
+        where: { id: deliveryId, inspection_status: 'pending' },
+        data: {
+          delivery_kind: deliveryKind,
+          account_code: accountCode,
+          account_title: accountTitleCanon,
+          asset_type: assetTypeCanon,
+          stock_type: stockTypeCanon,
+          supplier: supplierName,
+          po_reference: poReference,
+          date_delivered: dateSupplied ? new Date(dateSupplied) : null,
+          expected_arrival_date: new Date(expectedArrival),
+          recipient_role: recipientRole,
+          recipient_name: recipientNameCanon,
+        },
+      })
+      if (updated.count === 0) {
+        throw new Error('This delivery can no longer be edited.')
+      }
+
+      // Replace item lines — pending inspections have no stocked quantities yet.
+      await tx.deliveryItem.deleteMany({ where: { delivery_id: deliveryId } })
+      await tx.deliveryItem.createMany({
+        data: parsedItems.map((item) => ({
+          delivery_id: deliveryId,
+          item_name: item.description,
+          unit: item.unit,
+          quantity: item.quantity,
+          unit_cost: item.costRaw ? item.costRaw : null,
+        })),
+      })
+    })
+
+    revalidatePath('/personnel/deliveries')
+    revalidatePath('/personnel/dashboard')
+    // Also drop the per-delivery receipt cache so the next open shows edits.
+    const { bustPersonnelScopes } = await import('@/lib/personnel-cache')
+    void bustPersonnelScopes(['deliveries'])
+    await writeAuditLog({
+      userId: user.id,
+      action: 'delivery:update',
+      module: 'deliveries',
+      details: {
+        purpose: `Edit pending delivery from ${supplierName}`,
+        summary: `PO ${poReference} · ${parsedItems.length} item(s) · ${deliveryKind}`,
+        reference_id: deliveryId,
+        supplier: supplierName,
+        po_reference: poReference,
+      },
+    })
+    return { success: true, deliveryId }
+  } catch (e) {
+    console.error('[updateDelivery]', e)
+    return { error: 'Failed to update delivery. Please try again.' }
   }
 }
 
@@ -373,16 +737,36 @@ export async function recordInspection(
   try {
     const exists = await prisma.delivery.findUnique({
       where: { id: deliveryId },
-      select: { id: true, inspection_status: true, received_by: true },
+      select: {
+        id: true,
+        inspection_status: true,
+        received_by: true,
+        expected_arrival_date: true,
+      },
     })
 
     if (!exists) {
       return { error: 'Delivery not found.' }
     }
 
-    // Own-data only: you can only inspect deliveries you logged.
+    // Own-data only for personnel; super_admin is read-only.
+    if (inspectionScope.isSuperAdmin) {
+      return { error: 'Super admins have read-only access to deliveries.' }
+    }
     if (exists.received_by !== user.id) {
       return { error: 'You can only inspect your own logged deliveries.' }
+    }
+
+    // Inspections open on the target arrival day (Manila calendar) — not before.
+    if (exists.expected_arrival_date) {
+      const dayKey = (d: Date) =>
+        new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(d)
+      if (dayKey(exists.expected_arrival_date) > dayKey(new Date())) {
+        return {
+          error:
+            'This delivery is still waiting for arrival — inspect it on or after the target arrival date.',
+        }
+      }
     }
 
     if (exists.inspection_status !== 'pending' && exists.inspection_status !== 'partial' && exists.inspection_status !== 'failed') {
@@ -449,7 +833,7 @@ export async function recordInspection(
 
     revalidatePath('/personnel/deliveries')
     revalidatePath('/personnel/inspections')
-    revalidatePath(`/personnel/inspections/${deliveryId}`)
+    revalidatePath(inspectionHref(deliveryId))
     revalidatePath('/personnel/dashboard')
     await writeAuditLog({
       userId: user.id,
@@ -491,6 +875,7 @@ export interface DeliveryDetails {
   delivery_status: string | null
   inspection_status: string | null
   asset_type: string | null
+  stock_type: string | null
   account_code: string | null
   account_title: string | null
   recipient_role: string | null
@@ -558,6 +943,7 @@ export async function getDeliveryDetails(
       delivery_status: delivery.delivery_status,
       inspection_status: delivery.inspection_status,
       asset_type: delivery.asset_type,
+      stock_type: delivery.stock_type,
       account_code: delivery.account_code,
       account_title: delivery.account_title,
       recipient_role: delivery.recipient_role,
@@ -588,8 +974,20 @@ export interface DeliveryFormCode {
   accountTitle: string
 }
 
+/** One active stock header from Super Admin → Master Data. */
+export interface DeliveryFormStockHeader {
+  code: string
+  title: string
+  type: string
+}
+
 export interface DeliveryFormOptions {
   assetTypes: string[]
+  /**
+   * Active stock headers. Every stock detail (code, title, type) is picked
+   * from these rows — not from the asset catalog.
+   */
+  stockHeaders: DeliveryFormStockHeader[]
   accountTitles: string[]
   codes: DeliveryFormCode[]
   /**
@@ -597,6 +995,45 @@ export interface DeliveryFormOptions {
    * to auto-fill Asset Type as soon as an Account Title is picked.
    */
   accountTitleTypes: Record<string, string[]>
+}
+
+/** Active PGSO personnel account shown in the Recipient step. */
+export interface PersonnelRecipient {
+  id: string
+  name: string
+  position: string | null
+  office: string | null
+}
+
+/**
+ * System accounts that can receive a delivery. Reads the live profile roster so
+ * the picker always matches Super Admin → Users (active PGSO personnel only).
+ */
+export async function getPersonnelRecipients(): Promise<PersonnelRecipient[]> {
+  try {
+    const scope = await getPersonnelScope()
+    if (scope.isEmpty) return []
+    const rows = await prisma.profile.findMany({
+      where: { status: 'active', role: 'pgso_personnel' },
+      orderBy: { full_name: 'asc' },
+      select: { id: true, full_name: true, position: true, office: true },
+    })
+    return rows.flatMap((r) =>
+      r.full_name
+        ? [
+            {
+              id: r.id,
+              name: r.full_name,
+              position: r.position,
+              office: r.office,
+            },
+          ]
+        : []
+    )
+  } catch (e) {
+    console.error('[getPersonnelRecipients]', e)
+    return []
+  }
 }
 
 /**
@@ -610,6 +1047,8 @@ export interface CachedDeliveryRow {
   po_reference: string | null;
   date_delivered: string | null;
   expected_arrival_date: string | null;
+  /** When the delivery record was logged (shown in the log's Date column). */
+  logged_at: string | null;
   delivery_kind: string | null;
   delivery_status: string | null;
   inspection_status: string | null;
@@ -676,6 +1115,7 @@ export async function getDeliveriesPage(
             po_reference: true,
             date_delivered: true,
             expected_arrival_date: true,
+            created_at: true,
             delivery_kind: true,
             delivery_status: true,
             inspection_status: true,
@@ -691,6 +1131,7 @@ export async function getDeliveriesPage(
           po_reference: d.po_reference,
           date_delivered: d.date_delivered?.toISOString() ?? null,
           expected_arrival_date: d.expected_arrival_date?.toISOString() ?? null,
+          logged_at: d.created_at?.toISOString() ?? null,
           delivery_kind: d.delivery_kind,
           delivery_status: d.delivery_status,
           inspection_status: d.inspection_status,
@@ -716,12 +1157,27 @@ export async function getDeliveryFormOptions(): Promise<DeliveryFormOptions> {
   return withCache(cacheKey('personnel:delivery-form-options'), 300, async () => {
   const empty: DeliveryFormOptions = {
     assetTypes: [],
+    stockHeaders: [],
     accountTitles: [],
     codes: [],
     accountTitleTypes: {},
   }
   try {
-    const entries = await getActiveCatalogEntries()
+    const [entries, stockHeaderRows] = await Promise.all([
+      getActiveCatalogEntries(),
+      prisma.stockType.findMany({
+        where: { status: 'active', deleted_at: null },
+        select: { name: true, account_code: true, account_title: true, asset_type: true },
+        orderBy: { account_code: 'asc' },
+      }),
+    ])
+    const stockHeaders: DeliveryFormStockHeader[] = stockHeaderRows
+      .map((s) => ({
+        code: (s.account_code ?? s.name).trim(),
+        title: (s.account_title ?? s.name).trim(),
+        type: (s.asset_type ?? s.name).trim(),
+      }))
+      .filter((s) => s.code && s.title && s.type)
     const codes: DeliveryFormCode[] = entries.map((e) => ({
       code: e.code,
       assetType: e.type,
@@ -747,7 +1203,7 @@ export async function getDeliveryFormOptions(): Promise<DeliveryFormOptions> {
     for (const title of Object.keys(accountTitleTypes)) {
       accountTitleTypes[title].sort((a, b) => a.localeCompare(b))
     }
-    return { assetTypes, accountTitles, codes, accountTitleTypes }
+    return { assetTypes, stockHeaders, accountTitles, codes, accountTitleTypes }
   } catch (e) {
     console.error('[getDeliveryFormOptions]', e)
     return empty

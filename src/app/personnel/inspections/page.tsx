@@ -1,7 +1,9 @@
 'use client'
 
-import { useState } from 'react'
+import { useMemo, useState, useSyncExternalStore } from 'react'
 import Link from 'next/link'
+import { usePathname } from 'next/navigation'
+import { toast } from 'sonner'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import {
@@ -12,14 +14,28 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { getInspectionsCounts, getInspectionsPage, type UnifiedInspectionRow } from './actions'
+import {
+  getEmptyPendingAir,
+  getEmptyPendingInspectionResults,
+  getPendingAir,
+  getPendingInspectionResults,
+  subscribePendingAir,
+  subscribePendingInspectionResults,
+} from './optimistic-inspections'
 import { IarDialog } from '@/components/personnel/IarDialog'
 import { IarAttachButton } from '@/components/personnel/IarAttach'
 import { InspectConfirmButton } from '@/components/personnel/InspectConfirmDialog'
+import { InspectionHistoryDialog } from './components/inspection-history-dialog'
+import { ViewIarDialog } from './components/view-iar-dialog'
+import { ViewInspectionDialog } from './components/view-inspection-dialog'
 import { TablePager, FIXED_PAGE_SIZE } from '@/components/personnel/TablePager'
-import { useDebouncedValue } from '@/hooks/use-debounced-value'
+import { pageWindow } from '@/components/ui/pagination'
 import { useCachedAction } from '@/hooks/use-cached-action'
 import { buildQueryKey, resourcePrefix } from '@/lib/query-keys'
+import { inspectionHref } from '@/lib/inspection-ref'
+import { portalFromPathname } from '@/lib/portal-path'
 import { CLIENT_CACHE_KEYS, bustClientCache } from '@/lib/client-cache'
+import { cn } from '@/lib/utils'
 import styles from '../dashboard/page.module.css'
 import air from './air-section.module.css'
 
@@ -41,18 +57,16 @@ function fmt(iso: string | null) {
 }
 
 function resultLabel(d: UnifiedInspectionRow) {
-  if (d.inspection_status === 'pending') return 'Pending'
-  // Fall back to the delivery-level status when the latest inspection row
-  // is missing (legacy / drifted data) so partial rows never render "—".
-  const effective = d.result ?? d.inspection_status
-  return effective
-    ? effective.charAt(0).toUpperCase() + effective.slice(1)
-    : '—'
+  // Same verdict vocabulary as the Deliveries page's Inspection column.
+  const verdict = d.inspection_status
+  if (!verdict || verdict === 'pending') return 'Pending'
+  if (verdict === 'failed') return 'Returned to supplier'
+  return verdict.charAt(0).toUpperCase() + verdict.slice(1)
 }
 
 function resultChipTone(d: UnifiedInspectionRow) {
   if (d.inspection_status === 'pending') return 'info'
-  return resultTone(d.result ?? d.inspection_status)
+  return resultTone(d.inspection_status)
 }
 
 function isRevisableStatus(value: string | null | undefined) {
@@ -76,11 +90,27 @@ function hasAir(d: UnifiedInspectionRow) {
   return !!(d.iar_no || d.iar_image_url)
 }
 
+/** One fetch loads the newest rows; search + pagination then run in memory. */
+const FETCH_LIMIT = 100
+
+/** Row actions mirror the Deliveries table buttons (24px, amber tint). */
+const ROW_ACTION_CLASS = cn(
+  "inline-flex h-6 items-center justify-center rounded-[4px] px-3",
+  "border border-yellow-500/40 bg-yellow-500/20 text-xs font-semibold",
+  "text-navy-900 transition-colors hover:bg-yellow-500/30"
+)
+const ROW_PRIMARY_CLASS = cn(
+  "inline-flex h-6 items-center justify-center rounded-[4px] px-3",
+  "border border-yellow-500 bg-yellow-500 text-xs font-semibold",
+  "text-navy-900 transition-colors hover:bg-yellow-400"
+)
+
 const FILTERS = [
-  { value: 'all', label: 'All inspections' },
-  { value: 'pending', label: 'Pending inspection' },
-  { value: 'passed', label: 'Complete — Passed' },
-  { value: 'partial', label: 'Complete — Partial' },
+  { value: 'all', label: 'All verdicts' },
+  { value: 'pending', label: 'Pending' },
+  { value: 'passed', label: 'Passed' },
+  { value: 'partial', label: 'Partial' },
+  { value: 'failed', label: 'Returned to supplier' },
 ] as const
 
 const AIR_STATUS_FILTERS = [
@@ -97,8 +127,8 @@ const AIR_RESULT_FILTERS = [
 ] as const
 
 /**
- * Skeleton for the AIR / IAR tab — same stats, controls, card grid, and
- * pager positions as the real data so nothing jumps when records arrive.
+ * Skeleton for the AIR / IAR tab — same stats, filter row, data table, and
+ * pager as the real data so nothing jumps when records arrive.
  */
 function AirTabSkeleton() {
   return (
@@ -114,73 +144,87 @@ function AirTabSkeleton() {
         ))}
       </div>
 
-      <div className={air.controls}>
-        <div className={`${air.search} h-9 animate-pulse rounded-md bg-navy-100`} />
-        <div className="h-9 w-44 animate-pulse rounded-md bg-navy-100" />
-        <div className="h-9 w-40 animate-pulse rounded-md bg-navy-100" />
-      </div>
-
-      <div className={air.grid}>
-        {Array.from({ length: 6 }).map((_, i) => (
-          <article
-            key={i}
-            className={air.card}
-            style={{ opacity: 1 - i * 0.08 }}
-          >
-            <div className={air.cardTop}>
-              <div className="h-5 w-20 animate-pulse rounded bg-navy-100" />
-              <span className={air.chips}>
-                <span className="h-[22px] w-16 animate-pulse rounded-full bg-navy-100" />
-                <span className="h-[22px] w-14 animate-pulse rounded-full bg-navy-100" />
-              </span>
-            </div>
-            <dl className={air.meta}>
-              {['Supplier', 'PO ref', 'Delivered', 'Inspector', 'Inspected', 'Items'].map(
-                (label) => (
-                  <div key={label}>
-                    <dt>{label}</dt>
-                    <dd>
-                      <span className="mt-1 block h-4 w-3/4 animate-pulse rounded bg-navy-100" />
-                    </dd>
-                  </div>
-                )
-              )}
-              <div className={air.metaFull}>
-                <dt>IAR No.</dt>
-                <dd>
-                  <span className="mt-1 block h-4 w-1/2 animate-pulse rounded bg-navy-200" />
-                </dd>
-              </div>
-            </dl>
-            <div className={air.actions}>
-              <span className={air.primary}>View IAR</span>
-              <span className={air.secondary}>Details</span>
-            </div>
-          </article>
-        ))}
-      </div>
-
-      <div className={styles.pager}>
-        <span className={styles.pagerInfo}>
-          <span className="block h-3 w-36 animate-pulse rounded bg-navy-100" />
-        </span>
-        <div className={styles.pagerControls}>
-          <span className={styles.pageSizeWrap}>
-            <span>Rows</span>
-            <span className="h-8 w-[5.5rem] animate-pulse rounded-md bg-navy-100" />
-          </span>
-          <span className={styles.pageBtn}>‹</span>
-          <span className={styles.pageBtn} data-active="true">
-            1
-          </span>
-          <span className={styles.pageBtn}>›</span>
+      <Card className={styles.panel}>
+        <div className="mb-3 flex flex-wrap items-center justify-end gap-2">
+          <div className="h-8 w-72 max-w-full animate-pulse rounded-md bg-navy-100" />
+          <div className="h-8 w-44 animate-pulse rounded-md bg-navy-100" />
+          <div className="h-8 w-40 animate-pulse rounded-md bg-navy-100" />
         </div>
-      </div>
+
+        <div className={styles.tableWrap}>
+          <table className={styles.table}>
+            <thead>
+              <tr>
+                <th>PO ref</th>
+                <th>Supplier</th>
+                <th>Target arrival</th>
+                <th>Date inspected</th>
+                <th>AIR / IAR</th>
+                <th>Result</th>
+                <th>IAR No.</th>
+                <th style={{ textAlign: 'right' }}>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {Array.from({ length: 8 }).map((_, r) => (
+                <tr key={r} style={{ opacity: 1 - r * 0.05 }}>
+                  <td>
+                    <div className="h-3.5 w-20 animate-pulse rounded bg-navy-100" />
+                  </td>
+                  <td>
+                    <div className="h-3.5 w-24 animate-pulse rounded bg-navy-100" />
+                  </td>
+                  <td>
+                    <div className="h-3.5 w-20 animate-pulse rounded bg-navy-100" />
+                  </td>
+                  <td>
+                    <div className="h-3.5 w-20 animate-pulse rounded bg-navy-100" />
+                  </td>
+                  <td>
+                    <div className="h-[22px] w-20 animate-pulse rounded-full bg-navy-100" />
+                  </td>
+                  <td>
+                    <div className="h-[22px] w-16 animate-pulse rounded-full bg-navy-100" />
+                  </td>
+                  <td>
+                    <div className="h-3.5 w-24 animate-pulse rounded bg-navy-100" />
+                  </td>
+                  <td>
+                    <div className="flex items-center justify-end gap-1.5">
+                      <span className={ROW_ACTION_CLASS}>View IAR</span>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div className={styles.pager}>
+          <span className={styles.pagerInfo}>
+            <span className="block h-3 w-36 animate-pulse rounded bg-navy-100" />
+          </span>
+          <div className={styles.pagerControls}>
+            <span className={styles.pageSizeWrap}>
+              <span>Rows</span>
+              <span className="h-8 w-[5.5rem] animate-pulse rounded-md bg-navy-100" />
+            </span>
+            <span className={styles.pageBtn}>‹</span>
+            <span className={styles.pageBtn} data-active="true">
+              1
+            </span>
+            <span className={styles.pageBtn}>›</span>
+          </div>
+        </div>
+      </Card>
     </div>
   )
 }
 
 export default function PersonnelInspectionsPage() {
+  const pathname = usePathname()
+  const portal = portalFromPathname(pathname)
+  const readOnly = portal === 'super-admin'
   const [tab, setTab] = useState<'inspections' | 'air'>('inspections')
   const [filter, setFilter] = useState('all')
   const [query, setQuery] = useState('')
@@ -191,52 +235,51 @@ export default function PersonnelInspectionsPage() {
   const airPageSize = FIXED_PAGE_SIZE
   const [inspPage, setInspPage] = useState(1)
   const [airPage, setAirPage] = useState(1)
-  // Debounced server search — the DB query fires only after typing pauses.
-  const debouncedQuery = useDebouncedValue(query, 250)
-  const searching = query.trim() !== debouncedQuery.trim()
+  // Row clicks open overlays instead of dedicated pages.
+  const [historyTarget, setHistoryTarget] = useState<{
+    deliveryId: string
+    deliveryRef: string
+  } | null>(null)
+  const [viewTarget, setViewTarget] = useState<{
+    deliveryId: string
+    deliveryRef: string
+  } | null>(null)
 
-  // Server-paged inspections tab (fixed 20, DB window + total).
+  // One fetch loads the newest rows; search + pagination then run entirely in
+  // memory so typing filters instantly (matching Deliveries — no debounce,
+  // no "Updating…", no stale page stack).
   const {
     data: inspData,
     loading: inspLoading,
-    isValidating: inspValidating,
     refresh: refreshInsp,
   } = useCachedAction(
     buildQueryKey({
       module: 'personnel',
       resource: 'inspections',
-      page: inspPage,
-      pageSize: inspPageSize,
-      filters: { q: debouncedQuery, status: filter },
+      page: 1,
+      pageSize: FETCH_LIMIT,
+      filters: { scope: 'inspections-log' },
     }),
-    () =>
-      getInspectionsPage({
-        page: inspPage,
-        pageSize: inspPageSize,
-        q: debouncedQuery,
-        status: filter,
-      }),
+    () => getInspectionsPage({ page: 1, pageSize: FETCH_LIMIT }),
     { staleTime: 30_000 }
   )
-  // Server-paged AIR tab (AIR presence + result filter in the DB).
+  // AIR tab keeps the DB-side AIR/result filters; its search runs locally too.
   const {
     data: airData,
     loading: airLoading,
-    isValidating: airValidating,
     refresh: refreshAir,
   } = useCachedAction(
     buildQueryKey({
       module: 'personnel',
       resource: 'inspections-air',
-      page: airPage,
-      pageSize: airPageSize,
-      filters: { q: debouncedQuery, air: airStatus, result: airResult },
+      page: 1,
+      pageSize: FETCH_LIMIT,
+      filters: { scope: 'air-log', air: airStatus, result: airResult },
     }),
     () =>
       getInspectionsPage({
-        page: airPage,
-        pageSize: airPageSize,
-        q: debouncedQuery,
+        page: 1,
+        pageSize: FETCH_LIMIT,
         status: airResult,
         air: airStatus as 'all' | 'issued' | 'awaiting',
       }),
@@ -248,13 +291,10 @@ export default function PersonnelInspectionsPage() {
     getInspectionsCounts,
     { staleTime: 60_000 }
   )
-  const loading = tab === 'inspections' ? inspLoading : airLoading
-  const isValidating = tab === 'inspections' ? inspValidating : airValidating
   // Cold start only per tab: keep stale rows visible on filter/page changes
-  // with an "updating…" badge instead of flashing the skeleton.
+  // instead of flashing the skeleton again.
   const inspCold = inspLoading && !inspData
   const airCold = airLoading && !airData
-  const cold = tab === 'inspections' ? inspCold : airCold
 
   const reload = () => {
     // Own write (IAR attach etc.) — force fresh rows now and drop the
@@ -273,11 +313,76 @@ export default function PersonnelInspectionsPage() {
     refreshAir()
   }
 
-  // Server already filtered + paged — visible is the page window.
-  const filtered = inspData?.rows ?? []
-  const inspTotal = inspData?.total ?? 0
-  const airRows = airData?.rows ?? []
-  const airTotal = airData?.total ?? 0
+  // Results submitted from the inspection form but not yet acknowledged by
+  // the server. They overlay the matching row instantly; the cache bust on
+  // success keeps them on screen until the revalidated list lands.
+  const pendingResults = useSyncExternalStore(
+    subscribePendingInspectionResults,
+    getPendingInspectionResults,
+    getEmptyPendingInspectionResults
+  )
+
+  // AIR generations submitted from the IAR dialog but not yet acknowledged by
+  // the server — the row flips to "AIR issued" immediately.
+  const pendingAir = useSyncExternalStore(
+    subscribePendingAir,
+    getPendingAir,
+    getEmptyPendingAir
+  )
+
+  // Local filter + search over the loaded window — instant, no server round
+  // trip while typing and no stale page shown mid-request.
+  const filtered = useMemo(() => {
+    const rows = (inspData?.rows ?? []).map((row): UnifiedInspectionRow => {
+      const pending = pendingResults[row.delivery_id]
+      if (!pending) return row
+      return {
+        ...row,
+        result: pending.result,
+        inspection_status: pending.result,
+        inspector_name: pending.inspectorName || row.inspector_name,
+        inspection_date: pending.inspectionDate || row.inspection_date,
+      }
+    })
+    const q = query.trim().toLowerCase()
+    return rows.filter((d) => {
+      if (filter !== 'all' && d.inspection_status !== filter) return false
+      if (!q) return true
+      return [
+        d.delivery_ref,
+        d.supplier,
+        d.po_reference,
+        d.inspector_name,
+        resultLabel(d),
+      ].some((v) => (v ?? '').toLowerCase().includes(q))
+    })
+  }, [inspData, pendingResults, filter, query])
+
+  const airMatches = (d: UnifiedInspectionRow) => {
+    const q = query.trim().toLowerCase()
+    if (!q) return true
+    return [
+      d.delivery_ref,
+      d.supplier,
+      d.po_reference,
+      d.inspector_name,
+      d.iar_no,
+      resultLabel(d),
+    ].some((v) => (v ?? '').toLowerCase().includes(q))
+  }
+  const airRows = useMemo(
+    () =>
+      (airData?.rows ?? [])
+        .map((row) => {
+          const pending = pendingAir[row.delivery_id]
+          return pending ? { ...row, iar_no: pending.iarNo } : row
+        })
+        .filter(airMatches),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [airData, query, pendingAir]
+  )
+  const inspTotal = filtered.length
+  const airTotal = airRows.length
   const airStats = {
     total: countsData?.total ?? 0,
     issued: countsData?.issued ?? 0,
@@ -286,33 +391,21 @@ export default function PersonnelInspectionsPage() {
 
   const inspPageCount = Math.max(1, Math.ceil(inspTotal / inspPageSize))
   const inspSafePage = Math.min(Math.max(1, inspPage), inspPageCount)
-  const inspVisible = filtered
+  const inspStart = (inspSafePage - 1) * inspPageSize
+  const inspVisible = filtered.slice(inspStart, inspStart + inspPageSize)
+  const inspPages = pageWindow(inspSafePage, inspPageCount)
+  const inspFrom = inspTotal === 0 ? 0 : inspStart + 1
+  const inspTo = Math.min(inspSafePage * inspPageSize, inspTotal)
 
   const airPageCount = Math.max(1, Math.ceil(airTotal / airPageSize))
   const airSafePage = Math.min(Math.max(1, airPage), airPageCount)
-  const airVisible = airRows
+  const airStart = (airSafePage - 1) * airPageSize
+  const airVisible = airRows.slice(airStart, airStart + airPageSize)
 
   return (
     <section className={styles.section}>
-      <p className={styles.crumb}>Personnel / Inspections</p>
       <div className={styles.headerRow}>
-        <div>
-          <h1 className={styles.title}>Inspections</h1>
-          <p className={styles.subtitle}>
-            {cold ? (
-              <span
-                className="mt-1 block h-4 w-48 animate-pulse rounded bg-navy-100"
-                aria-hidden="true"
-              />
-            ) : tab === 'inspections' ? (
-              inspTotal === 0
-                ? 'No inspections found.'
-                : `${inspTotal} inspection${inspTotal !== 1 ? 's' : ''} listed${isValidating || searching ? ' · updating…' : ''}`
-            ) : (
-              `${airTotal} record${airTotal !== 1 ? 's' : ''} shown${isValidating || searching ? ' · updating…' : ''}`
-            )}
-          </p>
-        </div>
+        <h1 className={styles.title}>Inspections</h1>
         <div className={styles.actions}>
           <div className={air.tabs} role="tablist" aria-label="Inspections sections">
             <button
@@ -347,73 +440,61 @@ export default function PersonnelInspectionsPage() {
 
       {tab === 'inspections' ? (
         <Card className={styles.panel}>
-          <div className={styles.headerRow}>
-            <div>
-              <h2 className={styles.panelTitle}>Inspections</h2>
-              <p className={styles.panelSub}>
-                Your deliveries and inspections only — other personnel&apos;s records are hidden.
-              </p>
-            </div>
-            <div className={styles.actions}>
-              <Select
-                value={filter}
-                onValueChange={(v) => {
-                  setFilter(v)
-                  setInspPage(1)
-                }}
-              >
-                <SelectTrigger className="w-48">
-                  <SelectValue placeholder="Filter by status" />
-                </SelectTrigger>
-                <SelectContent>
-                  {FILTERS.map((f) => (
-                    <SelectItem key={f.value} value={f.value}>
-                      {f.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+          <div className="mb-3 flex flex-wrap items-center justify-end gap-2">
+            <Select
+              value={filter}
+              onValueChange={(v) => {
+                setFilter(v)
+                setInspPage(1)
+              }}
+            >
+              <SelectTrigger className="h-8 w-48">
+                <SelectValue placeholder="Filter by status" />
+              </SelectTrigger>
+              <SelectContent>
+                {FILTERS.map((f) => (
+                  <SelectItem key={f.value} value={f.value}>
+                    {f.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <input
+              type="search"
+              value={query}
+              onChange={(e) => {
+                setQuery(e.target.value)
+                setInspPage(1)
+              }}
+              placeholder="Search supplier, PO, inspector, or ref…"
+              aria-label="Search inspections"
+              className="h-8 w-80 max-w-full rounded-md border border-navy-300 bg-white px-3 text-sm text-navy-900 placeholder:text-navy-400 focus-visible:outline-2 focus-visible:outline-offset-2"
+            />
           </div>
-
-          {(isValidating || searching) && !inspCold && inspVisible.length > 0 ? (
-            <p className={styles.panelSub} role="status">
-              Updating…
-            </p>
-          ) : null}
           {inspCold ? (
             <div className={styles.tableWrap} aria-hidden="true">
               <table className={styles.table}>
                 <thead>
                   <tr>
-                    <th>Delivery ref</th>
-                    <th>Supplier</th>
                     <th>PO ref</th>
-                    <th>Date delivered</th>
-                    <th>Inspector</th>
+                    <th>Supplier</th>
+                    <th>Target arrival</th>
                     <th>Date inspected</th>
                     <th>Result</th>
-                    <th>History</th>
-                    <th>Action</th>
+                    <th style={{ textAlign: "right" }}>Action</th>
                   </tr>
                 </thead>
                 <tbody>
                   {Array.from({ length: inspPageSize }).map((_, r) => (
                     <tr key={r} style={{ opacity: 1 - r * 0.05 }}>
                       <td>
-                        <div className="h-3.5 w-16 animate-pulse rounded bg-navy-100" />
+                        <div className="h-3.5 w-20 animate-pulse rounded bg-navy-100" />
                       </td>
                       <td>
                         <div className="h-3.5 w-24 animate-pulse rounded bg-navy-100" />
                       </td>
                       <td>
                         <div className="h-3.5 w-20 animate-pulse rounded bg-navy-100" />
-                      </td>
-                      <td>
-                        <div className="h-3.5 w-20 animate-pulse rounded bg-navy-100" />
-                      </td>
-                      <td>
-                        <div className="h-3.5 w-24 animate-pulse rounded bg-navy-100" />
                       </td>
                       <td>
                         <div className="h-3.5 w-20 animate-pulse rounded bg-navy-100" />
@@ -422,10 +503,14 @@ export default function PersonnelInspectionsPage() {
                         <div className="h-[22px] w-16 animate-pulse rounded-full bg-navy-100" />
                       </td>
                       <td>
-                        <div className="h-3.5 w-20 animate-pulse rounded bg-navy-100" />
-                      </td>
-                      <td>
-                        <span className={styles.inspectLink}>Inspect</span>
+                        <div className="flex items-center justify-end gap-1.5">
+                          <span className="inline-flex h-6 items-center justify-center rounded-[4px] border border-yellow-500/40 bg-yellow-500/20 px-3 text-xs font-semibold text-navy-900">
+                            Edit
+                          </span>
+                          <span className="inline-flex h-6 items-center justify-center rounded-[4px] border border-yellow-500 bg-yellow-500 px-3 text-xs font-semibold text-navy-900">
+                            Inspect
+                          </span>
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -433,25 +518,24 @@ export default function PersonnelInspectionsPage() {
               </table>
             </div>
           ) : inspVisible.length === 0 ? (
-            <div className={styles.emptyState}>
-              <p className={styles.panelSub}>
-                No inspections match the selected filter.
-              </p>
+            <div className={cn(styles.emptyState, "flex-1")}>
+              <div className={styles.emptyCard}>
+                <p className={styles.emptyCardText}>
+                  No inspections match your search or filter.
+                </p>
+              </div>
             </div>
           ) : (
             <div className={styles.tableWrap}>
               <table className={styles.table}>
                 <thead>
                   <tr>
-                    <th>Delivery ref</th>
-                    <th>Supplier</th>
                     <th>PO ref</th>
-                    <th>Date delivered</th>
-                    <th>Inspector</th>
+                    <th>Supplier</th>
+                    <th>Target arrival</th>
                     <th>Date inspected</th>
                     <th>Result</th>
-                    <th>History</th>
-                    <th>Action</th>
+                    <th style={{ textAlign: "right" }}>Action</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -459,73 +543,59 @@ export default function PersonnelInspectionsPage() {
                     const isPending = d.inspection_status === 'pending'
                     const isEditable = canEditInspection(d)
                     return (
-                      <tr key={d.delivery_id}>
-                        <td>{d.delivery_ref}</td>
-                        <td>{d.supplier ?? '—'}</td>
+                      <tr
+                        key={d.delivery_id}
+                        className={!isPending ? 'cursor-pointer' : undefined}
+                        onClick={() => {
+                          if (isPending) return
+                          setHistoryTarget({
+                            deliveryId: d.delivery_id,
+                            deliveryRef: d.delivery_ref,
+                          })
+                        }}
+                      >
                         <td>{d.po_reference ?? '—'}</td>
-                        <td>{fmt(d.date_delivered)}</td>
-                        <td>{d.inspector_name ?? '—'}</td>
+                        <td>{d.supplier ?? '—'}</td>
+                        <td>{fmt(d.expected_arrival_date)}</td>
                         <td>{fmt(d.inspection_date)}</td>
                         <td>
-                          {isPending ? (
-                            <span className={styles.status} data-tone="warn">
-                              Pending
-                            </span>
-                          ) : (
-                            <span
-                              className={styles.status}
-                              data-tone={resultTone(d.result)}
-                            >
-                              {d.result
-                                ? d.result.charAt(0).toUpperCase() + d.result.slice(1)
-                                : '—'}
-                            </span>
-                          )}
+                          <span
+                            className={styles.status}
+                            data-tone={
+                              isPending ? 'warn' : resultTone(d.inspection_status)
+                            }
+                          >
+                            {resultLabel(d)}
+                          </span>
                         </td>
-                        <td className="text-left">
-                          {d.created_at ? fmt(d.created_at) : '—'}
-                        </td>
-                        <td className="text-left">
-                          {!isPending ? (
-                            <Link
-                              href={`/personnel/inspections/${d.delivery_id}/receipt`}
-                              className={styles.inspectLink}
-                            >
-                              View Details
-                            </Link>
-                          ) : null}
-                          {!isPending ? (
-                            <>
-                              {' '}
+                        <td onClick={(e) => e.stopPropagation()}>
+                          <div className="flex items-center justify-end gap-1.5">
+                            {readOnly ? (
+                              <ViewInspectionDialog
+                                deliveryId={d.delivery_id}
+                                deliveryRef={d.delivery_ref}
+                                triggerClassName={ROW_ACTION_CLASS}
+                              />
+                            ) : null}
+                            {!readOnly && isEditable ? (
                               <Link
-                                href={`/personnel/inspections/${d.delivery_id}/receipts`}
-                                className={styles.inspectLink}
-                              >
-                                History
-                              </Link>
-                            </>
-                          ) : null}
-                          {isEditable ? (
-                            <>
-                              {' '}
-                              <Link
-                                href={`/personnel/inspections/${d.delivery_id}`}
-                                className={styles.inspectLink}
+                                href={inspectionHref(d.delivery_id, '', portal)}
+                                className={ROW_ACTION_CLASS}
                                 aria-label={`Edit inspection for ${d.delivery_ref} (currently ${resultLabel(d)})`}
                               >
                                 Edit
                               </Link>
-                            </>
-                          ) : null}
-                          {isPending ? (
-                            <InspectConfirmButton
-                              deliveryId={d.delivery_id}
-                              deliveryRef={d.delivery_ref}
-                              supplier={d.supplier}
-                              poReference={d.po_reference}
-                              triggerClassName={styles.inspectLink}
-                            />
-                          ) : null}
+                            ) : null}
+                            {!readOnly && isPending ? (
+                              <InspectConfirmButton
+                                deliveryId={d.delivery_id}
+                                deliveryRef={d.delivery_ref}
+                                supplier={d.supplier}
+                                poReference={d.po_reference}
+                                triggerClassName={ROW_PRIMARY_CLASS}
+                              />
+                            ) : null}
+                          </div>
                         </td>
                       </tr>
                     )
@@ -540,28 +610,55 @@ export default function PersonnelInspectionsPage() {
                 <span className="block h-3 w-36 animate-pulse rounded bg-navy-100" />
               </span>
               <div className={styles.pagerControls}>
-                <span className={styles.pageSizeWrap}>
-                  <span>Rows</span>
-                  <span className="h-8 w-[5.5rem] animate-pulse rounded-md bg-navy-100" />
-                </span>
-                <span className={styles.pageBtn} aria-hidden="true">
-                  ‹
-                </span>
+                <span className={styles.pageBtn}>‹</span>
                 <span className={styles.pageBtn} data-active="true">
                   1
                 </span>
-                <span className={styles.pageBtn} aria-hidden="true">
-                  ›
-                </span>
+                <span className={styles.pageBtn}>›</span>
               </div>
             </div>
           ) : inspTotal > 0 ? (
-            <TablePager
-              id="inspections"
-              total={inspTotal}
-              page={inspSafePage}
-              onPageChange={setInspPage}
-            />
+            <div
+              className={cn(styles.pager, "pt-3")}
+              style={{ marginTop: "auto" }}
+            >
+              <span className={styles.pagerInfo}>
+                Showing {inspFrom}–{inspTo} of {inspTotal}
+              </span>
+              <div className={styles.pagerControls}>
+                <button
+                  type="button"
+                  className={styles.pageBtn}
+                  disabled={inspSafePage === 1}
+                  onClick={() => setInspPage(inspSafePage - 1)}
+                  aria-label="Previous page"
+                >
+                  ‹
+                </button>
+                {inspPages.map((p) => (
+                  <button
+                    key={p}
+                    type="button"
+                    className={styles.pageBtn}
+                    data-active={p === inspSafePage}
+                    onClick={() => setInspPage(p)}
+                    aria-label={`Page ${p}`}
+                    aria-current={p === inspSafePage ? "page" : undefined}
+                  >
+                    {p}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  className={styles.pageBtn}
+                  disabled={inspSafePage === inspPageCount}
+                  onClick={() => setInspPage(inspSafePage + 1)}
+                  aria-label="Next page"
+                >
+                  ›
+                </button>
+              </div>
+            </div>
           ) : null}
         </Card>
       ) : airCold ? (
@@ -583,194 +680,235 @@ export default function PersonnelInspectionsPage() {
             </div>
           </div>
 
-          <div className={air.controls}>
-            <Input
-              type="search"
-              value={query}
-              onChange={(e) => {
-                setQuery(e.target.value)
-                setAirPage(1)
-              }}
-              placeholder="Search ref, supplier, PO, IAR no., inspector…"
-              className={air.search}
-              aria-label="Search AIR records"
-            />
-            <Select
-              value={airStatus}
-              onValueChange={(v) => {
-                setAirStatus(v)
-                setAirPage(1)
-              }}
-            >
-              <SelectTrigger className="w-44">
-                <SelectValue placeholder="Filter by AIR" />
-              </SelectTrigger>
-              <SelectContent>
-                {AIR_STATUS_FILTERS.map((f) => (
-                  <SelectItem key={f.value} value={f.value}>
-                    {f.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Select
-              value={airResult}
-              onValueChange={(v) => {
-                setAirResult(v)
-                setAirPage(1)
-              }}
-            >
-              <SelectTrigger className="w-40">
-                <SelectValue placeholder="Filter by result" />
-              </SelectTrigger>
-              <SelectContent>
-                {AIR_RESULT_FILTERS.map((f) => (
-                  <SelectItem key={f.value} value={f.value}>
-                    {f.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          {airRows.length === 0 ? (
-            <div className={air.empty}>
-              No AIR / IAR records match your search or filters.
-            </div>
-          ) : (
-            <div className={air.grid}>
-              {airVisible.map((d) => {
-                const isPending = d.inspection_status === 'pending'
-                return (
-                  <article key={d.delivery_id} className={air.card}>
-                    <div className={air.cardTop}>
-                      <span className={air.ref}>{d.delivery_ref}</span>
-                      <span className={air.chips}>
-                        {d.iar_no ? (
-                          <span className={air.chip} data-tone="ok">
-                            AIR issued
-                          </span>
-                        ) : d.iar_image_url ? (
-                          <span className={air.chip} data-tone="ok">
-                            Scan attached
-                          </span>
-                        ) : isPending ? (
-                          <span className={air.chip} data-tone="info">
-                            Pending
-                          </span>
-                        ) : (
-                          <span className={air.chip} data-tone="warn">
-                            No AIR
-                          </span>
-                        )}
-                        <span className={air.chip} data-tone={resultChipTone(d)}>
-                          {resultLabel(d)}
-                        </span>
-                        {d.stocked_at ? (
-                          <span className={air.chip} data-tone="ok">
-                            Stocked
-                          </span>
-                        ) : null}
-                      </span>
-                    </div>
-
-                    <dl className={air.meta}>
-                      <div>
-                        <dt>Supplier</dt>
-                        <dd>{d.supplier ?? '—'}</dd>
-                      </div>
-                      <div>
-                        <dt>PO ref</dt>
-                        <dd>{d.po_reference ?? '—'}</dd>
-                      </div>
-                      <div>
-                        <dt>Delivered</dt>
-                        <dd>{fmt(d.date_delivered)}</dd>
-                      </div>
-                      <div>
-                        <dt>Inspector</dt>
-                        <dd>{d.inspector_name ?? '—'}</dd>
-                      </div>
-                      <div>
-                        <dt>Inspected</dt>
-                        <dd>{fmt(d.inspection_date)}</dd>
-                      </div>
-                      <div>
-                        <dt>Items</dt>
-                        <dd>{d.item_count}</dd>
-                      </div>
-                      <div className={air.metaFull}>
-                        <dt>IAR No.</dt>
-                        <dd className={d.iar_no ? air.mono : undefined}>
-                          {d.iar_no ?? (d.iar_image_url ? 'Attached scan' : '—')}
-                        </dd>
-                      </div>
-                    </dl>
-
-                    <div className={air.actions}>
-                      {hasAir(d) ? (
-                        <Link
-                          href={`/personnel/inspections/${d.delivery_id}/iar`}
-                          className={air.primary}
-                        >
-                          View IAR
-                        </Link>
-                      ) : isPending ? (
-                        <Link
-                          href={`/personnel/inspections/${d.delivery_id}`}
-                          className={air.primary}
-                        >
-                          Continue inspection
-                        </Link>
-                      ) : (
-                        <>
-                          <IarAttachButton
-                            deliveryId={d.delivery_id}
-                            label="Attach"
-                            onDone={reload}
-                          />
-                          <IarDialog
-                            deliveryId={d.delivery_id}
-                            deliveryRef={d.delivery_ref}
-                            hasSavedInspection
-                          />
-                        </>
-                      )}
-                      {!isPending ? (
-                        <Link
-                          href={`/personnel/inspections/${d.delivery_id}/receipt`}
-                          className={air.secondary}
-                        >
-                          Details
-                        </Link>
-                      ) : null}
-                      {canEditInspection(d) ? (
-                        <Link
-                          href={`/personnel/inspections/${d.delivery_id}`}
-                          className={air.secondary}
-                          aria-label={`Edit inspection for ${d.delivery_ref} (currently ${resultLabel(d)})`}
-                        >
-                          Edit
-                        </Link>
-                      ) : null}
-                    </div>
-                  </article>
-                )
-              })}
-            </div>
-          )}
-          {airTotal > 0 ? (
-            <div style={{ marginTop: '1rem' }}>
-              <TablePager
-                id="air"
-                total={airTotal}
-                page={airSafePage}
-                onPageChange={setAirPage}
+          <Card className={styles.panel}>
+            <div className="mb-3 flex flex-wrap items-center justify-end gap-2">
+              <Input
+                type="search"
+                value={query}
+                onChange={(e) => {
+                  setQuery(e.target.value)
+                  setAirPage(1)
+                }}
+                placeholder="Search ref, supplier, PO, IAR no., inspector…"
+                className={cn(air.search, "h-8")}
+                aria-label="Search AIR records"
               />
+              <Select
+                value={airStatus}
+                onValueChange={(v) => {
+                  setAirStatus(v)
+                  setAirPage(1)
+                }}
+              >
+                <SelectTrigger className="h-8 w-44">
+                  <SelectValue placeholder="Filter by AIR" />
+                </SelectTrigger>
+                <SelectContent>
+                  {AIR_STATUS_FILTERS.map((f) => (
+                    <SelectItem key={f.value} value={f.value}>
+                      {f.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select
+                value={airResult}
+                onValueChange={(v) => {
+                  setAirResult(v)
+                  setAirPage(1)
+                }}
+              >
+                <SelectTrigger className="h-8 w-40">
+                  <SelectValue placeholder="Filter by result" />
+                </SelectTrigger>
+                <SelectContent>
+                  {AIR_RESULT_FILTERS.map((f) => (
+                    <SelectItem key={f.value} value={f.value}>
+                      {f.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
-          ) : null}
+
+            {airVisible.length === 0 ? (
+              <div className={cn(styles.emptyState, "flex-1")}>
+                <div className={styles.emptyCard}>
+                  <p className={styles.emptyCardText}>
+                    No AIR / IAR records match your search or filters.
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div className={styles.tableWrap}>
+                <table className={styles.table}>
+                  <thead>
+                    <tr>
+                      <th>PO ref</th>
+                      <th>Supplier</th>
+                      <th>Target arrival</th>
+                      <th>Date inspected</th>
+                      <th>AIR / IAR</th>
+                      <th>Result</th>
+                      <th>IAR No.</th>
+                      <th style={{ textAlign: 'right' }}>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {airVisible.map((d) => {
+                      const isPending = d.inspection_status === 'pending'
+                      const airTone = d.iar_no || d.iar_image_url
+                        ? 'ok'
+                        : isPending
+                          ? 'info'
+                          : 'warn'
+                      return (
+                        <tr
+                          key={d.delivery_id}
+                          className="cursor-pointer"
+                          onClick={() => {
+                            if (hasAir(d)) {
+                              setViewTarget({
+                                deliveryId: d.delivery_id,
+                                deliveryRef: d.delivery_ref,
+                              })
+                              return
+                            }
+                            toast.info(
+                              readOnly
+                                ? 'No AIR / IAR has been recorded for this delivery yet.'
+                                : isPending
+                                  ? 'This delivery still needs an inspection. Use “Continue inspection” to record it first.'
+                                  : 'No AIR / IAR yet. Use “Attach” or “Generate IAR” in the Action column.',
+                              { duration: 3000, closeButton: true }
+                            )
+                          }}
+                        >
+                          <td>{d.po_reference ?? '—'}</td>
+                          <td>{d.supplier ?? '—'}</td>
+                          <td>{fmt(d.expected_arrival_date)}</td>
+                          <td>{fmt(d.inspection_date)}</td>
+                          <td>
+                            <span className="flex flex-wrap items-center gap-1.5">
+                              <span className={styles.status} data-tone={airTone}>
+                                {d.iar_no
+                                  ? 'AIR issued'
+                                  : d.iar_image_url
+                                    ? 'Scan attached'
+                                    : isPending
+                                      ? 'Pending'
+                                      : 'No AIR'}
+                              </span>
+                              {d.stocked_at ? (
+                                <span className={styles.status} data-tone="ok">
+                                  Stocked
+                                </span>
+                              ) : null}
+                            </span>
+                          </td>
+                          <td>
+                            <span
+                              className={styles.status}
+                              data-tone={resultChipTone(d)}
+                            >
+                              {resultLabel(d)}
+                            </span>
+                          </td>
+                          <td className={d.iar_no ? 'font-mono text-xs' : undefined}>
+                            {d.iar_no ?? (d.iar_image_url ? 'Attached scan' : '—')}
+                          </td>
+                          <td onClick={(e) => e.stopPropagation()}>
+                            <div className="flex items-center justify-end gap-1.5">
+                              {hasAir(d) ? (
+                                <ViewIarDialog
+                                  deliveryId={d.delivery_id}
+                                  deliveryRef={d.delivery_ref}
+                                  triggerClassName={ROW_PRIMARY_CLASS}
+                                />
+                              ) : isPending ? (
+                                readOnly ? (
+                                  <ViewInspectionDialog
+                                    deliveryId={d.delivery_id}
+                                    deliveryRef={d.delivery_ref}
+                                    triggerClassName={ROW_ACTION_CLASS}
+                                  />
+                                ) : (
+                                  <Link
+                                    href={inspectionHref(d.delivery_id, '', portal)}
+                                    className={ROW_PRIMARY_CLASS}
+                                  >
+                                    Continue inspection
+                                  </Link>
+                                )
+                              ) : readOnly ? (
+                                <ViewInspectionDialog
+                                  deliveryId={d.delivery_id}
+                                  deliveryRef={d.delivery_ref}
+                                  triggerClassName={ROW_ACTION_CLASS}
+                                />
+                              ) : (
+                                <>
+                                  <IarAttachButton
+                                    deliveryId={d.delivery_id}
+                                    label="Attach"
+                                    onDone={reload}
+                                    triggerClassName={ROW_ACTION_CLASS}
+                                  />
+                                  <IarDialog
+                                    deliveryId={d.delivery_id}
+                                    deliveryRef={d.delivery_ref}
+                                    hasSavedInspection
+                                    triggerClassName={ROW_ACTION_CLASS}
+                                  />
+                                </>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {airTotal > 0 ? (
+              <div style={{ marginTop: '1rem' }}>
+                <TablePager
+                  id="air"
+                  total={airTotal}
+                  page={airSafePage}
+                  onPageChange={setAirPage}
+                />
+              </div>
+            ) : null}
+          </Card>
         </div>
       )}
+
+      {historyTarget ? (
+        <InspectionHistoryDialog
+          hideTrigger
+          deliveryId={historyTarget.deliveryId}
+          deliveryRef={historyTarget.deliveryRef}
+          open
+          onOpenChange={(next) => {
+            if (!next) setHistoryTarget(null)
+          }}
+        />
+      ) : null}
+
+      {viewTarget ? (
+        <ViewIarDialog
+          hideTrigger
+          deliveryId={viewTarget.deliveryId}
+          deliveryRef={viewTarget.deliveryRef}
+          open
+          onOpenChange={(next) => {
+            if (!next) setViewTarget(null)
+          }}
+        />
+      ) : null}
     </section>
   )
 }

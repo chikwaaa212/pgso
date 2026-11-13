@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import type { ComponentType, SVGProps } from "react";
 import Image from "next/image";
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { usePathname, useRouter } from "next/navigation";
 import {
   ClipboardList,
@@ -21,7 +22,15 @@ import { broadcastLogout } from "@/components/ClientCacheManager";
 import { navPrefetchProps } from "@/lib/nav-prefetch";
 import { SubmitButton } from "@/components/ui/submit-button";
 import { useToast } from "@/components/ui/toaster";
-import { ChangePasswordDialog } from "@/components/account/ChangePasswordDialog";
+// Supabase-backed dialog is only needed once the account menu is opened, so
+// keep it out of the first-load bundle.
+const ChangePasswordDialog = dynamic(
+  () =>
+    import("@/components/account/ChangePasswordDialog").then(
+      (m) => m.ChangePasswordDialog
+    ),
+  { ssr: false }
+);
 import { EditNameDialog } from "@/components/account/EditNameDialog";
 import { updateMyDisplayName } from "@/app/employee/profile-actions";
 import { cn } from "@/lib/utils";
@@ -314,7 +323,9 @@ export function EmployeeNavbar({
           </div>
         </div>
       )}
-      <ChangePasswordDialog open={changePwOpen} onOpenChange={setChangePwOpen} />
+      {changePwOpen && (
+        <ChangePasswordDialog open={changePwOpen} onOpenChange={setChangePwOpen} />
+      )}
       <EditNameDialog
         open={editNameOpen}
         onOpenChange={setEditNameOpen}

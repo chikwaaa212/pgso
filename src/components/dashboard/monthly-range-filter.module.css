@@ -1,0 +1,19 @@
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.trigger {
+  min-width: 10.5rem;
+  background-color: #fff;
+  color: var(--color-navy-900);
+  border-color: var(--color-navy-200);
+}
+
+.updating {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: var(--color-navy-500);
+}

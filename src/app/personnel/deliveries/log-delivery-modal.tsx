@@ -35,7 +35,12 @@ export function LogDeliveryModal() {
         <button
           type="button"
           className={styles.actionPrimary}
-          onClick={() => setOpen(true)}
+          style={{ height: 24 }}
+          onClick={() => {
+            // Start every new delivery with a fresh draft + system PO reference.
+            draft.reset();
+            setOpen(true);
+          }}
         >
           Log delivery
         </button>
@@ -48,13 +53,14 @@ export function LogDeliveryModal() {
           <DialogHeader>
             <DialogTitle>Log a delivery</DialogTitle>
             <DialogDescription>
-              Entries are saved to the database on submit.
+              Saves in the background — a toast confirms when the record lands.
             </DialogDescription>
           </DialogHeader>
           <LogDeliveryMockForm
             draft={draft}
             onShowPreview={setShowPreview}
             onClose={() => setOpen(false)}
+            onReopen={() => setOpen(true)}
           />
         </DialogContent>
       </Dialog>

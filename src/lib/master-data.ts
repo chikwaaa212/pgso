@@ -20,7 +20,7 @@ export async function getActiveCatalogEntries(): Promise<CatalogEntry[]> {
   return withCache(cacheKey('catalog:entries'), 300, async () => {
     try {
     const rows = await prisma.accountCatalog.findMany({
-      where: { status: 'active' },
+      where: { status: 'active', deleted_at: null },
       orderBy: { account_code: 'asc' },
       select: { account_code: true, account_title: true, asset_type: true, account_name: true },
     })
@@ -42,7 +42,7 @@ export async function findCatalogEntry(code: string): Promise<CatalogEntry | nul
   if (!c) return null
   try {
     const row = await prisma.accountCatalog.findFirst({
-      where: { account_code: c, status: 'active' },
+      where: { account_code: c, status: 'active', deleted_at: null },
       select: { account_code: true, account_title: true, asset_type: true, account_name: true },
     })
     if (!row) return null
@@ -58,7 +58,7 @@ export async function getActiveUnitNames(): Promise<string[]> {
   return withCache(cacheKey('catalog:units'), 300, async () => {
     try {
       const rows = await prisma.unit.findMany({
-        where: { status: 'active' },
+        where: { status: 'active', deleted_at: null },
         orderBy: { name: 'asc' },
         select: { name: true },
       })
@@ -76,7 +76,7 @@ export async function resolveUnitName(raw: string | null | undefined): Promise<s
   if (!t) return null
   try {
     const row = await prisma.unit.findFirst({
-      where: { name: { equals: t, mode: 'insensitive' }, status: 'active' },
+      where: { name: { equals: t, mode: 'insensitive' }, status: 'active', deleted_at: null },
       select: { name: true },
     })
     return row?.name ?? null
@@ -103,7 +103,7 @@ export async function getActiveDepartments(): Promise<DepartmentEntry[]> {
       const table = (prisma as any).department ?? null
       if (!table) return []
       const rows = await table.findMany({
-        where: { status: 'active' },
+        where: { status: 'active', deleted_at: null },
         orderBy: { name: 'asc' },
         select: { id: true, name: true },
       })
@@ -126,7 +126,7 @@ export async function resolveDepartmentName(
     const table = (prisma as any).department ?? null
     if (!table) return null
     const row = await table.findFirst({
-      where: { name: { equals: t, mode: 'insensitive' }, status: 'active' },
+      where: { name: { equals: t, mode: 'insensitive' }, status: 'active', deleted_at: null },
       select: { name: true },
     })
     return row?.name ?? null

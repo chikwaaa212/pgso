@@ -24,9 +24,7 @@ export default async function InspectionReceiptPage({
     <div className={styles.page}>
       <ReceiptActions
         deliveryId={delivery.id}
-        viewIarHref={
-          hasAir ? `/personnel/inspections/${delivery.id}/iar` : undefined
-        }
+        showViewIar={hasAir}
       >
         {inspection && !inspection.iar_no ? (
           <IarDialog

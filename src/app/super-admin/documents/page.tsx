@@ -453,7 +453,6 @@ function SuperAdminDocumentsContent() {
 
   return (
     <section className={styles.section}>
-      <p className={styles.crumb}>Documents</p>
       <div className={styles.headerRow}>
         <div>
           <h1 className={styles.title}>Documents</h1>

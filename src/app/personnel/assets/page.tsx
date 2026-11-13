@@ -146,7 +146,8 @@ export default function PersonnelAssetsPage() {
   const rows = useMemo(() => paged?.rows ?? [], [paged]);
   const total = paged?.total ?? 0;
 
-  // Prefetch next page.
+  // Prefetch the next page — but only once the browser is idle, so it never
+  // competes with the first paint or a search keystroke.
   useEffect(() => {
     if (!paged || total <= page * pageSize) return;
     const nextKey = buildQueryKey({
@@ -164,7 +165,9 @@ export default function PersonnelAssetsPage() {
       },
     });
     if (getClientCache(nextKey)) return;
-    const t = setTimeout(() => {
+    let idleHandle: number | undefined;
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+    const prefetch = () => {
       void getUnifiedAssetsPage({
         page: page + 1,
         q: debouncedQuery,
@@ -174,8 +177,16 @@ export default function PersonnelAssetsPage() {
         unit: unitFilter,
         category: assetTypeFilter,
       }).then((fresh) => setClientCache(nextKey, fresh)).catch(() => {});
-    }, 400);
-    return () => clearTimeout(t);
+    };
+    if (typeof window.requestIdleCallback === 'function') {
+      idleHandle = window.requestIdleCallback(prefetch, { timeout: 2500 });
+    } else {
+      timeoutHandle = setTimeout(prefetch, 1500);
+    }
+    return () => {
+      if (idleHandle !== undefined) window.cancelIdleCallback(idleHandle);
+      if (timeoutHandle) clearTimeout(timeoutHandle);
+    };
   }, [paged, total, page, pageSize, debouncedQuery, statusFilter, sourceFilter, conditionFilter, unitFilter, assetTypeFilter]);
   // Bounded dropdown options from the server (the page window no longer
   // contains every value).
@@ -314,7 +325,6 @@ export default function PersonnelAssetsPage() {
 
   return (
     <section className={styles.section}>
-      <p className={styles.crumb}>Personnel / Assets</p>
       <div className={styles.headerRow}>
         <div>
           <h1 className={styles.title}>Assets</h1>

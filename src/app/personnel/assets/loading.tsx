@@ -72,7 +72,6 @@ export default function AssetsLoading() {
       aria-busy="true"
       aria-label="Loading assets"
     >
-      <p className={styles.crumb}>Personnel / Assets</p>
 
       {/* Header — same as the real page */}
       <div className={styles.headerRow}>

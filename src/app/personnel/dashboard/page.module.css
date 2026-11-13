@@ -2,7 +2,9 @@
   display: flex;
   flex-direction: column;
   gap: 1rem;
-  padding-top: 1.25rem;
+  /* 8px box gap + the heading's ~8px line-box leading = 16px visible
+     whitespace under the fixed navbar. */
+  padding-top: 0.5rem;
   padding-bottom: 1rem;
 }
 
@@ -32,8 +34,14 @@
 @media (min-width: 768px) {
   .headerRow {
     flex-direction: row;
-    align-items: flex-end;
+    align-items: flex-start;
     justify-content: space-between;
+  }
+
+  .headerRow .actions {
+    /* Section padding (8px) + this 8px puts the button tops exactly 16px
+       below the navbar, level with the heading's visual top. */
+    margin-top: 0.5rem;
   }
 }
 
@@ -116,12 +124,18 @@
 .stats {
   display: grid;
   gap: 0.75rem;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
-@media (min-width: 768px) {
+@media (min-width: 640px) {
   .stats {
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1024px) {
+  .stats {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
   }
 }
 
@@ -146,6 +160,41 @@
 .statDelta {
   font-size: 0.75rem;
   color: var(--color-navy-500);
+}
+
+/* Delta text and the Open button share one baseline row. */
+.statFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-top: auto;
+  padding-top: 0.375rem;
+}
+
+.statButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 24px;
+  padding-inline: 0.625rem;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: var(--color-navy-900);
+  background-color: var(--color-yellow-500);
+  border: 1px solid var(--color-yellow-600);
+  border-radius: 4px;
+  text-decoration: none;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition-property: color, background-color, border-color;
+  transition-timing-function: ease;
+}
+
+.statButton:hover {
+  color: var(--color-navy-900);
+  background-color: var(--color-yellow-600);
+  border-color: var(--color-yellow-600);
 }
 
 .panel {
@@ -406,35 +455,6 @@
   margin: 0.125rem 0 0;
 }
 
-.grid {
-  display: grid;
-  gap: 1rem;
-}
-
-@media (min-width: 768px) {
-  .grid {
-    grid-template-columns: repeat(3, 1fr);
-  }
-}
-
-.cardLink {
-  text-decoration: none;
-  color: inherit;
-  display: block;
-  border-radius: 0.5rem;
-  transition-property: transform, box-shadow;
-  transition-timing-function: ease;
-}
-
-.cardLink:hover {
-  transform: translateY(-2px);
-}
-
-.cardLink:focus-visible {
-  outline: 2px solid var(--color-ring);
-  outline-offset: 2px;
-}
-
 .form {
   margin-top: 0.5rem;
 }
@@ -545,6 +565,101 @@
   min-height: 260px;
   text-align: center;
   padding: 1rem;
+}
+
+/* Empty-state inside a dashboard card: message centred, 24px action below. */
+.emptyCard {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  min-height: 7rem;
+  padding: 1rem;
+  text-align: center;
+}
+
+.emptyCardText {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--color-navy-500);
+}
+
+.emptyCardButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 24px;
+  padding-inline: 0.625rem;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: var(--color-navy-900);
+  background-color: var(--color-yellow-500);
+  border: 1px solid var(--color-yellow-600);
+  border-radius: 4px;
+  text-decoration: none;
+  white-space: nowrap;
+  transition-property: color, background-color, border-color;
+  transition-timing-function: ease;
+}
+
+.emptyCardButton:hover {
+  color: var(--color-navy-900);
+  background-color: var(--color-yellow-600);
+  border-color: var(--color-yellow-600);
+}
+
+/* Bento tiles for Needs attention — two cards per row. */
+.bentoGrid {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: 1fr;
+}
+
+@media (min-width: 640px) {
+  .bentoGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.bentoTile {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+  padding: 0.875rem;
+  background-color: var(--color-muted);
+  border: 1px solid var(--color-navy-200);
+  border-radius: 0.5rem;
+}
+
+.bentoTile .attentionAction {
+  margin-top: auto;
+  align-self: flex-end;
+}
+
+/* Compact 24px action used in list rows (Needs attention, Aging & delays). */
+.attentionAction {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 24px;
+  padding-inline: 0.625rem;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: var(--color-navy-700);
+  background-color: transparent;
+  border: 1px solid var(--color-navy-200);
+  border-radius: 4px;
+  text-decoration: none;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: background-color 0.15s;
+}
+
+.attentionAction:hover {
+  background-color: var(--color-navy-100);
 }
 
 .tableFixed {
@@ -751,25 +866,4 @@
 
 .inspectLink:hover {
   background-color: var(--color-navy-700);
-}
-
-.inspectLinkSecondary {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  height: 32px;
-  padding-inline: 0.875rem;
-  font-size: 0.75rem;
-  font-weight: 600;
-  border-radius: 4px;
-  border: 1px solid var(--color-navy-200);
-  background-color: transparent;
-  color: var(--color-navy-700);
-  text-decoration: none;
-  white-space: nowrap;
-  transition: background-color 0.15s;
-}
-
-.inspectLinkSecondary:hover {
-  background-color: var(--color-navy-100);
 }

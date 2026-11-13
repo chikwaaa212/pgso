@@ -2,8 +2,10 @@ import { Suspense } from "react";
 import { redirect } from "next/navigation";
 import { SuperAdminChrome } from "@/components/super-admin/SuperAdminChrome";
 import { SuperAdminNavbar } from "@/components/super-admin/SuperAdminNavbar";
+import { SuperAdminSidebar } from "@/components/super-admin/SuperAdminSidebar";
 import { getSuperAdminSession } from "@/lib/auth-guard";
 import { SuperAdminNavbarLoader } from "./navbar-loader";
+import { SuperAdminSidebarLoader } from "./sidebar-loader";
 
 export const dynamic = "force-dynamic";
 
@@ -48,6 +50,11 @@ export default async function SuperAdminLayout({
             userName={navbarUser.name}
             userDetail={navbarUser.detail}
           />
+        </Suspense>
+      }
+      sidebar={
+        <Suspense fallback={<SuperAdminSidebar />}>
+          <SuperAdminSidebarLoader />
         </Suspense>
       }
     >

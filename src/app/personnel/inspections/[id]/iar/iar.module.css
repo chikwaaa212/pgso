@@ -8,7 +8,7 @@
   max-width: 52rem;
   background: #fff;
   color: #000;
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans);
   font-size: 12px;
   line-height: 1.4;
   border: 2px solid #000;
@@ -24,7 +24,7 @@
   border-radius: 6px;
   background: #fffbeb;
   color: #92400e;
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans);
   font-size: 13px;
 }
 
@@ -41,7 +41,7 @@
 }
 
 .historyTitle {
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans);
   font-size: 13px;
   font-weight: 700;
   letter-spacing: 0.06em;
@@ -67,7 +67,7 @@
   padding: 10px 12px;
   border: 1px solid #d1d9e6;
   border-radius: 6px;
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans);
   font-size: 12px;
   color: #1b2a4a;
 }
@@ -181,7 +181,7 @@
 }
 
 .scanCap {
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans);
   font-size: 12px;
   color: #000;
   padding: 8px 4px 2px;

@@ -932,6 +932,14 @@ SUPABASE_SERVICE_ROLE_KEY="<service-role-key>"
 NEXT_PUBLIC_APP_URL="http://localhost:3000"
 ```
 
+For a Supabase project, use the pooler host on port `6543` for `DATABASE_URL`
+(add `?pgbouncer=true`) and the session pooler on `5432` for `DIRECT_URL`
+(migrations/scripts). Keep the runtime pool small — on serverless deployments
+`connection_limit=1&pool_timeout=10&connection_timeout=10` avoids pool
+exhaustion and fails fast instead of hanging for 30s. A single long-lived local
+dev server can use `connection_limit=3` because its parallel queries share the
+same process.
+
 ### 3. Prepare the database
 
 ```bash

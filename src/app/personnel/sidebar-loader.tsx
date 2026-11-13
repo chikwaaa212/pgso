@@ -3,6 +3,7 @@ import { getDepartmentOptions } from "@/app/personnel/department/actions";
 import { cacheKey, withCache } from "@/lib/personnel-cache";
 import prisma from "@/lib/prisma";
 import { PersonnelNavbar } from "@/components/personnel/PersonnelNavbar";
+import { PersonnelSidebar } from "@/components/personnel/PersonnelSidebar";
 
 const ROLE_LABELS: Record<string, string> = {
   pgso_personnel: "PGSO Personnel",
@@ -84,10 +85,20 @@ export async function PersonnelNavbarLoader() {
 }
 
 /**
- * @deprecated Renamed to {@link PersonnelNavbarLoader} — the sidebar was
- * replaced by a top navbar. Kept for backwards-compat.
+ * Streams the desktop left rail. Shares the request-memoized dashboard stats
+ * with the navbar loader, so the badge counts cost no extra queries.
  */
-export const PersonnelSidebarLoader = PersonnelNavbarLoader;
+export async function PersonnelSidebarLoader() {
+  const stats = await getDashboardStats();
+  return (
+    <PersonnelSidebar
+      pendingInspections={stats.pendingInspections}
+      pendingRequests={stats.pendingRequests}
+      pendingRepairs={stats.pendingRepairs}
+      totalDocuments={stats.totalDocuments}
+    />
+  );
+}
 
 /**
  * @deprecated No longer a skeleton — the navbar is static chrome and must

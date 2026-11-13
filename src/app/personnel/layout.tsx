@@ -1,7 +1,11 @@
 import { Suspense } from "react";
 import { PersonnelChrome } from "@/components/personnel/PersonnelChrome";
 import { PersonnelNavbar } from "@/components/personnel/PersonnelNavbar";
-import { PersonnelNavbarLoader } from "./sidebar-loader";
+import { PersonnelSidebar } from "@/components/personnel/PersonnelSidebar";
+import {
+  PersonnelNavbarLoader,
+  PersonnelSidebarLoader,
+} from "./sidebar-loader";
 
 export const dynamic = "force-dynamic";
 
@@ -19,6 +23,11 @@ export default function PersonnelLayout({
       navbar={
         <Suspense fallback={<PersonnelNavbar />}>
           <PersonnelNavbarLoader />
+        </Suspense>
+      }
+      sidebar={
+        <Suspense fallback={<PersonnelSidebar />}>
+          <PersonnelSidebarLoader />
         </Suspense>
       }
     >

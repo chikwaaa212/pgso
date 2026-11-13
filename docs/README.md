@@ -46,6 +46,7 @@ Implementation plans written before each feature push.
 | `OBJECTIVE-4-DESCRIPTIVE-ANALYTICS-PLAN.md` | Reports workspace, aging, quarterly issuance, asset conditions |
 | `OBJECTIVE-5-PRESCRIPTIVE-ANALYTICS-PLAN.md` | Recommendations (replenishment, replacement/disposal, idle assets, consumption) |
 | `OBJECTIVE-6-QR-SCANNING-PLAN.md` | Scan-to-action and prefill on both staff portals |
+| `STOCK-DELIVERY-MASTER-DATA-PLAN.md` | Stock labels on delivery forms/receipts + Stock types master data |
 
 ## `assessments/`
 
@@ -62,6 +63,7 @@ Implementation plans written before each feature push.
 | `web-development-codebase-audit.md` / `.pdf` | Full codebase audit (architecture, structure, hygiene) |
 | `PERSONNEL-PERFORMANCE-AUDIT.md` / `.pdf` | Personnel portal performance audit |
 | `SUPER-ADMIN-PERFORMANCE-AUDIT.md` / `.pdf` | Super Admin portal performance audit |
+| `APP-LOAD-PERFORMANCE-AUDIT.md` | App-wide load-speed audit: why pages feel slow, measured bundle sizes, root causes, phased fixes |
 
 ## `misc/`
 

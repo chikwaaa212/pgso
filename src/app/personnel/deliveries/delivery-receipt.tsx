@@ -78,18 +78,39 @@ export function DeliveryReceipt({
               : data.recipientRole || "—"}
           </span>
         </div>
-        <div className="flex justify-between gap-4">
-          <span className="text-navy-600">Asset Type</span>
-          <span className="text-right">{data.assetType || "—"}</span>
-        </div>
-        <div className="flex justify-between gap-4">
-          <span className="text-navy-600">Account Code</span>
-          <span className="text-right">{data.accountCode || "—"}</span>
-        </div>
-        <div className="flex justify-between gap-4">
-          <span className="text-navy-600">Account Title</span>
-          <span className="text-right">{data.accountTitle || "—"}</span>
-        </div>
+        {data.deliveryKind === "stock" ? (
+          <>
+            <div className="flex justify-between gap-4">
+              <span className="text-navy-600">Stock Code</span>
+              <span className="text-right">{data.accountCode || "—"}</span>
+            </div>
+            <div className="flex justify-between gap-4">
+              <span className="text-navy-600">Stock Title</span>
+              <span className="text-right">{data.accountTitle || "—"}</span>
+            </div>
+            <div className="flex justify-between gap-4">
+              <span className="text-navy-600">Stock Type</span>
+              <span className="text-right">{data.stockType || "—"}</span>
+            </div>
+          </>
+        ) : (
+          <div className="flex justify-between gap-4">
+            <span className="text-navy-600">Asset Type</span>
+            <span className="text-right">{data.assetType || "—"}</span>
+          </div>
+        )}
+        {data.deliveryKind !== "stock" && (
+          <>
+            <div className="flex justify-between gap-4">
+              <span className="text-navy-600">Account Code</span>
+              <span className="text-right">{data.accountCode || "—"}</span>
+            </div>
+            <div className="flex justify-between gap-4">
+              <span className="text-navy-600">Account Title</span>
+              <span className="text-right">{data.accountTitle || "—"}</span>
+            </div>
+          </>
+        )}
       </div>
 
       <div className="my-3 border-t border-dashed border-navy-300" />

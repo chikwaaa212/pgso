@@ -133,8 +133,6 @@ describe("users + logs Page readers", () => {
 
 describe("converted pages fetch windows, not snapshots", () => {
   for (const [file, fetcher] of [
-    ["../app/super-admin/deliveries/page.tsx", "browseDeliveriesPage"],
-    ["../app/super-admin/inspections/page.tsx", "browseInspectionsPage"],
     ["../app/super-admin/issuances/page.tsx", "browseIssuancesPage"],
     ["../app/super-admin/requests/page.tsx", "browseRequestsPage"],
     ["../app/super-admin/repairs/page.tsx", "getRepairsPage"],
@@ -151,6 +149,49 @@ describe("converted pages fetch windows, not snapshots", () => {
       assert.ok(!/take:\s*(300|500)/.test(body), "no bulk take on the page");
     });
   }
+  it("super-admin deliveries/inspections reuse the personnel pages", () => {
+    assert.match(
+      src("../app/super-admin/deliveries/page.tsx"),
+      /personnel\/deliveries\/page/
+    );
+    assert.match(
+      src("../app/super-admin/inspections/page.tsx"),
+      /personnel\/inspections\/page/
+    );
+  });
+  it("super-admin deliveries/inspections are read-only", () => {
+    // Mutating actions reject super admins.
+    assert.match(
+      src("../app/personnel/deliveries/actions.ts"),
+      /scope\.isSuperAdmin[\s\S]{0,120}read-only access to deliveries/
+    );
+    assert.match(
+      src("../app/personnel/inspections/actions.ts"),
+      /inspectionScope\.isSuperAdmin[\s\S]{0,120}read-only access to inspections/
+    );
+    assert.match(
+      src("../app/personnel/inspections/actions.ts"),
+      /attachScope\.isSuperAdmin[\s\S]{0,120}read-only access to inspections/
+    );
+    // The shared lists drop the mutating buttons in the admin portal.
+    assert.match(
+      src("../app/personnel/deliveries/page.tsx"),
+      /readOnly[\s\S]{0,80}LogDeliveryModal/
+    );
+    assert.match(
+      src("../app/personnel/inspections/page.tsx"),
+      /!readOnly && isEditable/
+    );
+    assert.match(
+      src("../app/personnel/inspections/page.tsx"),
+      /ViewInspectionDialog/
+    );
+    // The admin detail route shows the read-only receipt, not the form.
+    assert.match(
+      src("../app/super-admin/inspections/[id]/page.tsx"),
+      /inspections\/\[id\]\/receipt\/page/
+    );
+  });
   it("repairs/inventory/issues reuse the shared (global-scope) readers", () => {
     assert.match(src("../app/super-admin/repairs/page.tsx"), /pageSize: PAGE_SIZE/);
     assert.match(src("../app/super-admin/inventory/page.tsx"), /pageSize: PAGE_SIZE/);

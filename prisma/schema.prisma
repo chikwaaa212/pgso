@@ -80,6 +80,7 @@ model Asset {
   @@index([category])
   @@index([account_code])
   @@index([assigned_to])
+  @@index([assigned_to, created_at(sort: Desc)])
   @@index([created_at(sort: Desc)])
   @@index([status, created_at(sort: Desc)])
   @@index([account_code, status])
@@ -99,6 +100,7 @@ model Delivery {
   recipient_role    String?        @db.VarChar
   recipient_name    String?        @db.VarChar
   asset_type        String?        @db.VarChar
+  stock_type        String?        @db.VarChar
   account_code      String?        @db.VarChar
   account_title     String?        @db.VarChar
   created_at        DateTime?      @default(now()) @db.Timestamptz
@@ -112,6 +114,7 @@ model Delivery {
   @@index([po_reference])
   @@index([delivery_status])
   @@index([inspection_status])
+  @@index([stock_type])
   @@index([created_at(sort: Desc)])
   @@index([received_by, created_at(sort: Desc)])
   @@map("deliveries")
@@ -238,6 +241,9 @@ model Repair {
   @@index([asset_id])
   @@index([status])
   @@index([created_by])
+  @@index([created_by, created_at(sort: Desc)])
+  @@index([created_by, status, created_at(sort: Desc)])
+  @@index([status, created_at(sort: Desc)])
   @@index([created_at(sort: Desc)])
   @@map("repairs")
 }
@@ -294,6 +300,8 @@ model Request {
   @@index([date_requested(sort: Desc)])
   @@index([status, date_requested(sort: Desc)])
   @@index([recipient_id, status])
+  @@index([employee_id, date_requested(sort: Desc)])
+  @@index([recipient_id, status, date_requested(sort: Desc)])
   @@map("requests")
 }
 
@@ -324,6 +332,7 @@ model AuditLog {
   @@index([action])
   @@index([created_at(sort: Desc)])
   @@index([action, created_at(sort: Desc)])
+  @@index([user_id, created_at(sort: Desc)])
   @@map("audit_logs")
 }
 
@@ -345,9 +354,9 @@ model DocumentView {
   viewer_id  String?  @db.Uuid
   viewed_at  DateTime? @default(now()) @db.Timestamptz
 
-  @@unique([doc_type, doc_id])
   @@unique([doc_type, doc_id, viewer_id])
   @@index([doc_type])
+  @@index([viewer_id])
   @@map("document_views")
 }
 
@@ -374,6 +383,8 @@ model IssuanceRecord {
   @@index([inventory_id])
   @@index([request_id])
   @@index([created_by])
+  @@index([employee_id, created_at(sort: Desc)])
+  @@index([created_by, created_at(sort: Desc)])
   @@index([created_at(sort: Desc)])
   @@index([doc_type, created_at(sort: Desc)])
   @@map("issuance_records")
@@ -386,6 +397,7 @@ model Unit {
   status       String    @default("active") @db.VarChar
   created_by   String?   @db.Uuid
   created_at   DateTime? @default(now()) @db.Timestamptz
+  deleted_at   DateTime? @db.Timestamptz
 
   @@map("units")
 }
@@ -397,6 +409,7 @@ model Department {
   status      String    @default("active") @db.VarChar
   created_by  String?   @db.Uuid
   created_at  DateTime? @default(now()) @db.Timestamptz
+  deleted_at  DateTime? @db.Timestamptz
 
   @@map("departments")
 }
@@ -411,10 +424,29 @@ model AccountCatalog {
   status        String    @default("active") @db.VarChar
   created_by    String?   @db.Uuid
   created_at    DateTime? @default(now()) @db.Timestamptz
+  deleted_at    DateTime? @db.Timestamptz
 
   @@index([asset_type])
   @@index([status])
   @@map("account_catalog")
+}
+
+model StockType {
+  id            String    @id @default(uuid()) @db.Uuid
+  name          String    @unique @db.VarChar
+  account_code  String?   @unique @db.VarChar
+  asset_type    String?   @db.VarChar
+  account_title String?   @db.VarChar
+  account_name  String?   @db.VarChar
+  description   String?   @db.VarChar
+  status        String    @default("active") @db.VarChar
+  created_by    String?   @db.Uuid
+  created_at    DateTime? @default(now()) @db.Timestamptz
+  deleted_at    DateTime? @db.Timestamptz
+
+  @@index([status])
+  @@index([asset_type])
+  @@map("stock_types")
 }
 
 model PpmpFile {

@@ -1,14 +1,19 @@
 "use client";
 
 import { useEffect } from "react";
+import dynamic from "next/dynamic";
 import { usePathname } from "next/navigation";
-import "@/lib/gsap-register";
 import { Header } from "@/components/layout/header";
-import { Footer } from "@/components/layout/footer";
 import { ClientCacheManager } from "@/components/ClientCacheManager";
 import { ToastProvider } from "@/components/ui/toaster";
 import { Toaster } from "@/components/ui/sonner";
 import styles from "./LayoutClient.module.css";
+
+// Marketing footer is public-only and code-split, so Framer Motion never
+// enters the portal first-load bundles.
+const Footer = dynamic(() =>
+  import("@/components/layout/footer").then((m) => m.Footer)
+);
 
 const LANDING_PATHS = ["/", "/scan"];
 
@@ -31,6 +36,8 @@ export function LayoutClient({ children }: { children: React.ReactNode }) {
   const isBare = isLanding || isReceiptPath(pathname);
   // App shells (sidebars), auth screens, and standalone docs render without the global navbar.
   const hideHeader = isBare || isPersonnel || isSuperAdmin || isEmployee || isAuth || isInfo;
+  // Marketing footer belongs to the public site only — not the portals or auth screens.
+  const showFooter = !isPersonnel && !isSuperAdmin && !isEmployee && !isAuth && !isReceiptPath(pathname);
 
   useEffect(() => {
     const html = document.documentElement;
@@ -47,7 +54,7 @@ export function LayoutClient({ children }: { children: React.ReactNode }) {
       <div className={styles.root}>
         {hideHeader ? null : <Header />}
         <main className={styles.main}>{children}</main>
-        {isReceiptPath(pathname) ? null : <Footer />}
+        {showFooter ? <Footer /> : null}
       </div>
       <Toaster position="top-right" duration={2000} closeButton />
     </ToastProvider>

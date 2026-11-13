@@ -18,6 +18,8 @@ import { writeAuditLog } from '@/lib/audit'
 import { stockInspectionItems } from '@/lib/stock'
 import { getPersonnelScope } from '@/lib/personnel-scope'
 import prisma from '@/lib/prisma'
+import { inspectionHref } from '@/lib/inspection-ref'
+import { resolveInspectionDeliveryId } from '@/lib/inspection-ref-server'
 
 // ─── Types returned to the client ────────────────────────────────────────────
 
@@ -35,11 +37,16 @@ export interface DeliveryForInspection {
   po_reference: string | null
   supplier: string | null
   date_delivered: string | null   // ISO date string
+  expected_arrival_date: string | null
+  created_at: string | null
+  logged_by_name: string | null
   delivery_status: string | null
   inspection_status: string | null
   recipient_name: string | null
   recipient_role: string | null
+  delivery_kind: string | null
   asset_type: string | null
+  stock_type: string | null
   account_code: string | null
   account_title: string | null
   received_by: string             // UUID
@@ -92,8 +99,11 @@ export interface PendingDeliveryRow {
 // ─── Fetch a single delivery + its items for the inspection form ──────────────
 
 export async function getDeliveryForInspection(
-  deliveryId: string
+  deliveryParam: string
 ): Promise<DeliveryForInspection> {
+  // Route params use the INS-XXXXXXXX reference; legacy full UUIDs still work.
+  const deliveryId = await resolveInspectionDeliveryId(deliveryParam)
+  if (!deliveryId) notFound()
   try {
     // Per-delivery Redis cache (30s, per-user) — back-navigation and the
     // receipt / receipts / IAR pages share one fetch instead of
@@ -147,16 +157,35 @@ export async function getDeliveryForInspection(
 
     const latestInspection = delivery.inspections[0] ?? null
 
+    // Display name for the delivery record's "Encoded By" field.
+    let loggedByName: string | null = null
+    try {
+      if (delivery.received_by) {
+        const profile = await prisma.profile.findUnique({
+          where: { id: delivery.received_by },
+          select: { full_name: true },
+        })
+        loggedByName = profile?.full_name ?? null
+      }
+    } catch {
+      loggedByName = null
+    }
+
     return {
       id:               delivery.id,
       po_reference:     delivery.po_reference,
       supplier:         delivery.supplier,
       date_delivered:   delivery.date_delivered?.toISOString().slice(0, 10) ?? null,
+      expected_arrival_date: delivery.expected_arrival_date?.toISOString().slice(0, 10) ?? null,
+      created_at:       delivery.created_at?.toISOString() ?? null,
+      logged_by_name:   loggedByName,
       delivery_status:  delivery.delivery_status,
       inspection_status: delivery.inspection_status,
       recipient_name:   delivery.recipient_name,
       recipient_role:   delivery.recipient_role,
+      delivery_kind:    delivery.delivery_kind,
       asset_type:       delivery.asset_type,
+      stock_type:       delivery.stock_type,
       account_code:     delivery.account_code,
       account_title:     delivery.account_title,
       received_by:      delivery.received_by,
@@ -210,6 +239,8 @@ export interface UnifiedInspectionRow {
   supplier: string | null
   po_reference: string | null
   date_delivered: string | null
+  /** Target arrival date entered when the delivery was logged. */
+  expected_arrival_date: string | null
   item_count: number
   delivery_status: string | null
   inspector_id: string | null
@@ -367,6 +398,7 @@ export async function getInspectionsPage(
         supplier:          d.supplier,
         po_reference:      d.po_reference,
         date_delivered:    d.date_delivered?.toISOString().slice(0, 10) ?? null,
+        expected_arrival_date: d.expected_arrival_date?.toISOString().slice(0, 10) ?? null,
         item_count:        d._count.items,
         delivery_status:   d.delivery_status,
         inspector_id:      d.inspections[0]?.inspector_id ?? null,
@@ -408,8 +440,10 @@ export interface InspectionHistoryRecord {
 }
 
 export async function getInspectionHistory(
-  deliveryId: string
+  deliveryParam: string
 ): Promise<InspectionHistoryRecord[]> {
+  const deliveryId = await resolveInspectionDeliveryId(deliveryParam)
+  if (!deliveryId) return []
   try {
     // Same per-delivery cache as the detail — receipts history revisits
     // are cache hits.
@@ -594,79 +628,203 @@ export const getDashboardStats = cache(async function getDashboardStats(
 })
 
 export interface MonthlyPoint {
-  month: string   // e.g. "Jan", "Feb"
+  /** Axis label — e.g. "Jan" for a month bucket, "Nov 5" for a day bucket. */
+  month: string
   deliveries: number
   inspections: number
 }
 
+export interface MonthlyRange {
+  /** Selected month (`YYYY-MM`). When set, the chart buckets by day. */
+  month?: string
+}
+
+/** First day (local) of the month in `value` (`YYYY-MM`), or null. */
+function parseRangeMonth(value: string | undefined): Date | null {
+  if (!value) return null
+  const m = /^(\d{4})-(\d{2})$/.exec(value)
+  if (!m) return null
+  const month = Number(m[2]) - 1
+  if (month < 0 || month > 11) return null
+  return new Date(Number(m[1]), month, 1)
+}
+
 export async function getMonthlyOverview(
-  scopeOverride?: import('@/lib/personnel-scope').PersonnelScope
+  scopeOverride?: import('@/lib/personnel-scope').PersonnelScope,
+  range?: MonthlyRange
 ): Promise<MonthlyPoint[]> {
   const { withScopedCache } = await import('@/lib/personnel-cache')
   const scopeHint = scopeOverride
     ? { u: scopeOverride.userId ?? 'anon', a: scopeOverride.isSuperAdmin ? 1 : 0 }
     : {}
-  return withScopedCache('personnel:monthly-overview', 60, async () => {
-  const now = new Date()
-  const months: MonthlyPoint[] = []
-  // Own-data only for personnel; super_admin sees all.
-  const scope = scopeOverride ?? (await getPersonnelScope())
-  const windowStart = new Date(now.getFullYear(), now.getMonth() - 5, 1)
+  return withScopedCache(
+    'personnel:monthly-overview',
+    60,
+    async () => {
+      // Own-data only for personnel; super_admin sees all.
+      const scope = scopeOverride ?? (await getPersonnelScope())
+      const selected = parseRangeMonth(range?.month)
 
-  // One grouped query per table (was 12 per-month counts): keeps the
-  // dashboard from flooding the pooler with concurrent connections.
-  interface MonthCount {
-    month: Date
-    count: bigint
-  }
-  let deliveryBuckets: MonthCount[] = []
-  let inspectionBuckets: MonthCount[] = []
-  try {
-    if (scope.isSuperAdmin) {
-      ;[deliveryBuckets, inspectionBuckets] = await Promise.all([
-        prisma.$queryRaw<MonthCount[]>`
-          SELECT date_trunc('month', created_at) AS month, COUNT(*)::bigint AS count
-          FROM deliveries WHERE created_at >= ${windowStart} GROUP BY 1`,
-        prisma.$queryRaw<MonthCount[]>`
-          SELECT date_trunc('month', created_at) AS month, COUNT(*)::bigint AS count
-          FROM inspections WHERE created_at >= ${windowStart} GROUP BY 1`,
-      ])
-    } else if (scope.userId) {
-      const me = scope.userId
-      ;[deliveryBuckets, inspectionBuckets] = await Promise.all([
-        prisma.$queryRaw<MonthCount[]>`
-          SELECT date_trunc('month', created_at) AS month, COUNT(*)::bigint AS count
-          FROM deliveries WHERE created_at >= ${windowStart} AND received_by = ${me}::uuid GROUP BY 1`,
-        prisma.$queryRaw<MonthCount[]>`
-          SELECT date_trunc('month', created_at) AS month, COUNT(*)::bigint AS count
-          FROM inspections WHERE created_at >= ${windowStart} AND inspector_id = ${me}::uuid GROUP BY 1`,
-      ])
+      // ── Single month → one bucket per day ────────────────────────────
+      if (selected) {
+        const now = new Date()
+        const sameMonth =
+          selected.getFullYear() === now.getFullYear() &&
+          selected.getMonth() === now.getMonth()
+        const daysInMonth = new Date(
+          selected.getFullYear(),
+          selected.getMonth() + 1,
+          0
+        ).getDate()
+        // Current month: only up to today. Past month: every day.
+        const lastDay = sameMonth ? now.getDate() : daysInMonth
+        const windowStart = selected
+        const windowEnd = new Date(
+          selected.getFullYear(),
+          selected.getMonth() + 1,
+          1
+        )
+
+        interface DayCount {
+          day: Date
+          count: bigint
+        }
+        let deliveryBuckets: DayCount[] = []
+        let inspectionBuckets: DayCount[] = []
+        try {
+          if (scope.isSuperAdmin) {
+            ;[deliveryBuckets, inspectionBuckets] = await Promise.all([
+              prisma.$queryRaw<DayCount[]>`
+                SELECT date_trunc('day', created_at) AS day, COUNT(*)::bigint AS count
+                FROM deliveries WHERE created_at >= ${windowStart} AND created_at < ${windowEnd} GROUP BY 1`,
+              prisma.$queryRaw<DayCount[]>`
+                SELECT date_trunc('day', created_at) AS day, COUNT(*)::bigint AS count
+                FROM inspections WHERE created_at >= ${windowStart} AND created_at < ${windowEnd} GROUP BY 1`,
+            ])
+          } else if (scope.userId) {
+            const me = scope.userId
+            ;[deliveryBuckets, inspectionBuckets] = await Promise.all([
+              prisma.$queryRaw<DayCount[]>`
+                SELECT date_trunc('day', created_at) AS day, COUNT(*)::bigint AS count
+                FROM deliveries WHERE created_at >= ${windowStart} AND created_at < ${windowEnd} AND received_by = ${me}::uuid GROUP BY 1`,
+              prisma.$queryRaw<DayCount[]>`
+                SELECT date_trunc('day', created_at) AS day, COUNT(*)::bigint AS count
+                FROM inspections WHERE created_at >= ${windowStart} AND created_at < ${windowEnd} AND inspector_id = ${me}::uuid GROUP BY 1`,
+            ])
+          }
+        } catch (e) {
+          console.error('[getMonthlyOverview]', e)
+        }
+
+        const keyOfDay = (d: Date) =>
+          `${d.getUTCFullYear()}-${d.getUTCMonth()}-${d.getUTCDate()}`
+        const deliveryMap = new Map(
+          deliveryBuckets.map((r) => [keyOfDay(new Date(r.day)), Number(r.count)])
+        )
+        const inspectionMap = new Map(
+          inspectionBuckets.map((r) => [keyOfDay(new Date(r.day)), Number(r.count)])
+        )
+
+        const points: MonthlyPoint[] = []
+        for (let day = 1; day <= lastDay; day++) {
+          const d = new Date(selected.getFullYear(), selected.getMonth(), day)
+          const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`
+          // date_trunc buckets are UTC; local day keys coincide except for
+          // rows stamped in the first/last hours of a day — negligible for
+          // a trend.
+          points.push({
+            month: d.toLocaleString('en-PH', {
+              month: 'short',
+              day: 'numeric',
+            }),
+            deliveries: deliveryMap.get(key) ?? 0,
+            inspections: inspectionMap.get(key) ?? 0,
+          })
+        }
+
+        return points
+      }
+
+      // ── Default → last 6 months ─────────────────────────────────────
+      const now = new Date()
+      const rangeEnd = new Date(now.getFullYear(), now.getMonth(), 1)
+      const rangeStart = new Date(
+        rangeEnd.getFullYear(),
+        rangeEnd.getMonth() - 5,
+        1
+      )
+      const windowStart = rangeStart
+      const windowEnd = new Date(
+        rangeEnd.getFullYear(),
+        rangeEnd.getMonth() + 1,
+        1
+      )
+
+      // One grouped query per table (was 12 per-month counts): keeps the
+      // dashboard from flooding the pooler with concurrent connections.
+      interface MonthCount {
+        month: Date
+        count: bigint
+      }
+      let deliveryBuckets: MonthCount[] = []
+      let inspectionBuckets: MonthCount[] = []
+      try {
+        if (scope.isSuperAdmin) {
+          ;[deliveryBuckets, inspectionBuckets] = await Promise.all([
+            prisma.$queryRaw<MonthCount[]>`
+              SELECT date_trunc('month', created_at) AS month, COUNT(*)::bigint AS count
+              FROM deliveries WHERE created_at >= ${windowStart} AND created_at < ${windowEnd} GROUP BY 1`,
+            prisma.$queryRaw<MonthCount[]>`
+              SELECT date_trunc('month', created_at) AS month, COUNT(*)::bigint AS count
+              FROM inspections WHERE created_at >= ${windowStart} AND created_at < ${windowEnd} GROUP BY 1`,
+          ])
+        } else if (scope.userId) {
+          const me = scope.userId
+          ;[deliveryBuckets, inspectionBuckets] = await Promise.all([
+            prisma.$queryRaw<MonthCount[]>`
+              SELECT date_trunc('month', created_at) AS month, COUNT(*)::bigint AS count
+              FROM deliveries WHERE created_at >= ${windowStart} AND created_at < ${windowEnd} AND received_by = ${me}::uuid GROUP BY 1`,
+            prisma.$queryRaw<MonthCount[]>`
+              SELECT date_trunc('month', created_at) AS month, COUNT(*)::bigint AS count
+              FROM inspections WHERE created_at >= ${windowStart} AND created_at < ${windowEnd} AND inspector_id = ${me}::uuid GROUP BY 1`,
+          ])
+        }
+      } catch (e) {
+        console.error('[getMonthlyOverview]', e)
+      }
+      const keyOf = (d: Date) => `${d.getUTCFullYear()}-${d.getUTCMonth()}`
+      const deliveryMap = new Map(
+        deliveryBuckets.map((r) => [keyOf(new Date(r.month)), Number(r.count)])
+      )
+      const inspectionMap = new Map(
+        inspectionBuckets.map((r) => [keyOf(new Date(r.month)), Number(r.count)])
+      )
+
+      const months: MonthlyPoint[] = []
+      for (let i = 0; i < 6; i++) {
+        const d = new Date(
+          rangeStart.getFullYear(),
+          rangeStart.getMonth() + i,
+          1
+        )
+        const key = `${d.getFullYear()}-${d.getMonth()}`
+        // date_trunc buckets are UTC; local month keys coincide except for
+        // rows stamped in the first/last hours of a month — negligible for
+        // a trend.
+        months.push({
+          month: d.toLocaleString('en-PH', { month: 'short' }),
+          deliveries: deliveryMap.get(key) ?? 0,
+          inspections: inspectionMap.get(key) ?? 0,
+        })
+      }
+
+      return months
+    },
+    {
+      ...scopeHint,
+      month: range?.month ?? '',
     }
-  } catch (e) {
-    console.error('[getMonthlyOverview]', e)
-  }
-  const keyOf = (d: Date) => `${d.getUTCFullYear()}-${d.getUTCMonth()}`
-  const deliveryMap = new Map(
-    deliveryBuckets.map((r) => [keyOf(new Date(r.month)), Number(r.count)])
   )
-  const inspectionMap = new Map(
-    inspectionBuckets.map((r) => [keyOf(new Date(r.month)), Number(r.count)])
-  )
-
-  for (let i = 5; i >= 0; i--) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
-    const key = `${d.getFullYear()}-${d.getMonth()}`
-    // date_trunc buckets are UTC; local month keys coincide except for rows
-    // stamped in the first/last hours of a month — negligible for a trend.
-    months.push({
-      month: d.toLocaleString('en-PH', { month: 'short' }),
-      deliveries: deliveryMap.get(key) ?? 0,
-      inspections: inspectionMap.get(key) ?? 0,
-    })
-  }
-
-  return months
-  }, scopeHint)
 }
 
 export interface RecentDeliveryRow {
@@ -684,8 +842,8 @@ export async function getRecentDeliveries(
 ): Promise<RecentDeliveryRow[]> {
   const { withScopedCache } = await import('@/lib/personnel-cache')
   const scopeHint = scopeOverride
-    ? { u: scopeOverride.userId ?? 'anon', a: scopeOverride.isSuperAdmin ? 1 : 0, limit }
-    : { limit }
+    ? { u: scopeOverride.userId ?? 'anon', a: scopeOverride.isSuperAdmin ? 1 : 0 }
+    : {}
   return withScopedCache('personnel:recent-deliveries', 60, async () => {
   try {
     const scope = scopeOverride ?? (await getPersonnelScope())
@@ -720,7 +878,7 @@ export async function getRecentDeliveries(
     console.error('[getRecentDeliveries]', e)
     return []
   }
-  }, { limit })
+  }, { ...scopeHint, limit })
 }
 
 // ─── Generated AIR / IAR ───────────────────────────────────────────────────
@@ -729,6 +887,9 @@ export interface SaveAirState {
   success?: boolean
   error?: string
   recordId?: string
+  /** System-assigned numbers when the caller left them blank. */
+  iarNo?: string
+  invoiceNo?: string
   /** Set when the AIR saved but stocking failed — recover via Stocks sync. */
   stockWarning?: string
 }
@@ -744,17 +905,45 @@ export interface SaveAirInput {
   invoiceDate: string  // ISO yyyy-mm-dd
 }
 
+/** Next `IAR-<year>-NNN` number for the given year. */
+async function nextIarNo(year: number): Promise<string> {
+  const prefix = `IAR-${year}-`
+  const rows = await prisma.iarRecord.findMany({
+    where: { iar_no: { startsWith: prefix } },
+    select: { iar_no: true },
+  })
+  let max = 0
+  for (const row of rows) {
+    const n = Number(row.iar_no?.slice(prefix.length))
+    if (Number.isFinite(n)) max = Math.max(max, n)
+  }
+  return `${prefix}${String(max + 1).padStart(3, '0')}`
+}
+
+/** Next `INV-<year>-NNN` number for the given year. */
+async function nextInvoiceNo(year: number): Promise<string> {
+  const prefix = `INV-${year}-`
+  const rows = await prisma.iarRecord.findMany({
+    where: { iar_invoice_no: { startsWith: prefix } },
+    select: { iar_invoice_no: true },
+  })
+  let max = 0
+  for (const row of rows) {
+    const n = Number(row.iar_invoice_no?.slice(prefix.length))
+    if (Number.isFinite(n)) max = Math.max(max, n)
+  }
+  return `${prefix}${String(max + 1).padStart(3, '0')}`
+}
+
 /** Persists a generated AIR/IAR against the latest inspection of a delivery. */
 export async function saveAir(
   deliveryId: string,
   input: SaveAirInput
 ): Promise<SaveAirState> {
-  const iarNo = input.iarNo?.trim() ?? ''
   const entity = input.entity?.trim() ?? ''
   const department = input.department?.trim() ?? ''
 
   if (!deliveryId) return { error: 'Delivery ID is required.' }
-  if (!iarNo) return { error: 'IAR No. is required.' }
   if (!entity) return { error: 'Entity name is required.' }
   if (!department) return { error: 'Requisitioning officer/department is required.' }
   if (!input.iarDate || Number.isNaN(Date.parse(input.iarDate))) {
@@ -764,11 +953,24 @@ export async function saveAir(
     return { error: 'A valid invoice date is required.' }
   }
 
+  // IAR and invoice numbers are system-assigned; callers may still supply one.
+  const iarNo =
+    input.iarNo?.trim() ||
+    (await nextIarNo(new Date(input.iarDate).getUTCFullYear()))
+  const invoiceNo =
+    input.invoiceNo?.trim() ||
+    (await nextInvoiceNo(new Date(input.invoiceDate).getUTCFullYear()))
+
   const inspectionScope = await getPersonnelScope()
   const user = inspectionScope.userId ? ({ id: inspectionScope.userId } as { id: string }) : null
 
   if (!user) {
     return { error: 'You must be signed in to generate an AIR.' }
+  }
+
+  // Super admins have read-only oversight of inspections.
+  if (inspectionScope.isSuperAdmin) {
+    return { error: 'Super admins have read-only access to inspections.' }
   }
 
   try {
@@ -808,7 +1010,7 @@ export async function saveAir(
         kind:             'generated',
         iar_no:           iarNo,
         iar_date:         new Date(input.iarDate),
-        iar_invoice_no:   input.invoiceNo?.trim() || null,
+        iar_invoice_no:   invoiceNo,
         iar_invoice_date: new Date(input.invoiceDate),
         iar_data: {
           entity:       entity,
@@ -832,21 +1034,21 @@ export async function saveAir(
     }
 
     revalidatePath('/personnel/inspections')
-    revalidatePath(`/personnel/inspections/${deliveryId}`)
-    revalidatePath(`/personnel/inspections/${deliveryId}/iar`)
-    revalidatePath(`/personnel/inspections/${deliveryId}/receipt`)
+    revalidatePath(inspectionHref(deliveryId))
+    revalidatePath(inspectionHref(deliveryId, '/iar'))
+    revalidatePath(inspectionHref(deliveryId, '/receipt'))
     await writeAuditLog({
       userId: user.id,
       action: 'iar:generate',
       module: 'inspections',
       details: {
         purpose: `Generate AIR ${iarNo} for ${entity} — ${department}`,
-        summary: `Delivery ${deliveryId.slice(0, 8).toUpperCase()} · Invoice ${input.invoiceNo?.trim() || '—'}`,
+        summary: `Delivery ${deliveryId.slice(0, 8).toUpperCase()} · Invoice ${invoiceNo}`,
         reference_id: record.id,
         iar_no: iarNo,
       },
     })
-    return { success: true, recordId: record.id, stockWarning }
+    return { success: true, recordId: record.id, stockWarning, iarNo, invoiceNo }
   } catch (e) {
     console.error('[saveAir]', e)
     return { error: 'Failed to save the AIR. Please try again.' }
@@ -883,6 +1085,11 @@ export async function attachIarImage(
   const attachScope = await getPersonnelScope()
   const user = attachScope.userId ? ({ id: attachScope.userId } as { id: string }) : null
   if (!user) return { error: 'You must be signed in to attach an IAR.' }
+
+  // Super admins have read-only oversight of inspections.
+  if (attachScope.isSuperAdmin) {
+    return { error: 'Super admins have read-only access to inspections.' }
+  }
 
   try {
     // Own-data only.
@@ -927,8 +1134,8 @@ export async function attachIarImage(
         'Scan attached, but moving items to stocks failed. Use “Sync from inspections” on the Stocks page.'
     }
     revalidatePath('/personnel/inspections')
-    revalidatePath(`/personnel/inspections/${deliveryId}/iar`)
-    revalidatePath(`/personnel/inspections/${deliveryId}/receipt`)
+    revalidatePath(inspectionHref(deliveryId, '/iar'))
+    revalidatePath(inspectionHref(deliveryId, '/receipt'))
     return { success: true, stockWarning: attachWarning }
   } catch (e) {
     console.error('[attachIarImage]', e)
@@ -946,6 +1153,11 @@ export async function removeIarImage(
   const removeScope = await getPersonnelScope()
   const user = removeScope.userId ? ({ id: removeScope.userId } as { id: string }) : null
   if (!user) return { error: 'You must be signed in to remove an IAR.' }
+
+  // Super admins have read-only oversight of inspections.
+  if (removeScope.isSuperAdmin) {
+    return { error: 'Super admins have read-only access to inspections.' }
+  }
 
   try {
     // Own-data only.
@@ -986,8 +1198,8 @@ export async function removeIarImage(
     }
     await syncInspectionAir(inspectionId)
     revalidatePath('/personnel/inspections')
-    revalidatePath(`/personnel/inspections/${deliveryId}/iar`)
-    revalidatePath(`/personnel/inspections/${deliveryId}/receipt`)
+    revalidatePath(inspectionHref(deliveryId, '/iar'))
+    revalidatePath(inspectionHref(deliveryId, '/receipt'))
     return { success: true }
   } catch (e) {
     console.error('[removeIarImage]', e)
@@ -1050,7 +1262,9 @@ export interface IarRecordRow {
 }
 
 /** Every generated / attached AIR for a delivery, newest first. */
-export async function getIarRecords(deliveryId: string): Promise<IarRecordRow[]> {
+export async function getIarRecords(deliveryParam: string): Promise<IarRecordRow[]> {
+  const deliveryId = await resolveInspectionDeliveryId(deliveryParam)
+  if (!deliveryId) return []
 
   try {
     // Same per-delivery cache — IAR page revisits are cache hits.
@@ -1128,7 +1342,9 @@ export interface IarSnapshot {
  * revalidates silently when stale. Never throws: missing / foreign
  * deliveries resolve to null so the client page can notFound().
  */
-export async function getIarSnapshot(deliveryId: string): Promise<IarSnapshot> {
+export async function getIarSnapshot(deliveryParam: string): Promise<IarSnapshot> {
+  const deliveryId = await resolveInspectionDeliveryId(deliveryParam)
+  if (!deliveryId) return { delivery: null, records: [] }
   const { withScopedCache } = await import('@/lib/personnel-cache')
   return withScopedCache('personnel:iar-snapshot', 30, async () => {
     try {

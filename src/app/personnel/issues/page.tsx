@@ -93,7 +93,6 @@ export default function PersonnelIssuesPage() {
 
   return (
     <section className={styles.section}>
-      <p className={styles.crumb}>Personnel / Issues</p>
       <div className={styles.headerRow}>
         <div>
           <h1 className={styles.title}>Issues</h1>

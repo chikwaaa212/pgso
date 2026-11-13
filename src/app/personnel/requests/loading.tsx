@@ -47,7 +47,6 @@ export default function RequestsLoading() {
       aria-busy="true"
       aria-label="Loading requests"
     >
-      <p className={styles.crumb}>Personnel / Requests</p>
 
       {/* Header — same as the real page */}
       <div className={styles.headerRow}>

@@ -1,9 +1,20 @@
 "use client";
 
+import { useState, type ReactNode } from "react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { portalFromPathname } from "@/lib/portal-path";
 import type { DeliveryDetails } from "../actions";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import receiptStyles from "@/app/personnel/inspections/components/receipt.module.css";
+import styles from "../delivery-receipt.module.css";
 
 function peso(n: number | null) {
   if (n == null) return "—";
@@ -23,30 +34,92 @@ function fmt(iso: string | null | undefined) {
   });
 }
 
-function StatusPill({ value }: { value: string | null }) {
-  const tone =
-    value === "passed"
-      ? "ok"
-      : value === "failed"
-      ? "bad"
-      : value === "partial"
-      ? "warn"
-      : "info";
-  const label = value
-    ? value.charAt(0).toUpperCase() + value.slice(1)
-    : "Pending";
+type Tone = "ok" | "warn" | "info" | "bad";
+
+/** Same two delivery states the log table shows. */
+function deliveryLabel(value: string | null | undefined) {
+  return value === "awaiting" ? "Waiting for arrival" : "Delivered";
+}
+
+function deliveryTone(value: string | null | undefined): Tone {
+  return value === "awaiting" ? "info" : "ok";
+}
+
+function inspectionLabel(value: string | null | undefined) {
+  if (!value) return "Pending";
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+/** Badge tones mirror the data table (pending is amber there too). */
+function inspectionTone(value: string | null | undefined): Tone {
+  if (value === "passed") return "ok";
+  if (value === "failed") return "bad";
+  if (value === "partial") return "warn";
+  return "warn";
+}
+
+function Pill({ label, tone }: { label: string; tone: Tone }) {
   return (
-    <span className={receiptStyles.resultBadge} data-tone={tone}>
+    <span className={styles.pill} data-tone={tone}>
       {label}
     </span>
   );
 }
 
-export function DeliveryReceiptToolbar({ backHref = "/personnel/deliveries", backLabel = "Back to deliveries" }: { backHref?: string; backLabel?: string } = {}) {
+/** Item lines table — shared by the inline record and the See-all overlay. */
+function ItemsTable({
+  items,
+  totalValue,
+}: {
+  items: DeliveryDetails["items"];
+  totalValue?: number;
+}) {
+  return (
+    <table className={styles.items}>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Item Name</th>
+          <th>Unit</th>
+          <th className={styles.num}>Qty</th>
+          <th className={styles.num}>Unit Cost</th>
+          <th className={styles.num}>Line Total</th>
+        </tr>
+      </thead>
+      <tbody>
+        {items.map((item, i) => (
+          <tr key={item.id}>
+            <td className={styles.idx}>{i + 1}</td>
+            <td className={styles.itemName}>{item.item_name}</td>
+            <td>{item.unit ?? "—"}</td>
+            <td className={styles.num}>{item.quantity}</td>
+            <td className={styles.num}>{peso(item.unit_cost)}</td>
+            <td className={styles.num}>
+              {peso((Number(item.unit_cost) || 0) * item.quantity)}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+      {totalValue != null ? (
+        <tfoot>
+          <tr>
+            <td colSpan={4}>Estimated Total</td>
+            <td className={styles.num} colSpan={2}>
+              {peso(totalValue)}
+            </td>
+          </tr>
+        </tfoot>
+      ) : null}
+    </table>
+  );
+}
+
+export function DeliveryReceiptToolbar({ backHref, backLabel = "Back to deliveries" }: { backHref?: string; backLabel?: string } = {}) {
+  const portal = portalFromPathname(usePathname());
   return (
     <div className={receiptStyles.toolbar}>
       <Link
-        href={backHref}
+        href={backHref ?? `/${portal}/deliveries`}
         className={cn(receiptStyles.toolbarBtn, receiptStyles.toolbarGhost)}
       >
         {backLabel}
@@ -62,155 +135,165 @@ export function DeliveryReceiptToolbar({ backHref = "/personnel/deliveries", bac
   );
 }
 
-export function DeliveryReceipt({ delivery }: { delivery: DeliveryDetails }) {
+export function DeliveryReceipt({
+  delivery,
+  maxItems,
+}: {
+  delivery: DeliveryDetails;
+  /** Inline embeds can cap the rows; a See-all overlay shows the rest. */
+  maxItems?: number;
+}) {
+  const [showAllItems, setShowAllItems] = useState(false);
   const ref = delivery.delivery_ref;
   const totalValue = delivery.items.reduce(
     (sum, item) => sum + (Number(item.unit_cost) || 0) * item.quantity,
     0
   );
+  const hasCosts = delivery.items.some((it) => it.unit_cost != null);
+  const capped = maxItems != null && delivery.items.length > maxItems;
+  const visibleItems = capped ? delivery.items.slice(0, maxItems) : delivery.items;
+  const hiddenCount = delivery.items.length - visibleItems.length;
+
+  const kind =
+    delivery.delivery_kind === "stock"
+      ? "Stocks"
+      : delivery.delivery_kind === "asset"
+        ? "Assets"
+        : "—";
 
   const recipient = delivery.recipient_name
     ? delivery.recipient_role
       ? `${delivery.recipient_name} (${delivery.recipient_role})`
       : delivery.recipient_name
-    : delivery.recipient_role ?? "—";
+    : (delivery.recipient_role ?? "—");
+
+  // Field order mirrors the delivery log table: reference → supplier → type →
+  // statuses → dates → people → catalog codes.
+  const fields: Array<[string, ReactNode]> = [
+    ["PO Ref", delivery.po_reference ?? "—"],
+    ["Supplier", delivery.supplier ?? "—"],
+    ["Type", kind],
+    ["Target Arrival", fmt(delivery.expected_arrival_date)],
+    [
+      "Delivery",
+      <Pill
+        key="delivery"
+        label={deliveryLabel(delivery.delivery_status)}
+        tone={deliveryTone(delivery.delivery_status)}
+      />,
+    ],
+    [
+      "Inspection",
+      <Pill
+        key="inspection"
+        label={inspectionLabel(delivery.inspection_status)}
+        tone={inspectionTone(delivery.inspection_status)}
+      />,
+    ],
+    ["Logged By", fmt(delivery.created_at)],
+    ["Encoded By", delivery.logged_by_name ?? "—"],
+    ["Received By", recipient],
+    [
+      delivery.delivery_kind === "stock" ? "Stock Code" : "Account Code",
+      delivery.account_code ?? "—",
+    ],
+    [
+      delivery.delivery_kind === "stock" ? "Stock Title" : "Account Title",
+      delivery.account_title ?? "—",
+    ],
+    [
+      delivery.delivery_kind === "stock" ? "Stock Type" : "Asset Type",
+      (delivery.delivery_kind === "stock"
+        ? delivery.stock_type
+        : delivery.asset_type) ?? "—",
+    ],
+  ];
+
+  if (delivery.date_delivered) {
+    fields.push(["Date Delivered", fmt(delivery.date_delivered)]);
+  }
 
   return (
-    <article className={receiptStyles.receipt}>
-      <div className={receiptStyles.receiptInner}>
-        {/* ── Masthead ── */}
-        <header className={receiptStyles.masthead}>
-          <p className={receiptStyles.orgName}>PGSO</p>
-          <p className={receiptStyles.orgSub}>
-            Property &amp; Supply Management
-          </p>
-          <p className={receiptStyles.docTitle}>*** DELIVERY RECEIPT ***</p>
-          <p className={receiptStyles.docSub}>
-            DELIVERY RECORD — DELIVERY {ref}
-          </p>
-        </header>
+    <article className={styles.sheet}>
+      {/* Masthead */}
+      <header className={styles.top}>
+        <div className={styles.brand}>
+          <p className={styles.brandName}>PGSO</p>
+          <p className={styles.brandSub}>Property &amp; Supply Management</p>
+        </div>
+        <div className={styles.doc}>
+          <p className={styles.docTitle}>Delivery Receipt</p>
+          <p className={styles.docNo}>{ref}</p>
+          <p className={styles.docDate}>Logged {fmt(delivery.created_at)}</p>
+        </div>
+      </header>
 
-        <div className={receiptStyles.divider} />
-
-        {/* ── Delivery record ── */}
-        <p className={receiptStyles.sectionTitle}>DELIVERY RECORD</p>
-        <dl className={receiptStyles.rows}>
-          {[
-            ["Date Delivered", fmt(delivery.date_delivered)],
-            ["Target Arrival", fmt(delivery.expected_arrival_date)],
-            [
-              "Type",
-              delivery.delivery_kind === "stock"
-                ? "STOCKS"
-                : delivery.delivery_kind === "asset"
-                  ? "ASSETS"
-                  : "—",
-            ],
-            ["Supplier", delivery.supplier ?? "—"],
-            ["P.O. Reference", delivery.po_reference ?? "—"],
-            [
-              "Delivery Status",
-              delivery.delivery_status === "complete"
-                ? "COMPLETE"
-                : delivery.delivery_status === "partial"
-                ? "PARTIAL"
-                : delivery.delivery_status === "awaiting"
-                  ? "WAITING FOR ARRIVAL"
-                  : (delivery.delivery_status ?? "—").toUpperCase(),
-            ],
-            ["Received By", recipient],
-            ["Logged By", delivery.logged_by_name ?? "—"],
-            [
-              "Account Code",
-              delivery.account_code ?? "—",
-            ],
-            [
-              "Asset Type / Account Title",
-              `${delivery.asset_type ?? "—"} / ${delivery.account_title ?? "—"}`,
-            ],
-          ].map(([label, value]) => (
-            <div key={label} className={receiptStyles.row}>
-              <dt>{label}</dt>
-              <dd>{value}</dd>
+      {/* Delivery record */}
+      <section className={styles.section}>
+        <p className={styles.sectionTitle}>Delivery Record</p>
+        <dl className={styles.grid}>
+          {fields.map(([label, value]) => (
+            <div key={label} className={styles.field}>
+              <dt className={styles.label}>{label}</dt>
+              <dd className={styles.value}>{value}</dd>
             </div>
           ))}
-          <div className={receiptStyles.row}>
-            <dt>Inspection Status</dt>
-            <dd>
-              <StatusPill value={delivery.inspection_status} />
-            </dd>
-          </div>
         </dl>
+      </section>
 
-        <div className={receiptStyles.divider} />
-
-        {/* ── Items ── */}
-        <p className={receiptStyles.sectionTitle}>
-          ITEMS DELIVERED ({delivery.items.length})
+      {/* Items */}
+      <section className={styles.section}>
+        <p className={styles.sectionTitle}>
+          Items Delivered ({delivery.items.length})
         </p>
-        <div className={receiptStyles.tableWrap}>
-          <table className={receiptStyles.table}>
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Description</th>
-                <th>Unit</th>
-                <th className={receiptStyles.num}>Qty</th>
-                <th className={receiptStyles.num}>Unit Cost</th>
-                <th className={receiptStyles.num}>Line Total</th>
-              </tr>
-            </thead>
-            <tbody>
-              {delivery.items.map((item, i) => (
-                <tr key={item.id}>
-                  <td className={receiptStyles.idx}>{i + 1}</td>
-                  <td className={receiptStyles.itemName}>
-                    {item.item_name}
-                  </td>
-                  <td>{item.unit ?? "—"}</td>
-                  <td className={receiptStyles.num}>{item.quantity}</td>
-                  <td className={receiptStyles.num}>
-                    {peso(item.unit_cost)}
-                  </td>
-                  <td className={receiptStyles.num}>
-                    {peso(
-                      (Number(item.unit_cost) || 0) * item.quantity
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-            {delivery.items.some((it) => it.unit_cost != null) ? (
-              <tfoot>
-                <tr>
-                  <td colSpan={4}>ESTIMATED TOTAL</td>
-                  <td className={receiptStyles.num} colSpan={2}>
-                    {peso(totalValue)}
-                  </td>
-                </tr>
-              </tfoot>
-            ) : null}
-          </table>
+        <div className={styles.tableWrap}>
+          <ItemsTable
+            items={visibleItems}
+            totalValue={hasCosts ? totalValue : undefined}
+          />
         </div>
+        {hiddenCount > 0 ? (
+          <div className={styles.seeAllRow}>
+            <span className={styles.seeAllHint}>
+              Showing {visibleItems.length} of {delivery.items.length} items
+            </span>
+            <button
+              type="button"
+              className={styles.seeAllBtn}
+              onClick={() => setShowAllItems(true)}
+            >
+              See all {delivery.items.length} items
+            </button>
+          </div>
+        ) : null}
+      </section>
 
-        <div className={receiptStyles.divider} />
+      {/* Footer */}
+      <footer className={styles.footer}>
+        <p className={styles.kicker}>End of delivery record</p>
+        <div className={styles.footerMeta}>
+          <div aria-hidden="true" className={styles.barcode} />
+          <p className={styles.footerRef}>Delivery #{ref}</p>
+        </div>
+      </footer>
 
-        {/* ── Footer ── */}
-        <p className={receiptStyles.receiptKicker}>END OF DELIVERY RECORD</p>
-        <div
-          aria-hidden="true"
-          className={receiptStyles.scanned}
-          style={{
-            background:
-              "repeating-linear-gradient(90deg, #1b2a4a 0 2px, transparent 2px 5px, #1b2a4a 5px 6px, transparent 6px 10px)",
-          }}
-        />
-        <p className={receiptStyles.scannedLabel}>DELIVERY #{ref}</p>
-        <p className={receiptStyles.recorded}>
-          REC • {fmt(delivery.created_at)}
-        </p>
-        <p className={receiptStyles.thanks}>*** Thank you! ***</p>
-      </div>
+      {/* Full item lines for records that were capped inline. */}
+      <Dialog open={showAllItems} onOpenChange={setShowAllItems}>
+        <DialogContent className="bg-white sm:max-w-2xl dark:bg-white">
+          <DialogHeader>
+            <DialogTitle>Items delivered ({delivery.items.length})</DialogTitle>
+            <DialogDescription>
+              Delivery {ref} — every item line on this delivery.
+            </DialogDescription>
+          </DialogHeader>
+          <div className={styles.tableWrap}>
+            <ItemsTable
+              items={delivery.items}
+              totalValue={hasCosts ? totalValue : undefined}
+            />
+          </div>
+        </DialogContent>
+      </Dialog>
     </article>
   );
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { createClient } from "@/lib/supabase/client";
@@ -11,6 +11,8 @@ import {
 } from "@/app/personnel/inspections/actions";
 import { CLIENT_CACHE_KEYS, bustClientCache } from "@/lib/client-cache";
 import { resourcePrefix } from "@/lib/query-keys";
+import { cn } from "@/lib/utils";
+import { portalFromPathname } from "@/lib/portal-path";
 
 const BUCKET = "iar-attachments";
 const MAX_BYTES = 8 * 1024 * 1024;
@@ -25,17 +27,24 @@ export function IarAttachButton({
   deliveryId,
   label = "Attach IAR scan",
   onDone,
+  triggerClassName,
 }: {
   deliveryId: string;
   label?: string;
   /** Called after a successful attach (e.g. to refresh a list). */
   onDone?: () => void;
+  /** Optional trigger styling (e.g. compact 24px row actions). */
+  triggerClassName?: string;
 }) {
   const router = useRouter();
+  const pathname = usePathname();
   const inputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+
+  // Super admins have read-only oversight of deliveries and inspections.
+  if (portalFromPathname(pathname) === "super-admin") return null;
 
   async function onPick(file: File | undefined) {
     if (!file) return;
@@ -106,7 +115,10 @@ export function IarAttachButton({
       <Button
         type="button"
         variant="outline"
-        className="h-8 gap-2 rounded-[4px] px-3.5 text-xs font-semibold"
+        className={cn(
+          "gap-2 rounded-[4px] px-3.5 text-xs font-semibold",
+          triggerClassName ?? "h-8"
+        )}
         disabled={busy}
         onClick={() => inputRef.current?.click()}
       >
@@ -140,8 +152,12 @@ export function IarRemoveButton({
   imageUrl: string;
 }) {
   const router = useRouter();
+  const pathname = usePathname();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+
+  // Super admins have read-only oversight of deliveries and inspections.
+  if (portalFromPathname(pathname) === "super-admin") return null;
 
   async function onRemove() {
     if (!window.confirm("Remove the attached IAR scan?")) return;

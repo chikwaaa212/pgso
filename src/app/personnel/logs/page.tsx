@@ -11,7 +11,6 @@ export default function PersonnelLogsPage() {
 
   return (
     <section className={styles.section}>
-      <p className={styles.crumb}>Personnel / Logs</p>
       <div className={styles.headerRow}>
         <div>
           <h1 className={styles.title}>My Activity Logs</h1>

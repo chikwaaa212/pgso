@@ -160,14 +160,14 @@ export function StockDetailEditor({
   stock,
   readOnly = false,
   backHref,
-  crumbBase = "Personnel / Assets / Stocks",
+  crumbBase,
 }: {
   stock: StockRow;
   /** Hides the Edit action for oversight (read-only) views. */
   readOnly?: boolean;
   /** Overrides the back link (defaults to the personnel list). */
   backHref?: string;
-  /** Overrides the leading crumb segments (defaults to the personnel trail). */
+  /** Leading crumb segments; omit to render no breadcrumb. */
   crumbBase?: string;
 }) {
   const { toast } = useToast();
@@ -232,9 +232,11 @@ export function StockDetailEditor({
 
   return (
     <section className={styles.section}>
-      <p className={styles.crumb}>
-        {crumbBase} / {displayed.item_name ?? displayed.id}
-      </p>
+      {crumbBase ? (
+        <p className={styles.crumb}>
+          {crumbBase} / {displayed.item_name ?? displayed.id}
+        </p>
+      ) : null}
 
       <div className={styles.headerRow}>
         <div>

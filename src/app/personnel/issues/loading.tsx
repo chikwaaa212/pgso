@@ -51,7 +51,6 @@ export default function IssuesLoading() {
       aria-busy="true"
       aria-label="Loading issues"
     >
-      <p className={styles.crumb}>Personnel / Issues</p>
 
       {/* Header — same as the real page (no actions) */}
       <div className={styles.headerRow}>

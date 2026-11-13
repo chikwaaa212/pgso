@@ -2,7 +2,14 @@
   display: flex;
   flex-direction: column;
   gap: 1.25rem;
+  padding-top: 0.5rem;
   padding-bottom: 3rem;
+}
+
+/* Master Data uses Inter instead of the app-wide Geist. */
+.interFont {
+  font-family: var(--font-inter), var(--font-sans);
+  font-feature-settings: "cv11", "ss01";
 }
 
 .crumb {
@@ -22,8 +29,24 @@
   margin-top: 0.25rem;
 }
 
+.cardsGrid {
+  display: grid;
+  gap: 1.25rem;
+  grid-template-columns: 1fr;
+  align-items: stretch;
+}
+
+@media (min-width: 1024px) {
+  .cardsGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 .panel {
-  padding: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  min-height: 18rem;
+  background-color: var(--color-white, #ffffff);
 }
 
 .panelTitle {
@@ -56,6 +79,24 @@
   padding: 0.625rem 0.75rem;
   border-bottom: 1px solid var(--color-navy-100);
   white-space: nowrap;
+}
+
+.table td.wrapCell {
+  white-space: normal;
+  min-width: 10rem;
+}
+
+/* Row actions always sit at the far right of the card. */
+.table th:last-child,
+.table td:last-child {
+  width: 11rem;
+  text-align: right;
+}
+
+/* Fixed status/action widths keep the columns aligned across every card. */
+.table th:nth-child(2),
+.table td:nth-child(2) {
+  width: 8rem;
 }
 
 .table th {
@@ -94,8 +135,175 @@
   color: #1e40af;
 }
 
-.empty {
+.emptyCard {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  min-height: 7rem;
   padding: 1rem;
-  font-size: 0.875rem;
+  text-align: center;
+}
+
+.emptyCardText {
+  margin: 0;
+  font-size: 0.8125rem;
   color: var(--color-navy-500);
 }
+
+/* Softer highlight: translucent yellow over the white card, default border kept. */
+.cardsGrid .panelHighlight {
+  background-color: rgb(254 243 199 / 45%);
+}
+
+.cardsGrid .panelHighlight .panelSub,
+.cardsGrid .panelHighlight .emptyCardText {
+  color: var(--color-navy-700, #2d4a7a);
+}
+
+/* Compact 24px yellow action inside an empty card (overrides Button defaults). */
+.emptyCard .emptyCardButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 24px;
+  padding-inline: 0.625rem;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: var(--color-navy-900);
+  background-color: var(--color-yellow-500);
+  border: 1px solid var(--color-yellow-600);
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.emptyCard .emptyCardButton:hover {
+  color: var(--color-navy-900);
+  background-color: var(--color-yellow-600);
+  border-color: var(--color-yellow-600);
+}
+
+/* Highlighted (empty) cards use a white action instead of the yellow one. */
+.cardsGrid .panelHighlight .emptyCard .emptyCardButton {
+  background-color: var(--color-white, #ffffff);
+  border-color: var(--color-navy-200, #d1d9e6);
+  color: var(--color-navy-900);
+}
+
+.cardsGrid .panelHighlight .emptyCard .emptyCardButton:hover {
+  background-color: var(--color-navy-100, #e8edf5);
+  border-color: var(--color-navy-300, #b0bdd0);
+  color: var(--color-navy-900);
+}
+
+/* 24px square icon action (opens the full departments list). */
+.iconButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  color: var(--color-navy-900);
+  background-color: var(--color-yellow-500);
+  border: 1px solid var(--color-yellow-600);
+  border-radius: 4px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.iconButton:hover {
+  background-color: var(--color-yellow-600);
+}
+
+.iconButton:focus-visible {
+  outline: 2px solid var(--color-navy-900);
+  outline-offset: 2px;
+}
+
+/* 24px "Deleted (n)" trigger beside each card's actions. */
+.deletedButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  height: 24px;
+  padding-inline: 0.5rem;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: var(--color-navy-700, #2d4a7a);
+  background-color: var(--color-white, #ffffff);
+  border: 1px solid var(--color-navy-300, #b0bdd0);
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.deletedButton:hover {
+  background-color: var(--color-navy-100, #e8edf5);
+  border-color: var(--color-navy-400, #8fa3c0);
+}
+
+.deletedButton:focus-visible {
+  outline: 2px solid var(--color-navy-900);
+  outline-offset: 2px;
+}
+
+/* Search field in the departments overlay header. */
+.dialogSearch {
+  width: 14rem;
+  height: 28px;
+  padding: 0 0.625rem;
+  font-size: 0.75rem;
+  color: var(--color-navy-900);
+  background-color: var(--color-white, #ffffff);
+  border: 1px solid var(--color-navy-300, #b0bdd0);
+  border-radius: 4px;
+}
+
+.dialogSearch:focus {
+  border-color: var(--color-navy-600);
+  outline: none;
+}
+
+.dialogHeaderRow {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.dialogHeaderActions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-left: auto;
+}
+
+.dialogClose {
+  padding: 0.25rem 0.375rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--color-navy-600);
+  background: none;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.dialogClose:hover {
+  color: var(--color-navy-900);
+  background-color: var(--color-navy-100, #e8edf5);
+}
+
+.dialogEmpty {
+  padding: 2rem 0;
+  font-size: 0.8125rem;
+  color: var(--color-navy-500);
+  text-align: center;
+}
+

@@ -49,7 +49,6 @@ export default function DocumentsLoading() {
       aria-busy="true"
       aria-label="Loading documents"
     >
-      <p className={styles.crumb}>Personnel / Documents</p>
 
       {/* Header — same as the real page */}
       <div className={styles.headerRow}>

@@ -54,8 +54,10 @@ describe("nav prefetch map: first-page keys match their target pages", () => {
 
 describe("navbars spread intent props on every nav link", () => {
   for (const [nav, n] of [
-    ["../components/personnel/PersonnelNavbar.tsx", 4],
-    ["../components/super-admin/SuperAdminNavbar.tsx", 4],
+    ["../components/personnel/PersonnelNavbar.tsx", 2],
+    ["../components/personnel/PersonnelSidebar.tsx", 2],
+    ["../components/super-admin/SuperAdminNavbar.tsx", 2],
+    ["../components/super-admin/SuperAdminSidebar.tsx", 2],
     ["../components/employee/EmployeeNavbar.tsx", 2],
   ] as const) {
     it(`${nav}: all nav Links carry hover/focus prefetch`, () => {
@@ -81,7 +83,7 @@ describe("list + QR images: lazy, async decode, sized QRs", () => {
     "../app/personnel/documents/par-report.tsx",
     "../app/personnel/documents/ics-report.tsx",
     "../app/personnel/documents/iar-report.tsx",
-    "../app/personnel/inspections/[id]/iar/page.tsx",
+    "../app/personnel/inspections/components/iar-report-view.tsx",
   ];
   for (const f of [...qrOverlays, ...scans]) {
     it(`${f}: lazy + async decode`, () => {

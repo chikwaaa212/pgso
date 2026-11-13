@@ -164,7 +164,8 @@ export function QrScanner({
   styles,
   center = false,
 }: {
-  crumb: string;
+  /** Optional breadcrumb; omit to render no breadcrumb. */
+  crumb?: string;
   title: string;
   subtitle: string;
   styles: Record<string, string>;
@@ -295,7 +296,7 @@ export function QrScanner({
 
   return (
     <section className={styles.section}>
-      <p className={styles.crumb}>{crumb}</p>
+      {crumb ? <p className={styles.crumb}>{crumb}</p> : null}
       <div className={center ? "text-center" : undefined}>
         <h1 className={styles.title}>{title}</h1>
         <p className={styles.subtitle}>{subtitle}</p>

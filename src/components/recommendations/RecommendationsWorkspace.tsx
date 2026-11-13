@@ -173,9 +173,11 @@ export function RecommendationsWorkspace({ portal }: { portal: Portal }) {
   if (!data) {
     return (
       <section className={styles.page}>
-        <p className={styles.crumb}>
-          {portal === 'super-admin' ? 'Super Admin' : 'Personnel'} / Recommendations
-        </p>
+        {portal !== 'personnel' && (
+          <p className={styles.crumb}>
+            {portal === 'super-admin' ? 'Super Admin' : 'Personnel'} / Recommendations
+          </p>
+        )}
         <h1 className={styles.title}>Recommendations</h1>
         <p className={styles.subtitle}>{error || 'Could not load recommendations.'}</p>
         <button type="button" className={styles.refresh} onClick={refresh}>
@@ -191,9 +193,11 @@ export function RecommendationsWorkspace({ portal }: { portal: Portal }) {
     <section className={styles.page}>
       <header className={styles.header}>
         <div>
-          <p className={styles.crumb}>
-            {portal === 'super-admin' ? 'Super Admin' : 'Personnel'} / Recommendations
-          </p>
+          {portal !== 'personnel' && (
+            <p className={styles.crumb}>
+              {portal === 'super-admin' ? 'Super Admin' : 'Personnel'} / Recommendations
+            </p>
+          )}
           <h1 className={styles.title}>Recommendations</h1>
           <p className={styles.subtitle}>
             Evidence-based advice for replenishment, replacement and disposal,

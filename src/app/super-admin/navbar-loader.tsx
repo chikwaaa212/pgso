@@ -2,7 +2,7 @@ import { getDashboardStats } from "@/app/personnel/inspections/actions";
 import prisma from "@/lib/prisma";
 import { SuperAdminNavbar } from "@/components/super-admin/SuperAdminNavbar";
 
-async function getPendingAccounts(): Promise<number> {
+export async function getPendingAccounts(): Promise<number> {
   try {
     return await prisma.profile.count({
       where: { status: "pending", role: { in: ["employee", "pgso_personnel"] } },

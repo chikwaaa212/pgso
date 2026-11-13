@@ -1,21 +1,35 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import Link from "next/link";
+import { useMemo, useState, useSyncExternalStore } from "react";
 import { cn } from "@/lib/utils";
 import { useCachedAction } from "@/hooks/use-cached-action";
-import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { buildQueryKey } from "@/lib/query-keys";
-import { FIXED_PAGE_SIZE } from "@/components/personnel/TablePager";
 import {
   DataTableSkeleton,
   PagerSkeleton,
 } from "@/components/personnel/skeletons";
-import { InspectConfirmButton } from "@/components/personnel/InspectConfirmDialog";
 import { getDeliveriesPage } from "./actions";
+import { EditDeliveryModal } from "./edit-delivery-modal";
+import { LogDeliveryModal } from "./log-delivery-modal";
+import { ViewDeliveryDialog } from "./view-delivery-dialog";
+import {
+  getEmptyPendingDeliveries,
+  getEmptyPendingDeliveryEdits,
+  getPendingDeliveries,
+  getPendingDeliveryEdits,
+  subscribePendingDeliveries,
+  subscribePendingDeliveryEdits,
+} from "./optimistic-deliveries";
 import styles from "../dashboard/page.module.css";
 
-const statusFilters = ["All", "Complete", "Partial", "Awaiting arrival"] as const;
+/** Deliveries use their own page size of 10 rows per page. */
+const TABLE_PAGE_SIZE = 10;
+
+/**
+ * One fetch loads the newest rows; search + pagination then run entirely in
+ * memory so typing filters instantly (no "Updating…", no stale page stack).
+ */
+const FETCH_LIMIT = 100;
 
 export interface DeliveryRow {
   id: string;
@@ -24,11 +38,17 @@ export interface DeliveryRow {
   po: string;
   date: string;
   arrival: string;
+  /** YYYY-MM-DD in Manila — used to gate inspection until arrival day. */
+  arrivalKey: string | null;
   kind: string;
-  status: "Complete" | "Partial" | "Awaiting arrival";
+  status: "Waiting for arrival" | "Delivered";
   itemCount: number;
   inspectionStatus: "pending" | "passed" | "failed" | "partial";
   inspectionRef: string;
+  /** Optimistic row painted while the background save is still running. */
+  pending?: boolean;
+  /** Local token used as the React key for optimistic rows. */
+  pendingToken?: string;
 }
 
 function formatDateISO(value: string | null) {
@@ -43,8 +63,16 @@ function formatDateISO(value: string | null) {
   });
 }
 
-function pageWindow(current: number, total: number) {
-  const start = Math.max(1, Math.min(current - 2, total - 4));
+/** Calendar day (YYYY-MM-DD) in Manila — date-only comparisons. */
+function manilaDateKey(value: string | Date): string {
+  const d = typeof value === "string" ? new Date(value) : value;
+  if (Number.isNaN(d.getTime())) return "";
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Manila",
+  }).format(d);
+}
+
+function pageWindow(current: number, total: number) {  const start = Math.max(1, Math.min(current - 2, total - 4));
   const end = Math.min(total, start + 4);
   const pages: number[] = [];
   for (let p = Math.max(1, end - 4); p <= end; p++) pages.push(p);
@@ -53,6 +81,7 @@ function pageWindow(current: number, total: number) {
 
 const inspectionLabel = (s: DeliveryRow["inspectionStatus"]) => {
   if (s === "pending") return "Pending";
+  if (s === "failed") return "Returned to supplier";
   return s.charAt(0).toUpperCase() + s.slice(1);
 };
 
@@ -60,110 +89,151 @@ const inspectionTone = (s: DeliveryRow["inspectionStatus"]) => {
   if (s === "passed") return "ok";
   if (s === "failed") return "bad";
   if (s === "partial") return "warn";
-  return "info";
+  // Pending inspections read as amber (queued, waiting on someone).
+  return "warn";
 };
 
-export function DeliveryTable({
-  onTotalChange,
-}: {
-  onTotalChange?: (total: number) => void;
-}) {
+export function DeliveryTable({ readOnly = false }: { readOnly?: boolean }) {
   const [query, setQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState<(typeof statusFilters)[number]>(
-    "All"
-  );
-  // Fixed 20 rows/page (no selector) — the DB returns only this window.
-  const pageSize = FIXED_PAGE_SIZE;
   const [page, setPage] = useState(1);
-  // Debounced search — the DB query fires only after typing pauses.
-  const debouncedQuery = useDebouncedValue(query, 250);
+  const q = query.trim().toLowerCase();
+  // Inspections open on the target arrival day (or later), Manila time.
+  const todayKey = manilaDateKey(new Date());
 
   const cacheKey = buildQueryKey({
     module: 'personnel',
     resource: 'deliveries',
-    page,
-    pageSize,
-    filters: { q: debouncedQuery, status: statusFilter === 'All' ? 'all' : statusFilter },
+    page: 1,
+    pageSize: FETCH_LIMIT,
+    filters: { scope: 'delivery-log' },
   });
-  const { data, loading, isValidating } = useCachedAction(
+  const { data, loading } = useCachedAction(
     cacheKey,
-    () =>
-      getDeliveriesPage({
-        page,
-        pageSize,
-        q: debouncedQuery,
-        status: statusFilter === "All" ? "all" : statusFilter,
-      }),
+    () => getDeliveriesPage({ page: 1, pageSize: FETCH_LIMIT }),
     { staleTime: 30_000 }
   );
-  const total = data?.total ?? 0;
+
+  // Edits submitted from the stepper but not yet acknowledged by the server.
+  // They overlay the matching row instantly; the cache bust keeps them on
+  // screen until the revalidated list lands.
+  const pendingEdits = useSyncExternalStore(
+    subscribePendingDeliveryEdits,
+    getPendingDeliveryEdits,
+    getEmptyPendingDeliveryEdits
+  );
+  const editsById = useMemo(
+    () => new Map(pendingEdits.map((e) => [e.deliveryId, e])),
+    [pendingEdits]
+  );
+
   const rows: DeliveryRow[] = useMemo(() => {
-    return (data?.rows ?? []).map((d) => ({
-      id: d.id.slice(0, 8).toUpperCase(),
-      deliveryId: d.id,
-      supplier: d.supplier ?? "—",
-      po: d.po_reference ?? "—",
-      date: formatDateISO(d.date_delivered),
-      arrival: formatDateISO(d.expected_arrival_date),
-      kind:
-        d.delivery_kind === "stock"
-          ? "Stocks"
-          : d.delivery_kind === "asset"
-            ? "Assets"
-            : "—",
-      status:
-        d.delivery_status === "partial"
-          ? "Partial"
-          : d.delivery_status === "awaiting"
-            ? "Awaiting arrival"
-            : "Complete",
-      itemCount: d.item_count,
-      inspectionStatus: (d.inspection_status as DeliveryRow["inspectionStatus"]) ?? "pending",
-      inspectionRef: d.id.slice(0, 8).toUpperCase(),
-    }));
-  }, [data]);
+    return (data?.rows ?? []).map((d) => {
+      const edit = editsById.get(d.id);
+      const arrivalSource = edit
+        ? edit.arrival || null
+        : d.expected_arrival_date;
+      return {
+        id: d.id.slice(0, 8).toUpperCase(),
+        deliveryId: d.id,
+        supplier: edit ? edit.supplier || "—" : d.supplier ?? "—",
+        po: edit ? edit.po || "—" : d.po_reference ?? "—",
+        date: formatDateISO(d.logged_at),
+        arrival: formatDateISO(arrivalSource),
+        arrivalKey: arrivalSource ? manilaDateKey(arrivalSource) : null,
+        kind: edit
+          ? edit.kind
+          : d.delivery_kind === "stock"
+            ? "Stocks"
+            : d.delivery_kind === "asset"
+              ? "Assets"
+              : "—",
+        // A passed inspection marks the delivery as delivered; otherwise the
+        // log-time state (waiting for arrival / delivered) still applies.
+        status:
+          d.inspection_status === "passed"
+            ? "Delivered"
+            : d.delivery_status === "awaiting"
+              ? "Waiting for arrival"
+              : "Delivered",
+        itemCount: edit ? edit.itemCount : d.item_count,
+        inspectionStatus: (d.inspection_status as DeliveryRow["inspectionStatus"]) ?? "pending",
+        inspectionRef: d.id.slice(0, 8).toUpperCase(),
+      };
+    });
+  }, [data, editsById]);
 
-  useEffect(() => {
-    onTotalChange?.(total);
-  }, [total, onTotalChange]);
+  // Rows submitted from the Log-delivery dialog but not yet acknowledged by
+  // the server. They paint instantly; a row disappears as soon as the
+  // revalidated list contains it (same delivery id or PO reference) or when
+  // the write fails and the pending entry is dropped.
+  const pendingRows = useSyncExternalStore(
+    subscribePendingDeliveries,
+    getPendingDeliveries,
+    getEmptyPendingDeliveries
+  );
+  const optimisticRows = useMemo<DeliveryRow[]>(() => {
+    const knownIds = new Set(rows.map((r) => r.deliveryId));
+    const knownPos = new Set(rows.map((r) => r.po));
+    return pendingRows
+      .filter((p) => !p.deliveryId || !knownIds.has(p.deliveryId))
+      .filter((p) => !knownPos.has(p.po))
+      .map((p) => ({
+        id: "—",
+        deliveryId: "",
+        supplier: p.supplier || "—",
+        po: p.po || "—",
+        date: formatDateISO(new Date(p.createdAt).toISOString()),
+        arrival: formatDateISO(p.arrival || null),
+        arrivalKey: p.arrival || null,
+        kind: p.kind,
+        status: "Waiting for arrival" as const,
+        itemCount: p.itemCount,
+        inspectionStatus: "pending" as const,
+        inspectionRef: "",
+        pending: true,
+        pendingToken: p.token,
+      }));
+  }, [pendingRows, rows]);
 
-  const pageCount = Math.max(1, Math.ceil(total / pageSize));
+  const matches = (d: DeliveryRow) =>
+    q === "" ||
+    d.supplier.toLowerCase().includes(q) ||
+    d.po.toLowerCase().includes(q) ||
+    d.id.toLowerCase().includes(q) ||
+    d.status.toLowerCase().includes(q);
+
+  // Search is local: the loaded rows are filtered as you type, so results are
+  // instant and the previous page is never shown while a request is pending.
+  const allRows = useMemo(
+    () => [
+      ...optimisticRows.filter(matches),
+      ...rows.filter(matches),
+    ],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [optimisticRows, rows, q]
+  );
+
+  const total = allRows.length;
+  const pageCount = Math.max(1, Math.ceil(total / TABLE_PAGE_SIZE));
   const safePage = Math.min(page, pageCount);
-  const start = (safePage - 1) * pageSize;
+  const start = (safePage - 1) * TABLE_PAGE_SIZE;
+  const visibleRows = allRows.slice(start, start + TABLE_PAGE_SIZE);
   const { pages } = pageWindow(safePage, pageCount);
-  const searching = query.trim() !== debouncedQuery.trim();
 
-  if (loading && rows.length === 0) {
+  if (loading && rows.length === 0 && pendingRows.length === 0) {
     return (
       <div aria-busy="true" aria-label="Loading deliveries">
-        <div className={styles.filterRow} aria-hidden="true">
-          <div
-            className={styles.filterBtns}
-            role="group"
-            aria-label="Filter by delivery status"
-          >
-            {statusFilters.map((f) => (
-              <span key={f} className={styles.filterBtn} data-active={f === statusFilter}>
-                {f}
-              </span>
-            ))}
-          </div>
-          <div className="h-9 w-64 animate-pulse rounded-md bg-navy-100" />
-        </div>
         <DataTableSkeleton
           headers={[
-            "ID",
-            "Supplier",
             "PO ref",
-            "Date",
-            "Target arrival",
             "Type",
-            "Items",
             "Delivery",
             "Inspection",
+            "Target arrival",
+            "Logged by",
             "Action",
           ]}
-          cols={10}
+          cols={7}
           rows={10}
           label="Loading deliveries"
         />
@@ -173,28 +243,8 @@ export function DeliveryTable({
   }
 
   return (
-    <div>
-      <div className={styles.filterRow}>
-        <div
-          className={styles.filterBtns}
-          role="group"
-          aria-label="Filter by delivery status"
-        >
-          {statusFilters.map((f) => (
-            <button
-              key={f}
-              type="button"
-              className={styles.filterBtn}
-              data-active={statusFilter === f}
-              onClick={() => {
-                setStatusFilter(f);
-                setPage(1);
-              }}
-            >
-              {f}
-            </button>
-          ))}
-        </div>
+    <div className="flex min-h-[260px] flex-col">
+      <div className="mb-3 flex justify-end">
         <input
           type="search"
           value={query}
@@ -204,20 +254,22 @@ export function DeliveryTable({
           }}
           placeholder="Search supplier, PO, or ID…"
           aria-label="Search deliveries"
-          className={styles.addInput}
+          className="h-8 w-80 max-w-full rounded-md border border-navy-300 bg-white px-3 text-sm text-navy-900 placeholder:text-navy-400 focus-visible:outline-2 focus-visible:outline-offset-2"
         />
       </div>
-      {(isValidating || searching) ? (
-        <p className={styles.panelSub} role="status">Updating…</p>
-      ) : null}
 
-      {rows.length === 0 ? (
-        <div className={styles.emptyState}>
-          <p className={styles.panelSub}>
-            {total === 0
-              ? "No transactions yet — log the first delivery above."
-              : "No deliveries match your search."}
-          </p>
+      {visibleRows.length === 0 ? (
+        <div className={cn(styles.emptyState, "flex-1")}>
+          <div className={styles.emptyCard}>
+            <p className={styles.emptyCardText}>
+              {rows.length === 0 && pendingRows.length === 0
+                ? "No deliveries logged yet."
+                : "No deliveries match your search."}
+            </p>
+            {!readOnly && rows.length === 0 && pendingRows.length === 0 ? (
+              <LogDeliveryModal />
+            ) : null}
+          </div>
         </div>
       ) : (
         <>
@@ -225,41 +277,35 @@ export function DeliveryTable({
             <table className={styles.table}>
               <thead>
                 <tr>
-                  <th>ID</th>
-                  <th>Supplier</th>
-                  <th>PO ref</th>
-                  <th>Date</th>
-                  <th>Target arrival</th>
+                  <th>PO Ref</th>
                   <th>Type</th>
-                  <th>Items</th>
                   <th>Delivery</th>
                   <th>Inspection</th>
-                  <th>Action</th>
+                  <th>Target Arrival</th>
+                  <th>Logged By</th>
+                  <th style={{ textAlign: "right" }}>Action</th>
                 </tr>
               </thead>
               <tbody>
-                {rows.map((d) => (
-                  <tr key={d.id}>
-                    <td>{d.id}</td>
-                    <td>{d.supplier}</td>
+                {visibleRows.map((d) => (
+                  <tr
+                    key={d.pendingToken ?? d.id}
+                    className={d.pending ? "opacity-60" : undefined}
+                    aria-busy={d.pending || undefined}
+                  >
                     <td>{d.po}</td>
-                    <td>{d.date}</td>
-                    <td>{d.arrival}</td>
                     <td>
                       <span
                         className={styles.status}
-                        data-tone={d.kind === "Assets" ? "warn" : d.kind === "Stocks" ? "info" : "info"}
+                        data-tone={d.kind === "Assets" ? "warn" : "info"}
                       >
                         {d.kind}
                       </span>
                     </td>
-                    <td>{d.itemCount}</td>
                     <td>
                       <span
                         className={styles.status}
-                        data-tone={
-                          d.status === "Complete" ? "ok" : d.status === "Awaiting arrival" ? "info" : "warn"
-                        }
+                        data-tone={d.status === "Delivered" ? "ok" : "info"}
                       >
                         {d.status}
                       </span>
@@ -273,35 +319,57 @@ export function DeliveryTable({
                       </span>
                     </td>
                     <td>
-                      <div className="flex items-center gap-1.5">
-                        <Link
-                          href={`/personnel/deliveries/${d.deliveryId}`}
-                          className={styles.inspectLinkSecondary}
-                          aria-label={`View details for delivery ${d.id}`}
+                      {d.arrival && d.arrival !== "—" ? (
+                        <span
+                          className={styles.status}
+                          data-tone={
+                            d.arrivalKey && d.arrivalKey > todayKey ? "warn" : "ok"
+                          }
                         >
-                          View Details
-                        </Link>
-                        {d.inspectionStatus === "pending" ? (
-                          <InspectConfirmButton
-                            deliveryId={d.deliveryId}
-                            deliveryRef={d.id}
-                            supplier={d.supplier}
-                            poReference={d.po}
-                            triggerClassName={styles.inspectLink}
-                          />
-                        ) : (
+                          {d.arrival}
+                        </span>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                    <td>{d.date}</td>
+                    <td>
+                      {d.pending ? (
+                        <div className="flex items-center justify-end">
                           <span
                             className={cn(
-                              "inline-flex items-center justify-center rounded-full font-medium",
-                              "h-8 px-3 text-xs",
-                              "border border-navy-200 bg-transparent text-navy-400 cursor-default"
+                              "inline-flex h-6 items-center justify-center rounded-[4px]",
+                              "border border-navy-200 bg-navy-50 px-3 text-xs font-medium text-navy-500",
+                              "cursor-default"
                             )}
-                            aria-label={`Delivery ${d.id} already inspected`}
                           >
-                            Inspected
+                            Saving…
                           </span>
-                        )}
-                      </div>
+                        </div>
+                      ) : (
+                        <div className="flex items-center justify-end gap-1.5">
+                          <ViewDeliveryDialog
+                            deliveryId={d.deliveryId}
+                            deliveryRef={d.id}
+                            triggerClassName={cn(
+                              "inline-flex h-6 items-center justify-center rounded-[4px] px-3",
+                              "border border-yellow-500/40 bg-yellow-500/20 text-xs font-semibold",
+                              "text-navy-900 transition-colors hover:bg-yellow-500/30"
+                            )}
+                          />
+                          {!readOnly && d.inspectionStatus === "pending" ? (
+                            <EditDeliveryModal
+                              deliveryId={d.deliveryId}
+                              deliveryRef={d.id}
+                              triggerClassName={cn(
+                                "inline-flex h-6 items-center justify-center rounded-[4px] px-3",
+                                "border border-yellow-500/40 bg-yellow-500/20 text-xs font-semibold",
+                                "text-navy-900 transition-colors hover:bg-yellow-500/30"
+                              )}
+                            />
+                          ) : null}
+                        </div>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -309,9 +377,9 @@ export function DeliveryTable({
             </table>
           </div>
 
-          <div className={styles.pager}>
+          <div className={cn(styles.pager, "pt-3")} style={{ marginTop: "auto" }}>
             <span className={styles.pagerInfo}>
-              Showing {total === 0 ? 0 : start + 1}–{Math.min(start + pageSize, total)} of{" "}
+              Showing {total === 0 ? 0 : start + 1}–{Math.min(start + TABLE_PAGE_SIZE, total)} of{" "}
               {total}
             </span>
             <div className={styles.pagerControls}>

@@ -2,9 +2,8 @@
 @import "tw-animate-css";
 
 @theme inline {
-  --font-sans: var(--font-geist-sans);
+  --font-sans: var(--font-inter);
   --font-mono: var(--font-geist-mono);
-  --font-inter: "Inter", sans-serif;
   --color-navy-900: #1b2a4a;
   --color-navy-800: #243b66;
   --color-navy-700: #2d4a7a;
