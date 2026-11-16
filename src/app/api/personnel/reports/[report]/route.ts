@@ -8,7 +8,7 @@ export const runtime = 'nodejs'
  * GET /api/personnel/reports/:report
  *
  * Official XLSX reports for personnel (and super admins reusing the portal).
- * Supported ids: `aging`, `quarterly-issuance`, `asset-conditions`.
+ * Supported ids: `aging`, `quarterly-issuance`, `asset-availability`.
  */
 export async function GET(
   req: Request,

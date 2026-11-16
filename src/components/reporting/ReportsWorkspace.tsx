@@ -6,89 +6,196 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
+  Cell,
+  Line,
+  LineChart,
+  Pie,
+  PieChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from 'recharts'
+import {
+  ArrowUpRight,
+  CalendarDays,
+  ChartColumn,
+  CircleCheck,
+  ClipboardList,
+  Clock3,
+  FileSpreadsheet,
+  Hourglass,
+  PackageSearch,
+  ShieldCheck,
+  TriangleAlert,
+  Wallet,
+  X,
+} from 'lucide-react'
 
 import { useCachedAction } from '@/hooks/use-cached-action'
+import { TablePager } from '@/components/personnel/TablePager'
+import {
+  ChartContainer,
+  ChartTooltip,
+  ChartTooltipContent,
+  type ChartConfig,
+} from '@/components/ui/chart'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { buildQueryKey } from '@/lib/query-keys'
+import { PAGE_SIZE } from '@/lib/constants'
 import { formatPeso } from '@/lib/issuance-rules'
 import {
   AGING_BUCKETS,
   REPORT_MODULES,
   agingBucketLabel,
-  conditionLabel,
-  type ConditionClass,
+  availabilityLabel,
+  type AvailabilityClass,
 } from '@/lib/reporting'
 import {
   fetchAgingReport,
-  fetchAssetConditionReport,
+  fetchAssetAvailabilityReport,
   fetchQuarterlyIssuanceReport,
 } from '@/lib/reporting-actions'
 
+import { ReportsContentSkeleton } from './ReportsSkeleton'
 import styles from './reports.module.css'
 
 type Portal = 'personnel' | 'super-admin'
-type ReportTab = 'aging' | 'quarterly' | 'conditions'
+type ReportTab = 'aging' | 'quarterly' | 'availability'
 type AgingModuleFilter = 'all' | 'inspections' | 'requests' | 'repairs'
 type AgingBucketFilter = 'all' | '0-3' | '4-7' | '8-14' | '15+'
-
-const PAGE_SIZE = 15
 
 function roleFor(portal: Portal): 'pgso_personnel' | 'super_admin' {
   return portal === 'super-admin' ? 'super_admin' : 'pgso_personnel'
 }
 
-function apiBase(portal: Portal): string {
-  return portal === 'super-admin' ? '/api/super-admin' : '/api/personnel'
-}
-
 function statusTone(value: string | null): string {
   if (!value) return 'warn'
-  if (['completed', 'passed', 'approved', 'done'].includes(value)) return 'ok'
-  if (['failed', 'rejected', 'cancelled'].includes(value)) return 'bad'
+  const v = value.toLowerCase()
+  if (v === 'in_progress' || v === 'in progress') return 'info'
+  if (['completed', 'passed', 'approved', 'done', 'resolved'].includes(v))
+    return 'ok'
+  if (
+    ['failed', 'rejected', 'cancelled', 'returned', 'return_to_supplier'].includes(
+      v
+    )
+  )
+    return 'bad'
+  // Pending / awaiting action.
   return 'warn'
 }
 
-function Loading({ label }: { label: string }) {
-  return (
-    <p className={styles.loading}>
-      <span aria-hidden="true" className={styles.spinner} />
-      Loading {label}…
-    </p>
-  )
+/** `in_progress` → `In progress`. */
+function humanize(value: string | null): string {
+  if (!value) return '—'
+  const text = value.replace(/_/g, ' ')
+  return text.charAt(0).toUpperCase() + text.slice(1)
+}
+
+function bucketTone(bucket: string): string {
+  if (bucket === '15+') return 'bad'
+  if (bucket === '8-14' || bucket === '4-7') return 'warn'
+  return 'ok'
+}
+
+function shortBucketLabel(label: string): string {
+  return label.replace(' days', 'd')
+}
+
+function fmtDate(value: string | null): string {
+  if (!value) return '—'
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return '—'
+  return d.toLocaleDateString('en-PH', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    timeZone: 'Asia/Manila',
+  })
+}
+
+function availabilityTone(cls: AvailabilityClass): 'ok' | 'info' | 'bad' | 'warn' {
+  if (cls === 'available') return 'ok'
+  if (cls === 'in-use') return 'info'
+  if (cls === 'unavailable') return 'bad'
+  return 'warn'
+}
+
+function AvailabilityIcon({ cls }: { cls: AvailabilityClass }) {
+  if (cls === 'available') return <CircleCheck size={16} aria-hidden="true" />
+  if (cls === 'in-use') return <ClipboardList size={16} aria-hidden="true" />
+  if (cls === 'unavailable') return <TriangleAlert size={16} aria-hidden="true" />
+  return <Hourglass size={16} aria-hidden="true" />
 }
 
 function ErrorNote({ message }: { message: string }) {
-  return <p className={styles.empty}>{message}</p>
+  return (
+    <div className={styles.errorBox} role="alert">
+      <TriangleAlert size={16} aria-hidden="true" />
+      <span>{message}</span>
+    </div>
+  )
 }
 
-const DONUT_COLORS: Record<ConditionClass, string[]> = {
-  serviceable: ['#1b2a4a', '#395581', '#5b7aab', '#8aa2c8'],
-  unserviceable: ['#c0392b', '#d9665b', '#e59a91'],
+/** Shared KPI tile used by all three report tabs. */
+function StatCard({
+  icon,
+  label,
+  value,
+  sub,
+  tone,
+}: {
+  icon: React.ReactNode
+  label: string
+  value: React.ReactNode
+  sub: string
+  tone?: 'ok' | 'warn' | 'bad'
+}) {
+  return (
+    <div className={styles.kpi} data-tone={tone}>
+      <span className={styles.kpiIcon} data-tone={tone} aria-hidden="true">
+        {icon}
+      </span>
+      <div className={styles.kpiBody}>
+        <span className={styles.kpiLabel}>{label}</span>
+        <span className={styles.kpiValue}>{value}</span>
+        <span className={styles.kpiSub}>{sub}</span>
+      </div>
+    </div>
+  )
+}
+
+const DONUT_COLORS: Record<AvailabilityClass, string[]> = {
+  available: ['#1b2a4a', '#395581', '#5b7aab', '#8aa2c8'],
+  'in-use': ['#1d4ed8', '#3b82f6', '#93c5fd'],
+  unavailable: ['#c0392b', '#d9665b', '#e59a91'],
   unspecified: ['#d4a017', '#e3bd56', '#eddaa0'],
 }
 
-interface ConditionSlice {
-  condition: string
+interface StatusSlice {
+  status: string
   label: string
-  count: number
+  items: number
   pct: number
-  cls: ConditionClass
+  cls: AvailabilityClass
 }
 
-function ConditionDonut({
+function AvailabilityDonut({
   rows,
   total,
 }: {
-  rows: ConditionSlice[]
+  rows: StatusSlice[]
   total: number
 }) {
   const [active, setActive] = useState<number | null>(null)
 
-  const seen: Partial<Record<ConditionClass, number>> = {}
+  const seen: Partial<Record<AvailabilityClass, number>> = {}
   const slices = rows.map((row) => {
     const index = seen[row.cls] ?? 0
     seen[row.cls] = index + 1
@@ -100,7 +207,7 @@ function ConditionDonut({
   const stroke = 26
   const radius = (size - stroke) / 2
   const circumference = 2 * Math.PI * radius
-  const gap = slices.filter((s) => s.count > 0).length > 1 ? 3 : 0
+  const gap = slices.filter((s) => s.items > 0).length > 1 ? 3 : 0
   const activeSlice = active === null ? null : slices[active]
 
   const arcs = slices.map((slice, index) => {
@@ -108,10 +215,10 @@ function ConditionDonut({
       total > 0
         ? slices
             .slice(0, index)
-            .reduce((sum, prior) => sum + prior.count / total, 0)
+            .reduce((sum, prior) => sum + prior.items / total, 0)
         : 0
     const offset = startFraction * circumference
-    const length = total > 0 ? (slice.count / total) * circumference : 0
+    const length = total > 0 ? (slice.items / total) * circumference : 0
     return {
       ...slice,
       visible: length > 0,
@@ -127,8 +234,8 @@ function ConditionDonut({
           className={styles.donutSvg}
           viewBox={`0 0 ${size} ${size}`}
           role="img"
-          aria-label={`Condition distribution: ${slices
-            .map((s) => `${s.label} ${s.count} (${s.pct}%)`)
+          aria-label={`Status distribution: ${slices
+            .map((s) => `${s.label} ${s.items} (${s.pct}%)`)
             .join(', ')}`}
         >
           <g transform={`rotate(-90 ${size / 2} ${size / 2})`}>
@@ -143,7 +250,7 @@ function ConditionDonut({
             {arcs.map((arc, index) =>
               arc.visible ? (
                 <circle
-                  key={arc.condition}
+                  key={arc.status}
                   className={styles.donutSegment}
                   cx={size / 2}
                   cy={size / 2}
@@ -161,28 +268,38 @@ function ConditionDonut({
             )}
           </g>
         </svg>
-        <div className={styles.donutCenter} aria-hidden="true">
-          <span className={styles.donutTotal}>{total.toLocaleString('en-PH')}</span>
-          <span className={styles.donutTotalLabel}>assets</span>
+        {/* Hovering a slice swaps the centre readout instead of stacking a
+            tooltip on top of it (the overlay used to cover the total). */}
+        <div className={styles.donutCenter}>
+          {activeSlice ? (
+            <>
+              <span
+                className={styles.donutCenterDot}
+                style={{ background: activeSlice.color }}
+                aria-hidden="true"
+              />
+              <span className={styles.donutActiveLabel}>
+                {activeSlice.label}
+              </span>
+              <span className={styles.donutTotal}>
+                {activeSlice.items.toLocaleString('en-PH')}
+              </span>
+            </>
+          ) : (
+            <>
+              <span className={styles.donutTotal}>
+                {total.toLocaleString('en-PH')}
+              </span>
+              <span className={styles.donutTotalLabel}>assets</span>
+            </>
+          )}
         </div>
-        {activeSlice && (
-          <div className={styles.donutTip} role="status">
-            <span
-              className={styles.donutDot}
-              style={{ background: activeSlice.color }}
-            />
-            <span className={styles.donutTipLabel}>{activeSlice.label}</span>
-            <span className={styles.donutTipValue}>
-              {activeSlice.count} · {activeSlice.pct}%
-            </span>
-          </div>
-        )}
       </div>
 
       <ul className={styles.donutLegend}>
         {slices.map((slice, index) => (
           <li
-            key={slice.condition}
+            key={slice.status}
             className={styles.donutLegendRow}
             data-active={active === index}
             tabIndex={0}
@@ -192,12 +309,24 @@ function ConditionDonut({
             onBlur={() => setActive(null)}
           >
             <span
-              className={styles.donutDot}
-              style={{ background: slice.color }}
-            />
-            <span className={styles.donutLegendLabel}>{slice.label}</span>
-            <span className={styles.donutLegendValue}>
-              {slice.count} · {slice.pct}%
+              className={styles.donutLegendIcon}
+              data-tone={availabilityTone(slice.cls)}
+              aria-hidden="true"
+            >
+              <AvailabilityIcon cls={slice.cls} />
+            </span>
+            <span className={styles.donutLegendMain}>
+              <span className={styles.donutLegendLabel}>{slice.label}</span>
+              <span
+                className={styles.shareBar}
+                role="img"
+                aria-label={`${slice.label}: ${slice.pct}% of assets`}
+              >
+                <span
+                  className={styles.shareFill}
+                  style={{ width: `${slice.pct}%`, background: slice.color }}
+                />
+              </span>
             </span>
           </li>
         ))}
@@ -205,7 +334,6 @@ function ConditionDonut({
     </div>
   )
 }
-
 
 const AGING_COLORS = ['#8aa2c8', '#5b7aab', '#e6a800', '#c0392b']
 const PAR_COLOR = '#1b2a4a'
@@ -299,13 +427,181 @@ function QuarterChart({ quarters }: { quarters: QuarterDatum[] }) {
       </div>
       <ul className={styles.chartLegend}>
         <li className={styles.chartLegendItem}>
-          <span className={styles.chartLegendDot} style={{ background: PAR_COLOR }} />
+          <span
+            className={styles.chartLegendDot}
+            style={{ background: PAR_COLOR }}
+          />
           PAR
         </li>
         <li className={styles.chartLegendItem}>
-          <span className={styles.chartLegendDot} style={{ background: ICS_COLOR }} />
+          <span
+            className={styles.chartLegendDot}
+            style={{ background: ICS_COLOR }}
+          />
           ICS
         </li>
+      </ul>
+    </div>
+  )
+}
+
+const TREND_COLOR = '#1b2a4a'
+const TREND_CONFIG: ChartConfig = {
+  documents: { label: 'Documents', color: TREND_COLOR },
+}
+
+function QuarterTrendChart({ trend }: { trend: QuarterDatum[] }) {
+  const data = trend.map((q) => ({
+    ...q,
+    short: q.label.replace(/\s*\d{4}$/, ''),
+  }))
+
+  return (
+    <ChartContainer
+      config={TREND_CONFIG}
+      className="aspect-auto h-[280px] w-full"
+    >
+      <LineChart
+        accessibilityLayer
+        data={data}
+        margin={{ top: 8, right: 12, bottom: 0, left: -16 }}
+      >
+        <CartesianGrid vertical={false} stroke="#e8edf5" />
+        <XAxis
+          dataKey="short"
+          tickLine={false}
+          axisLine={{ stroke: '#d1d9e6' }}
+          tick={{ fontSize: 12, fill: '#6b7a95' }}
+        />
+        <YAxis
+          allowDecimals={false}
+          tickLine={false}
+          axisLine={false}
+          width={36}
+          tick={{ fontSize: 12, fill: '#6b7a95' }}
+        />
+        <ChartTooltip
+          cursor={{ stroke: '#cbd5e1', strokeWidth: 1 }}
+          content={<ChartTooltipContent indicator="line" />}
+        />
+        <Line
+          type="monotone"
+          dataKey="documents"
+          name="Documents"
+          stroke={TREND_COLOR}
+          strokeWidth={2}
+          dot={{ r: 3, fill: TREND_COLOR, strokeWidth: 0 }}
+          activeDot={{ r: 5 }}
+        />
+      </LineChart>
+    </ChartContainer>
+  )
+}
+
+const BREAKDOWN_COLORS = [
+  '#1b2a4a',
+  '#f5c518',
+  '#5b7aab',
+  '#8aa2c8',
+  '#d4a017',
+  '#9b2c20',
+  '#6b8f71',
+]
+
+interface DonutDatum {
+  name: string
+  value: number
+}
+
+/** Keep the donut readable: top 6 slices plus a grouped "Other". */
+function collapseSlices(rows: DonutDatum[], top = 6): DonutDatum[] {
+  const sorted = rows
+    .filter((row) => row.value > 0)
+    .sort((a, b) => b.value - a.value)
+  if (sorted.length <= top) return sorted
+  const rest = sorted.slice(top).reduce((sum, row) => sum + row.value, 0)
+  return rest > 0
+    ? [...sorted.slice(0, top), { name: 'Other', value: rest }]
+    : sorted.slice(0, top)
+}
+
+/**
+ * Donut breakdown shown beside the quarterly tables. Uses the same
+ * ChartContainer / ChartTooltip primitives as the dashboards so the
+ * tooltip matches the rest of the app.
+ */
+function BreakdownDonut({
+  rows,
+  unit,
+}: {
+  rows: DonutDatum[]
+  unit: string
+}) {
+  const data = collapseSlices(rows)
+  const total = data.reduce((sum, row) => sum + row.value, 0)
+  if (total === 0) return null
+
+  const config: ChartConfig = Object.fromEntries(
+    data.map((row, index) => [
+      row.name,
+      {
+        label: row.name,
+        color: BREAKDOWN_COLORS[index % BREAKDOWN_COLORS.length],
+      },
+    ])
+  )
+
+  return (
+    <div className={styles.breakdown}>
+      <div className={styles.breakdownChart}>
+        <ChartContainer
+          config={config}
+          className="aspect-square max-h-[210px] w-full"
+        >
+          <PieChart>
+            <ChartTooltip content={<ChartTooltipContent hideLabel />} />
+            <Pie
+              data={data}
+              dataKey="value"
+              nameKey="name"
+              innerRadius="58%"
+              outerRadius="88%"
+              paddingAngle={2}
+              strokeWidth={0}
+            >
+              {data.map((row, index) => (
+                <Cell
+                  key={row.name}
+                  fill={BREAKDOWN_COLORS[index % BREAKDOWN_COLORS.length]}
+                />
+              ))}
+            </Pie>
+          </PieChart>
+        </ChartContainer>
+        <div className={styles.breakdownCenter} aria-hidden="true">
+          <span className={styles.breakdownTotal}>
+            {total.toLocaleString('en-PH')}
+          </span>
+          <span className={styles.breakdownTotalLabel}>{unit}</span>
+        </div>
+      </div>
+      <ul className={styles.breakdownLegend}>
+        {data.map((row, index) => (
+          <li key={row.name} className={styles.breakdownLegendRow}>
+            <span
+              className={styles.breakdownDot}
+              style={{
+                background: BREAKDOWN_COLORS[index % BREAKDOWN_COLORS.length],
+              }}
+            />
+            <span className={styles.breakdownLegendLabel} title={row.name}>
+              {row.name}
+            </span>
+            <span className={styles.breakdownLegendValue}>
+              {row.value.toLocaleString('en-PH')}
+            </span>
+          </li>
+        ))}
       </ul>
     </div>
   )
@@ -318,6 +614,7 @@ interface AgingSummaryDatum {
   delayed: number
   oldestDays: number
   buckets: Array<{ bucket: string; label: string; count: number }>
+  href: string
 }
 
 function AgingChartTooltip({
@@ -473,22 +770,24 @@ export function ReportsWorkspace({ portal }: { portal: Portal }) {
     { staleTime: 60_000, enabled: tab === 'quarterly' }
   )
 
-  const conditions = useCachedAction(
+  const availability = useCachedAction(
     buildQueryKey({
       module: portal,
-      resource: 'reports-conditions',
+      resource: 'reports-availability',
       page: 1,
       pageSize: PAGE_SIZE,
       filters: {},
       role,
     }),
-    () => fetchAssetConditionReport(),
-    { staleTime: 60_000, enabled: tab === 'conditions' }
+    () => fetchAssetAvailabilityReport(),
+    // Registry counts change as soon as an asset is assigned or stocked, so
+    // never serve a client-cached snapshot as fresh — paint it, then revalidate.
+    { staleTime: 0, refetchOnFocus: true, enabled: tab === 'availability' }
   )
 
   const age = aging.data
   const quarter = quarterly.data
-  const condition = conditions.data
+  const status = availability.data
 
   const agingTotals = age?.summaries.reduce(
     (acc, s) => ({
@@ -503,19 +802,26 @@ export function ReportsWorkspace({ portal }: { portal: Portal }) {
     new Set([year, ...(quarter?.availableYears ?? [])])
   ).sort((a, b) => b - a)
 
-  const quarterMax = Math.max(
-    1,
-    ...(quarter?.trend.map((q) => q.documents) ?? [0])
-  )
+  const hasAgingFilters = agingModule !== 'all' || agingBucket !== 'all'
 
-  const agingExport = `${apiBase(portal)}/reports/aging?module=${agingModule}&bucket=${agingBucket}`
-  const quarterlyExport = `${apiBase(portal)}/reports/quarterly-issuance?year=${year}`
-  const conditionExport = `${apiBase(portal)}/reports/asset-conditions`
+  const tabs = [
+    { key: 'aging' as const, label: 'Aging & delays', icon: <Clock3 size={13} /> },
+    {
+      key: 'quarterly' as const,
+      label: 'Quarterly issuance',
+      icon: <ChartColumn size={13} />,
+    },
+    {
+      key: 'availability' as const,
+      label: 'Asset availability',
+      icon: <ShieldCheck size={13} />,
+    },
+  ]
 
   return (
     <section className={styles.page}>
       <header className={styles.header}>
-        <div>
+        <div className={styles.headerText}>
           {portal !== 'personnel' && (
             <p className={styles.crumb}>
               {portal === 'super-admin' ? 'Super Admin' : 'Personnel'} / Reports
@@ -524,93 +830,106 @@ export function ReportsWorkspace({ portal }: { portal: Portal }) {
           <h1 className={styles.title}>Reports</h1>
           <p className={styles.subtitle}>
             Delayed and aging transactions, quarterly supply issuance, and
-            asset-condition analytics. Every report is scoped to what you are
-            allowed to see and can be downloaded as an official XLSX workbook.
+            asset availability &amp; status analytics — scoped to what you are
+            allowed to see.
           </p>
-        </div>
-        <div className={styles.headerActions}>
-          <button
-            type="button"
-            className={`${styles.button} ${styles.buttonSecondary}`}
-            onClick={() => window.print()}
-          >
-            Print
-          </button>
-          <Link
-            href={
-              tab === 'aging'
-                ? agingExport
-                : tab === 'quarterly'
-                  ? quarterlyExport
-                  : conditionExport
-            }
-            className={styles.button}
-            prefetch={false}
-          >
-            Download XLSX
-          </Link>
         </div>
       </header>
 
-      <div className={styles.tabs} role="tablist" aria-label="Report sections">
-        {(
-          [
-            ['aging', 'Aging & delays'],
-            ['quarterly', 'Quarterly issuance'],
-            ['conditions', 'Asset conditions'],
-          ] as const
-        ).map(([key, label]) => (
-          <button
-            key={key}
-            type="button"
-            role="tab"
-            aria-selected={tab === key}
-            data-active={tab === key}
-            className={styles.tab}
-            onClick={() => setTab(key)}
-          >
-            {label}
-          </button>
-        ))}
+      <div className={styles.tabBar}>
+        <div className={styles.tabs} role="tablist" aria-label="Report sections">
+          {tabs.map((item) => (
+            <button
+              key={item.key}
+              type="button"
+              role="tab"
+              aria-selected={tab === item.key}
+              data-active={tab === item.key}
+              className={styles.tab}
+              onClick={() => setTab(item.key)}
+            >
+              <span className={styles.tabIcon} aria-hidden="true">
+                {item.icon}
+              </span>
+              {item.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {tab === 'aging' && (
         <>
-          <div className={styles.filters}>
-            <label className={styles.field}>
-              Workflow
-              <select
-                value={agingModule}
-                onChange={(event) => {
-                  setAgingModule(event.target.value as AgingModuleFilter)
-                  setAgingPage(1)
-                }}
-              >
-                <option value="all">All workflows</option>
-                {REPORT_MODULES.map((m) => (
-                  <option key={m.key} value={m.key}>
-                    {m.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className={styles.field}>
-              Age bucket
-              <select
-                value={agingBucket}
-                onChange={(event) => {
-                  setAgingBucket(event.target.value as AgingBucketFilter)
-                  setAgingPage(1)
-                }}
-              >
-                <option value="all">All buckets</option>
-                {AGING_BUCKETS.map((b) => (
-                  <option key={b.key} value={b.key}>
-                    {b.label}
-                  </option>
-                ))}
-              </select>
-            </label>
+          <div className={styles.toolbar}>
+            <div className={styles.toolbarFields}>
+              <div className={styles.field}>
+                <span className={styles.fieldLabel}>Workflow</span>
+                <Select
+                  value={agingModule}
+                  onValueChange={(value) => {
+                    setAgingModule(value as AgingModuleFilter)
+                    setAgingPage(1)
+                  }}
+                >
+                  <SelectTrigger
+                    size="sm"
+                    className={styles.selectTrigger}
+                    aria-label="Filter by workflow"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All workflows</SelectItem>
+                    {REPORT_MODULES.map((m) => (
+                      <SelectItem key={m.key} value={m.key}>
+                        {m.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className={styles.field}>
+                <span className={styles.fieldLabel}>Age bucket</span>
+                <Select
+                  value={agingBucket}
+                  onValueChange={(value) => {
+                    setAgingBucket(value as AgingBucketFilter)
+                    setAgingPage(1)
+                  }}
+                >
+                  <SelectTrigger
+                    size="sm"
+                    className={styles.selectTrigger}
+                    aria-label="Filter by age bucket"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All buckets</SelectItem>
+                    {AGING_BUCKETS.map((b) => (
+                      <SelectItem key={b.key} value={b.key}>
+                        {b.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {hasAgingFilters ? (
+                <button
+                  type="button"
+                  className={styles.resetButton}
+                  onClick={() => {
+                    setAgingModule('all')
+                    setAgingBucket('all')
+                    setAgingPage(1)
+                  }}
+                >
+                  <X size={12} aria-hidden="true" />
+                  Reset filters
+                </button>
+              ) : null}
+            </div>
             <p className={styles.hint}>
               A record is <strong>delayed</strong> once it is older than{' '}
               {age?.thresholdDays ?? 7} days — the same threshold applies to
@@ -622,62 +941,71 @@ export function ReportsWorkspace({ portal }: { portal: Portal }) {
             aging.error ? (
               <ErrorNote message={aging.error} />
             ) : (
-              <Loading label="aging report" />
+              <ReportsContentSkeleton tab="aging" />
             )
           ) : (
             <>
               <div className={styles.kpis}>
-                <div className={styles.kpi}>
-                  <span className={styles.kpiLabel}>Open records</span>
-                  <span className={styles.kpiValue}>{agingTotals.open}</span>
-                  <span className={styles.kpiSub}>
-                    Pending inspections, requests and repairs
-                  </span>
-                </div>
-                <div
-                  className={styles.kpi}
-                  data-tone={agingTotals.delayed > 0 ? 'bad' : 'ok'}
-                >
-                  <span className={styles.kpiLabel}>Delayed</span>
-                  <span className={styles.kpiValue}>{agingTotals.delayed}</span>
-                  <span className={styles.kpiSub}>
-                    Older than {age.thresholdDays} days
-                  </span>
-                </div>
-                <div className={styles.kpi}>
-                  <span className={styles.kpiLabel}>Oldest record</span>
-                  <span className={styles.kpiValue}>
-                    {agingTotals.oldest}
-                    <small> d</small>
-                  </span>
-                  <span className={styles.kpiSub}>Days since opened</span>
-                </div>
-                <div className={styles.kpi}>
-                  <span className={styles.kpiLabel}>Generated</span>
-                  <span className={styles.kpiValue} style={{ fontSize: '1rem' }}>
-                    {new Date(age.generatedAt).toLocaleString('en-PH', {
-                      month: 'short',
-                      day: 'numeric',
-                      hour: 'numeric',
-                      minute: '2-digit',
-                      timeZone: 'Asia/Manila',
-                    })}
-                  </span>
-                  <span className={styles.kpiSub}>Asia/Manila</span>
-                </div>
+                <StatCard
+                  icon={<Clock3 size={16} />}
+                  label="Open records"
+                  value={agingTotals.open}
+                  sub="Pending inspections, requests and repairs"
+                />
+                <StatCard
+                  icon={<TriangleAlert size={16} />}
+                  label="Delayed"
+                  value={agingTotals.delayed}
+                  sub={`Older than ${age.thresholdDays} days`}
+                  tone={agingTotals.delayed > 0 ? 'bad' : 'ok'}
+                />
+                <StatCard
+                  icon={<Hourglass size={16} />}
+                  label="Oldest record"
+                  value={
+                    <>
+                      {agingTotals.oldest}
+                      <small className={styles.kpiUnit}> d</small>
+                    </>
+                  }
+                  sub="Days since opened"
+                />
+                <StatCard
+                  icon={<CalendarDays size={16} />}
+                  label="Generated"
+                  value={
+                    <span className={styles.kpiDate}>
+                      {new Date(age.generatedAt).toLocaleString('en-PH', {
+                        month: 'short',
+                        day: 'numeric',
+                        hour: 'numeric',
+                        minute: '2-digit',
+                        timeZone: 'Asia/Manila',
+                      })}
+                    </span>
+                  }
+                  sub="Asia/Manila"
+                />
               </div>
 
               <div className={styles.panel}>
-                <div>
-                  <h2 className={styles.panelTitle}>Aging summary by workflow</h2>
-                  <p className={styles.panelSub}>
-                    Open queues split into the assessment&apos;s age buckets.
-                  </p>
+                <div className={styles.panelHead}>
+                  <div>
+                    <h2 className={styles.panelTitle}>
+                      Aging summary by workflow
+                    </h2>
+                    <p className={styles.panelSub}>
+                      Open queues split into the assessment&apos;s age buckets.
+                    </p>
+                  </div>
+                  <span className={styles.panelChip}>
+                    {agingTotals.open} open
+                  </span>
                 </div>
                 <div className={styles.chartSplit}>
                   <AgingChart summaries={age.summaries} />
                   <div className={styles.tableWrap}>
-                    <table className={styles.table}>
+                    <table className={`${styles.table} ${styles.agingTable}`}>
                       <thead>
                         <tr>
                           <th>Workflow</th>
@@ -688,16 +1016,23 @@ export function ReportsWorkspace({ portal }: { portal: Portal }) {
                           <th className={styles.num}>Oldest</th>
                           {AGING_BUCKETS.map((b) => (
                             <th key={b.key} className={styles.num}>
-                              {b.label}
+                              {shortBucketLabel(b.label)}
                             </th>
                           ))}
-                          <th>Queue</th>
                         </tr>
                       </thead>
                       <tbody>
                         {age.summaries.map((summary) => (
                           <tr key={summary.module}>
-                            <td>{summary.label}</td>
+                            <td>
+                              <Link
+                                className={styles.tableLink}
+                                href={summary.href}
+                              >
+                                {summary.label}
+                                <ArrowUpRight size={12} aria-hidden="true" />
+                              </Link>
+                            </td>
                             <td className={styles.num}>{summary.total}</td>
                             <td className={styles.num}>
                               <span
@@ -711,13 +1046,14 @@ export function ReportsWorkspace({ portal }: { portal: Portal }) {
                               {summary.oldestDays}d
                             </td>
                             {summary.buckets.map((bucket) => (
-                              <td key={bucket.bucket} className={styles.num}>
+                              <td
+                                key={bucket.bucket}
+                                className={styles.num}
+                                data-empty={bucket.count === 0 || undefined}
+                              >
                                 {bucket.count}
                               </td>
                             ))}
-                            <td>
-                              <Link href={summary.href}>Open</Link>
-                            </td>
                           </tr>
                         ))}
                       </tbody>
@@ -727,21 +1063,31 @@ export function ReportsWorkspace({ portal }: { portal: Portal }) {
               </div>
 
               <div className={styles.panel}>
-                <div>
-                  <h2 className={styles.panelTitle}>Delayed records</h2>
-                  <p className={styles.panelSub}>
-                    {age.rows.total} matching record
-                    {age.rows.total === 1 ? '' : 's'} · page {age.rows.page} of{' '}
-                    {age.rows.totalPages}
-                  </p>
+                <div className={styles.panelHead}>
+                  <div>
+                    <h2 className={styles.panelTitle}>Delayed records</h2>
+                    <p className={styles.panelSub}>
+                      {age.rows.total} matching record
+                      {age.rows.total === 1 ? '' : 's'} · page {age.rows.page} of{' '}
+                      {age.rows.totalPages}
+                    </p>
+                  </div>
+                  {age.rows.total > 0 ? (
+                    <span className={styles.panelChip}>
+                      {age.rows.total === 1
+                        ? '1 record'
+                        : `${age.rows.total} records`}
+                    </span>
+                  ) : null}
                 </div>
                 {age.rows.rows.length === 0 ? (
-                  <p className={styles.empty}>
-                    No records match the selected filters.
-                  </p>
+                  <div className={styles.emptyBox}>
+                    <PackageSearch size={20} aria-hidden="true" />
+                    <p>No records match the selected filters.</p>
+                  </div>
                 ) : (
                   <div className={styles.tableWrap}>
-                    <table className={styles.table}>
+                    <table className={`${styles.table} ${styles.recordsTable}`}>
                       <thead>
                         <tr>
                           <th>Workflow</th>
@@ -757,28 +1103,43 @@ export function ReportsWorkspace({ portal }: { portal: Portal }) {
                       <tbody>
                         {age.rows.rows.map((row) => (
                           <tr key={`${row.module}-${row.id}`}>
-                            <td>{row.moduleLabel}</td>
-                            <td>{row.reference || '—'}</td>
-                            <td>{row.subject || '—'}</td>
-                            <td>{row.owner}</td>
                             <td>
-                              {row.openedAt
-                                ? new Date(row.openedAt).toLocaleDateString(
-                                    'en-PH',
-                                    {
-                                      year: 'numeric',
-                                      month: 'short',
-                                      day: 'numeric',
-                                      timeZone: 'Asia/Manila',
-                                    }
-                                  )
-                                : '—'}
+                              <span className={styles.moduleTag}>
+                                {row.moduleLabel}
+                              </span>
+                            </td>
+                            <td>
+                              <span
+                                className={`${styles.cellText} ${styles.mono}`}
+                                title={row.reference || undefined}
+                              >
+                                {row.reference || '—'}
+                              </span>
+                            </td>
+                            <td>
+                              <span
+                                className={`${styles.cellText} ${styles.subject}`}
+                                title={row.subject || undefined}
+                              >
+                                {row.subject || '—'}
+                              </span>
+                            </td>
+                            <td>
+                              <span
+                                className={styles.cellText}
+                                title={row.owner || undefined}
+                              >
+                                {row.owner}
+                              </span>
+                            </td>
+                            <td className={styles.nowrap}>
+                              {fmtDate(row.openedAt)}
                             </td>
                             <td className={styles.num}>{row.ageDays}d</td>
                             <td>
                               <span
                                 className={styles.status}
-                                data-tone={row.delayed ? 'bad' : 'warn'}
+                                data-tone={bucketTone(row.bucket)}
                               >
                                 {agingBucketLabel(row.bucket)}
                               </span>
@@ -788,7 +1149,7 @@ export function ReportsWorkspace({ portal }: { portal: Portal }) {
                                 className={styles.status}
                                 data-tone={statusTone(row.status)}
                               >
-                                {row.status ?? 'pending'}
+                                {humanize(row.status)}
                               </span>
                             </td>
                           </tr>
@@ -797,28 +1158,21 @@ export function ReportsWorkspace({ portal }: { portal: Portal }) {
                     </table>
                   </div>
                 )}
-                <div className={styles.pagination}>
-                  <button
-                    type="button"
-                    disabled={age.rows.page <= 1}
-                    onClick={() => setAgingPage((p) => Math.max(1, p - 1))}
-                  >
-                    Previous
-                  </button>
-                  <span>
-                    Page {age.rows.page} / {age.rows.totalPages}
-                  </span>
-                  <button
-                    type="button"
-                    disabled={age.rows.page >= age.rows.totalPages}
-                    onClick={() =>
-                      setAgingPage((p) =>
-                        Math.min(age.rows.totalPages, p + 1)
-                      )
-                    }
-                  >
-                    Next
-                  </button>
+                <div className={styles.panelFooter}>
+                  {age.rows.total > PAGE_SIZE ? (
+                    <TablePager
+                      id="reports-aging"
+                      total={age.rows.total}
+                      page={age.rows.page}
+                      pageSize={PAGE_SIZE}
+                      onPageChange={setAgingPage}
+                    />
+                  ) : (
+                    <span className={styles.footerInfo}>
+                      Showing all {age.rows.total} record
+                      {age.rows.total === 1 ? '' : 's'}
+                    </span>
+                  )}
                 </div>
               </div>
             </>
@@ -828,20 +1182,31 @@ export function ReportsWorkspace({ portal }: { portal: Portal }) {
 
       {tab === 'quarterly' && (
         <>
-          <div className={styles.filters}>
-            <label className={styles.field}>
-              Year
-              <select
-                value={year}
-                onChange={(event) => setYear(Number(event.target.value))}
-              >
-                {yearOptions.map((option) => (
-                  <option key={option} value={option}>
-                    {option}
-                  </option>
-                ))}
-              </select>
-            </label>
+          <div className={styles.toolbar}>
+            <div className={styles.toolbarFields}>
+              <div className={styles.field}>
+                <span className={styles.fieldLabel}>Year</span>
+                <Select
+                  value={String(year)}
+                  onValueChange={(value) => setYear(Number(value))}
+                >
+                  <SelectTrigger
+                    size="sm"
+                    className={styles.selectTrigger}
+                    aria-label="Filter by year"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {yearOptions.map((option) => (
+                      <SelectItem key={option} value={String(option)}>
+                        {option}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
             <p className={styles.hint}>
               Calendar quarters (Q1 = Jan–Mar). Documents count once in the
               summary; consolidated multi-line documents count per line in the
@@ -853,175 +1218,214 @@ export function ReportsWorkspace({ portal }: { portal: Portal }) {
             quarterly.error ? (
               <ErrorNote message={quarterly.error} />
             ) : (
-              <Loading label="quarterly issuance report" />
+              <ReportsContentSkeleton tab="quarterly" />
             )
           ) : (
             <>
               <div className={styles.kpis}>
-                <div className={styles.kpi}>
-                  <span className={styles.kpiLabel}>Documents</span>
-                  <span className={styles.kpiValue}>
-                    {quarter.totals.documents}
-                  </span>
-                  <span className={styles.kpiSub}>{quarter.year} total</span>
-                </div>
-                <div className={styles.kpi}>
-                  <span className={styles.kpiLabel}>PAR</span>
-                  <span className={styles.kpiValue}>{quarter.totals.par}</span>
-                  <span className={styles.kpiSub}>&gt; ₱50,000</span>
-                </div>
-                <div className={styles.kpi}>
-                  <span className={styles.kpiLabel}>ICS</span>
-                  <span className={styles.kpiValue}>{quarter.totals.ics}</span>
-                  <span className={styles.kpiSub}>≤ ₱50,000</span>
-                </div>
-                <div className={styles.kpi}>
-                  <span className={styles.kpiLabel}>Quantity issued</span>
-                  <span className={styles.kpiValue}>
-                    {quarter.totals.quantity.toLocaleString('en-PH')}
-                  </span>
-                  <span className={styles.kpiSub}>Across all documents</span>
-                </div>
-                <div className={styles.kpi}>
-                  <span className={styles.kpiLabel}>Amount issued</span>
-                  <span className={styles.kpiValue} style={{ fontSize: '1.05rem' }}>
-                    {formatPeso(quarter.totals.amount)}
-                  </span>
-                  <span className={styles.kpiSub}>Snapshot totals</span>
-                </div>
+                <StatCard
+                  icon={<FileSpreadsheet size={16} />}
+                  label="Documents"
+                  value={quarter.totals.documents}
+                  sub={`${quarter.year} total`}
+                />
+                <StatCard
+                  icon={<ClipboardList size={16} />}
+                  label="PAR"
+                  value={quarter.totals.par}
+                  sub="> ₱50,000"
+                />
+                <StatCard
+                  icon={<ClipboardList size={16} />}
+                  label="ICS"
+                  value={quarter.totals.ics}
+                  sub="≤ ₱50,000"
+                />
+                <StatCard
+                  icon={<PackageSearch size={16} />}
+                  label="Quantity issued"
+                  value={quarter.totals.quantity.toLocaleString('en-PH')}
+                  sub="Across all documents"
+                />
+                <StatCard
+                  icon={<Wallet size={16} />}
+                  label="Amount issued"
+                  value={
+                    <span className={styles.kpiMoney}>
+                      {formatPeso(quarter.totals.amount)}
+                    </span>
+                  }
+                  sub="Snapshot totals"
+                />
               </div>
 
               <div className={styles.twoCol}>
                 <div className={styles.panel}>
-                  <div>
-                    <h2 className={styles.panelTitle}>
-                      Quarter summary — {quarter.year}
-                    </h2>
-                    <p className={styles.panelSub}>
-                      PAR / ICS split per quarter — hover a bar for quantity and
-                      amount.
-                    </p>
+                  <div className={styles.panelHead}>
+                    <div>
+                      <h2 className={styles.panelTitle}>
+                        Quarter summary — {quarter.year}
+                      </h2>
+                      <p className={styles.panelSub}>
+                        PAR / ICS split per quarter — hover a bar for quantity
+                        and amount.
+                      </p>
+                    </div>
                   </div>
                   <QuarterChart quarters={quarter.quarters} />
                 </div>
 
                 <div className={styles.panel}>
-                  <div>
-                    <h2 className={styles.panelTitle}>Last 8 quarters</h2>
-                    <p className={styles.panelSub}>
-                      Issuance documents per quarter — calendar basis.
-                    </p>
+                  <div className={styles.panelHead}>
+                    <div>
+                      <h2 className={styles.panelTitle}>Last 8 quarters</h2>
+                      <p className={styles.panelSub}>
+                        Issuance documents per quarter — calendar basis.
+                      </p>
+                    </div>
                   </div>
-                  <div className={styles.bars}>
-                    {quarter.trend.map((q) => (
-                      <div key={q.key} className={styles.barRow}>
-                        <span>{q.label}</span>
-                        <span className={styles.barTrack}>
-                          <span
-                            className={styles.barFill}
-                            style={{
-                              width: q.documents
-                                ? `${Math.max(2, Math.round((q.documents / quarterMax) * 100))}%`
-                                : '0%',
-                            }}
-                          />
-                        </span>
-                        <span className={styles.barValue}>
-                          {q.documents} docs
-                        </span>
-                      </div>
-                    ))}
-                  </div>
+                  <QuarterTrendChart trend={quarter.trend} />
                 </div>
               </div>
 
               <div className={styles.twoCol}>
                 <div className={styles.panel}>
-                  <div>
-                    <h2 className={styles.panelTitle}>Top items issued</h2>
-                    <p className={styles.panelSub}>
-                      Per line — consolidated documents appear once per line.
-                    </p>
+                  <div className={styles.panelHead}>
+                    <div>
+                      <h2 className={styles.panelTitle}>Top items issued</h2>
+                      <p className={styles.panelSub}>
+                        Per line — consolidated documents appear once per line.
+                      </p>
+                    </div>
                   </div>
                   {quarter.topItems.length === 0 ? (
-                    <p className={styles.empty}>No items issued in {quarter.year}.</p>
+                    <div className={styles.emptyBox}>
+                      <PackageSearch size={20} aria-hidden="true" />
+                      <p>No items issued in {quarter.year}.</p>
+                    </div>
                   ) : (
-                    <div className={styles.tableWrap}>
-                      <table className={styles.table}>
-                        <thead>
-                          <tr>
-                            <th>Item</th>
-                            <th className={styles.num}>Lines</th>
-                            <th className={styles.num}>Qty</th>
-                            <th className={styles.num}>Amount</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {quarter.topItems.map((item) => (
-                            <tr key={item.name}>
-                              <td>{item.name}</td>
-                              <td className={styles.num}>{item.lines}</td>
-                              <td className={styles.num}>{item.quantity}</td>
-                              <td className={styles.num}>
-                                {formatPeso(item.amount)}
-                              </td>
+                    <div className={styles.breakdownSplit}>
+                      <div className={styles.tableWrap}>
+                        <table className={styles.table}>
+                          <thead>
+                            <tr>
+                              <th>Item</th>
+                              <th className={styles.num}>Lines</th>
+                              <th className={styles.num}>Qty</th>
+                              <th className={styles.num}>Amount</th>
                             </tr>
-                          ))}
-                        </tbody>
-                      </table>
+                          </thead>
+                          <tbody>
+                            {quarter.topItems.map((item) => (
+                              <tr key={item.name}>
+                                <td>
+                                  <span
+                                    className={styles.cellText}
+                                    title={item.name}
+                                  >
+                                    {item.name}
+                                  </span>
+                                </td>
+                                <td className={styles.num}>{item.lines}</td>
+                                <td className={styles.num}>{item.quantity}</td>
+                                <td className={styles.num}>
+                                  {formatPeso(item.amount)}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      <BreakdownDonut
+                        rows={quarter.topItems.map((item) => ({
+                          name: item.name,
+                          value: item.quantity,
+                        }))}
+                        unit="qty"
+                      />
                     </div>
                   )}
                 </div>
 
                 <div className={styles.panel}>
-                  <div>
-                    <h2 className={styles.panelTitle}>Issuance by employee</h2>
-                    <p className={styles.panelSub}>
-                      Who received accountability documents this year.
-                    </p>
+                  <div className={styles.panelHead}>
+                    <div>
+                      <h2 className={styles.panelTitle}>
+                        Issuance by employee
+                      </h2>
+                      <p className={styles.panelSub}>
+                        Who received accountability documents this year.
+                      </p>
+                    </div>
                   </div>
                   {quarter.byEmployee.length === 0 ? (
-                    <p className={styles.empty}>No employees issued in {quarter.year}.</p>
+                    <div className={styles.emptyBox}>
+                      <PackageSearch size={20} aria-hidden="true" />
+                      <p>No employees issued in {quarter.year}.</p>
+                    </div>
                   ) : (
-                    <div className={styles.tableWrap}>
-                      <table className={styles.table}>
-                        <thead>
-                          <tr>
-                            <th>Employee</th>
-                            <th className={styles.num}>Docs</th>
-                            <th className={styles.num}>Qty</th>
-                            <th className={styles.num}>Amount</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {quarter.byEmployee.map((item) => (
-                            <tr key={item.name}>
-                              <td>{item.name}</td>
-                              <td className={styles.num}>{item.documents}</td>
-                              <td className={styles.num}>{item.quantity}</td>
-                              <td className={styles.num}>
-                                {formatPeso(item.amount)}
-                              </td>
+                    <div className={styles.breakdownSplit}>
+                      <div className={styles.tableWrap}>
+                        <table className={styles.table}>
+                          <thead>
+                            <tr>
+                              <th>Employee</th>
+                              <th className={styles.num}>Docs</th>
+                              <th className={styles.num}>Qty</th>
+                              <th className={styles.num}>Amount</th>
                             </tr>
-                          ))}
-                        </tbody>
-                      </table>
+                          </thead>
+                          <tbody>
+                            {quarter.byEmployee.map((item) => (
+                              <tr key={item.name}>
+                                <td>
+                                  <span
+                                    className={styles.cellText}
+                                    title={item.name}
+                                  >
+                                    {item.name}
+                                  </span>
+                                </td>
+                                <td className={styles.num}>
+                                  {item.documents}
+                                </td>
+                                <td className={styles.num}>{item.quantity}</td>
+                                <td className={styles.num}>
+                                  {formatPeso(item.amount)}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      <BreakdownDonut
+                        rows={quarter.byEmployee.map((item) => ({
+                          name: item.name,
+                          value: item.quantity,
+                        }))}
+                        unit="qty"
+                      />
                     </div>
                   )}
                 </div>
               </div>
 
               <div className={styles.panel}>
-                <div>
-                  <h2 className={styles.panelTitle}>
-                    Issuance by office / department
-                  </h2>
-                  <p className={styles.panelSub}>
-                    Based on the receiving employee&apos;s profile department.
-                  </p>
+                <div className={styles.panelHead}>
+                  <div>
+                    <h2 className={styles.panelTitle}>
+                      Issuance by office / department
+                    </h2>
+                    <p className={styles.panelSub}>
+                      Based on the receiving employee&apos;s profile department.
+                    </p>
+                  </div>
                 </div>
                 {quarter.byOffice.length === 0 ? (
-                  <p className={styles.empty}>No offices issued in {quarter.year}.</p>
+                  <div className={styles.emptyBox}>
+                    <PackageSearch size={20} aria-hidden="true" />
+                    <p>No offices issued in {quarter.year}.</p>
+                  </div>
                 ) : (
                   <div className={styles.tableWrap}>
                     <table className={styles.table}>
@@ -1036,7 +1440,14 @@ export function ReportsWorkspace({ portal }: { portal: Portal }) {
                       <tbody>
                         {quarter.byOffice.map((item) => (
                           <tr key={item.name}>
-                            <td>{item.name}</td>
+                            <td>
+                              <span
+                                className={styles.cellText}
+                                title={item.name}
+                              >
+                                {item.name}
+                              </span>
+                            </td>
                             <td className={styles.num}>{item.documents}</td>
                             <td className={styles.num}>{item.quantity}</td>
                             <td className={styles.num}>
@@ -1054,117 +1465,127 @@ export function ReportsWorkspace({ portal }: { portal: Portal }) {
         </>
       )}
 
-      {tab === 'conditions' && (
+      {tab === 'availability' && (
         <>
-          {!condition ? (
-            conditions.error ? (
-              <ErrorNote message={conditions.error} />
+          {!status ? (
+            availability.error ? (
+              <ErrorNote message={availability.error} />
             ) : (
-              <Loading label="asset-condition report" />
+              <ReportsContentSkeleton tab="availability" />
             )
           ) : (
             <>
               <div className={styles.kpis}>
-                <div className={styles.kpi}>
-                  <span className={styles.kpiLabel}>Total assets</span>
-                  <span className={styles.kpiValue}>
-                    {condition.total.toLocaleString('en-PH')}
-                  </span>
-                  <span className={styles.kpiSub}>Shared asset registry</span>
-                </div>
-                <div className={styles.kpi} data-tone="ok">
-                  <span className={styles.kpiLabel}>Serviceable</span>
-                  <span className={styles.kpiValue}>
-                    {condition.serviceable.toLocaleString('en-PH')}
-                  </span>
-                  <span className={styles.kpiSub}>
-                    {condition.serviceablePct}% of all assets
-                  </span>
-                </div>
-                <div
-                  className={styles.kpi}
-                  data-tone={condition.unserviceable > 0 ? 'bad' : 'ok'}
-                >
-                  <span className={styles.kpiLabel}>Unserviceable</span>
-                  <span className={styles.kpiValue}>
-                    {condition.unserviceable.toLocaleString('en-PH')}
-                  </span>
-                  <span className={styles.kpiSub}>
-                    Needs repair or disposal review
-                  </span>
-                </div>
-                <div className={styles.kpi} data-tone="warn">
-                  <span className={styles.kpiLabel}>Unspecified</span>
-                  <span className={styles.kpiValue}>
-                    {condition.unspecified.toLocaleString('en-PH')}
-                  </span>
-                  <span className={styles.kpiSub}>
-                    Missing or unrecognized condition
-                  </span>
-                </div>
+                <StatCard
+                  icon={<PackageSearch size={16} />}
+                  label="Total assets"
+                  value={status.total.toLocaleString('en-PH')}
+                  sub={`${status.totalUnits.toLocaleString('en-PH')} units on hand`}
+                />
+                <StatCard
+                  icon={<CircleCheck size={16} />}
+                  label="Available"
+                  value={status.available.toLocaleString('en-PH')}
+                  sub={`${status.availablePct}% ready to issue`}
+                  tone="ok"
+                />
+                <StatCard
+                  icon={<ClipboardList size={16} />}
+                  label="In use"
+                  value={status.inUse.toLocaleString('en-PH')}
+                  sub="Assigned to a custodian"
+                  tone={status.inUse > 0 ? 'warn' : 'ok'}
+                />
+                <StatCard
+                  icon={<TriangleAlert size={16} />}
+                  label="Unavailable"
+                  value={status.unavailable.toLocaleString('en-PH')}
+                  sub="Out of stock, maintenance, retired, or not recorded"
+                  tone={status.unavailable > 0 ? 'bad' : 'ok'}
+                />
               </div>
 
               <div className={styles.twoCol}>
                 <div className={styles.panel}>
-                  <div>
-                    <h2 className={styles.panelTitle}>Condition distribution</h2>
-                    <p className={styles.panelSub}>
-                      Normalized values — case and spacing are ignored.
-                    </p>
+                  <div className={styles.panelHead}>
+                    <div>
+                      <h2 className={styles.panelTitle}>
+                        Status distribution
+                      </h2>
+                      <p className={styles.panelSub}>
+                        Normalized values — case and spacing are ignored.
+                      </p>
+                    </div>
                   </div>
-                  {condition.rows.length === 0 ? (
-                    <p className={styles.empty}>No assets registered yet.</p>
+                  {status.rows.length === 0 ? (
+                    <div className={styles.emptyBox}>
+                      <PackageSearch size={20} aria-hidden="true" />
+                      <p>No assets registered yet.</p>
+                    </div>
                   ) : (
-                    <ConditionDonut
-                      rows={condition.rows}
-                      total={condition.total}
+                    <AvailabilityDonut
+                      rows={status.rows}
+                      total={status.total}
                     />
                   )}
                 </div>
 
                 <div className={styles.panel}>
-                  <div>
-                    <h2 className={styles.panelTitle}>Condition table</h2>
-                    <p className={styles.panelSub}>
-                      Distribution only — the registry stores the current
-                      condition, so a historical trend is not available.
-                    </p>
+                  <div className={styles.panelHead}>
+                    <div>
+                      <h2 className={styles.panelTitle}>Status breakdown</h2>
+                      <p className={styles.panelSub}>
+                        Distribution only — the registry stores the current
+                        status, so a historical trend is not available.
+                      </p>
+                    </div>
                   </div>
-                  <div className={styles.tableWrap}>
-                    <table className={styles.table}>
-                      <thead>
-                        <tr>
-                          <th>Condition</th>
-                          <th>Classification</th>
-                          <th className={styles.num}>Assets</th>
-                          <th className={styles.num}>Share</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {condition.rows.map((row) => (
-                          <tr key={row.condition}>
-                            <td>{row.label || conditionLabel(row.condition)}</td>
-                            <td>
-                              <span
-                                className={styles.status}
-                                data-tone={
-                                  row.cls === 'serviceable'
-                                    ? 'ok'
-                                    : row.cls === 'unserviceable'
-                                      ? 'bad'
-                                      : 'warn'
-                                }
-                              >
-                                {row.cls}
+                  <ul className={styles.statusBanners}>
+                    {status.rows.map((row) => {
+                      const tone = availabilityTone(row.cls)
+                      return (
+                        <li
+                          key={row.status}
+                          className={styles.statusBanner}
+                          data-tone={tone}
+                        >
+                          <span
+                            className={styles.statusBannerIcon}
+                            data-tone={tone}
+                            aria-hidden="true"
+                          >
+                            <AvailabilityIcon cls={row.cls} />
+                          </span>
+                          <div className={styles.statusBannerBody}>
+                            <span className={styles.statusBannerLabel}>
+                              {row.label || availabilityLabel(row.cls)}
+                            </span>
+                            <span className={styles.statusBannerMeta}>
+                              <span className={styles.status} data-tone={tone}>
+                                {availabilityLabel(row.cls)}
                               </span>
-                            </td>
-                            <td className={styles.num}>{row.count}</td>
-                            <td className={styles.num}>{row.pct}%</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                              <span>
+                                {row.items} item{row.items === 1 ? '' : 's'} ·{' '}
+                                {row.units.toLocaleString('en-PH')} unit
+                                {row.units === 1 ? '' : 's'}
+                              </span>
+                            </span>
+                            <span
+                              className={styles.shareBar}
+                              role="img"
+                              aria-label={`${row.label || availabilityLabel(row.cls)}: ${row.pct}% of items`}
+                            >
+                              <span
+                                className={styles.shareFill}
+                                data-tone={tone}
+                                style={{ width: `${row.pct}%` }}
+                              />
+                            </span>
+                          </div>
+                        </li>
+                      )
+                    })}
+                  </ul>
                 </div>
               </div>
             </>

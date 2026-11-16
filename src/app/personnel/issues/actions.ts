@@ -160,7 +160,7 @@ export async function getPublicIssues(): Promise<PublicIssueLine[]> {
 }
 
 /**
- * Paged issuance documents (fixed 20/page): the DB returns only the doc
+ * Paged issuance documents (fixed 10/page): the DB returns only the doc
  * window — line expansion + QR generation run on the window, not the whole
  * registry. `total` counts documents (one doc may expand to several lines).
  */
@@ -169,11 +169,11 @@ export async function getPublicIssuesPage(
 ): Promise<{ rows: PublicIssueLine[]; total: number }> {
   const { withScopedCache } = await import('@/lib/personnel-cache')
   const page = Math.floor(Number(opts.page)) >= 1 ? Math.min(Math.floor(Number(opts.page)), 1000) : 1
-  // Personnel UI always sends 20; compat callers (snapshots, admin browse)
+  // Personnel UI always sends 10; compat callers (snapshots, admin browse)
   // may request up to 200 per window.
   const pageSize = Number.isFinite(Number(opts.pageSize))
     ? Math.min(Math.max(Math.floor(Number(opts.pageSize)), 1), 200)
-    : 20
+    : 10
   const q = (opts.q ?? '').trim().slice(0, 120)
   const docType = (opts.docType ?? 'all').trim().toUpperCase()
   const assetType = (opts.assetType ?? 'all').trim()
@@ -203,6 +203,7 @@ export async function getPublicIssuesPage(
         OR a.article ILIKE ${like} OR a.account_code ILIKE ${like}
         OR a.account_title ILIKE ${like}
         OR s.item_name ILIKE ${like} OR s.account_code ILIKE ${like}
+        OR s.custom_fields->>'account_title' ILIKE ${like}
         OR a.category ILIKE ${like} OR s.category ILIKE ${like}
       )`)
     }
@@ -303,7 +304,12 @@ async function buildIssueLines(rows: IssuanceDbRow[]): Promise<PublicIssueLine[]
   >()
   const stockMap = new Map<
     string,
-    { account_code: string | null; item_name: string; category: string | null }
+    {
+      account_code: string | null
+      item_name: string
+      category: string | null
+      custom_fields: unknown
+    }
   >()
   try {
     const [assets, stocks] = await Promise.all([
@@ -316,7 +322,13 @@ async function buildIssueLines(rows: IssuanceDbRow[]): Promise<PublicIssueLine[]
       stockIds.size > 0
         ? prisma.inventoryItem.findMany({
             where: { id: { in: [...stockIds] } },
-            select: { id: true, account_code: true, item_name: true, category: true },
+            select: {
+              id: true,
+              account_code: true,
+              item_name: true,
+              category: true,
+              custom_fields: true,
+            },
           })
         : Promise.resolve([]),
     ])
@@ -324,6 +336,77 @@ async function buildIssueLines(rows: IssuanceDbRow[]): Promise<PublicIssueLine[]
     for (const s of stocks) stockMap.set(s.id, s)
   } catch (e) {
     console.error('[getPublicIssues:snapshots]', e)
+  }
+
+  // Inventory rows only store the account code + category; the catalog title
+  // chosen on the delivery log lives on the delivery (and, for rows stocked
+  // after that change, in the inventory custom fields). Resolve it bilingually:
+  // custom fields → account_catalog → the stocking delivery.
+  const customString = (raw: unknown, key: string): string | null => {
+    if (!raw || typeof raw !== 'object') return null
+    const v = (raw as Record<string, unknown>)[key]
+    return typeof v === 'string' && v.trim() ? v.trim() : null
+  }
+  const stockCodes = [
+    ...new Set(
+      [...stockMap.values()]
+        .map((s) => s.account_code?.trim())
+        .filter((v): v is string => Boolean(v))
+    ),
+  ]
+  const catalogMap = new Map<string, { account_title: string; asset_type: string | null }>()
+  const deliveryMap = new Map<
+    string,
+    { account_title: string | null; asset_type: string | null; stock_type: string | null }
+  >()
+  try {
+    if (stockCodes.length > 0) {
+      const [catalog, deliveries] = await Promise.all([
+        prisma.accountCatalog.findMany({
+          where: { account_code: { in: stockCodes }, deleted_at: null },
+          select: { account_code: true, account_title: true, asset_type: true },
+        }),
+        prisma.delivery.findMany({
+          where: { account_code: { in: stockCodes } },
+          orderBy: { created_at: 'desc' },
+          select: {
+            account_code: true,
+            account_title: true,
+            asset_type: true,
+            stock_type: true,
+          },
+        }),
+      ])
+      for (const c of catalog) {
+        const key = c.account_code?.trim().toLowerCase()
+        if (key) catalogMap.set(key, c)
+      }
+      // Newest delivery wins when several share one account code.
+      for (const d of deliveries) {
+        const key = d.account_code?.trim().toLowerCase()
+        if (key && !deliveryMap.has(key)) deliveryMap.set(key, d)
+      }
+    }
+  } catch (e) {
+    console.error('[getPublicIssues:account-titles]', e)
+  }
+
+  const accountTitleFor = (
+    asset: { account_title: string | null } | null,
+    stock: { account_code: string | null; custom_fields: unknown } | null,
+    accountCode: string | null
+  ): string | null => {
+    const direct = asset?.account_title?.trim()
+    if (direct) return direct
+    const stored = customString(stock?.custom_fields, 'account_title')
+    if (stored) return stored
+    const key = (accountCode ?? stock?.account_code ?? '').trim().toLowerCase()
+    if (!key) return null
+    const cat = catalogMap.get(key)
+    if (cat?.account_title?.trim()) return cat.account_title.trim()
+    const del = deliveryMap.get(key)
+    if (del?.account_title?.trim()) return del.account_title.trim()
+    return null
   }
 
   // Fallback label when the source item was deleted: "description/label".
@@ -358,7 +441,7 @@ async function buildIssueLines(rows: IssuanceDbRow[]): Promise<PublicIssueLine[]
             : null
         const account_code = asset?.account_code ?? stock?.account_code ?? null
         const article = asset?.article ?? stock?.item_name ?? fallbackArticle(r, l)
-        const account_title = asset?.account_title ?? null
+        const account_title = accountTitleFor(asset, stock, account_code)
         const asset_type = asset?.category ?? stock?.category ?? null
         const quantity = lineQty(l.quantity, r.quantity)
         const qr_payload = qrPayloadFor({
@@ -401,7 +484,7 @@ async function buildIssueLines(rows: IssuanceDbRow[]): Promise<PublicIssueLine[]
           : null
       const account_code = asset?.account_code ?? stock?.account_code ?? null
       const article = asset?.article ?? stock?.item_name ?? fallbackArticle(r)
-      const account_title = asset?.account_title ?? null
+      const account_title = accountTitleFor(asset, stock, account_code)
       const asset_type = asset?.category ?? stock?.category ?? null
       const quantity = lineQty(r.quantity, 1)
       const qr_payload = qrPayloadFor({

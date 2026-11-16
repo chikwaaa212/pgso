@@ -83,7 +83,7 @@ export function InspectConfirmButton({
             </dd>
           </div>
           <div className="flex items-center justify-between gap-4">
-            <dt className="text-navy-600">Target arrival</dt>
+            <dt className="text-navy-600">Arrival date</dt>
             <dd>
               {arrival && arrival !== "—" ? (
                 <span className={styles.status} data-tone={arrivalTone}>

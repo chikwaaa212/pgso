@@ -44,7 +44,7 @@ export default function SuperAdminRepairsPage() {
 }
 
 function SuperAdminRepairsContent() {
-  // Server-paged window (PAGE_SIZE = 15) via the shared repairs reader
+  // Server-paged window (PAGE_SIZE = 10) via the shared repairs reader
   // (super_admin scope is global there): the DB returns only the window +
   // exact total per filter set (30s, busted by repair writes).
   const [query, setQuery] = useState("");

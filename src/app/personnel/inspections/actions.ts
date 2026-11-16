@@ -16,6 +16,7 @@ function revalidatePath(path: string) {
 import { Prisma } from '@prisma/client'
 import { writeAuditLog } from '@/lib/audit'
 import { stockInspectionItems } from '@/lib/stock'
+import { remainingOf } from '@/lib/inspection-rules'
 import { getPersonnelScope } from '@/lib/personnel-scope'
 import prisma from '@/lib/prisma'
 import { inspectionHref } from '@/lib/inspection-ref'
@@ -236,12 +237,22 @@ export async function getDeliveryForInspection(
 export interface UnifiedInspectionRow {
   delivery_id: string
   delivery_ref: string
+  /** Delivery source: 'stock' (supplies) or 'asset' (property). Null = legacy. */
+  delivery_kind: string | null
   supplier: string | null
   po_reference: string | null
   date_delivered: string | null
   /** Target arrival date entered when the delivery was logged. */
   expected_arrival_date: string | null
   item_count: number
+  /** Sum of PO quantities across the delivery's items. */
+  total_qty: number
+  /**
+   * Units still to be delivered: sum of `max(0, PO qty - stocked_qty)`.
+   * Derived from the same watermark the stocking uses, so it can never drift
+   * from the inventory quantities. Zero once the delivery is fully received.
+   */
+  remaining_qty: number
   delivery_status: string | null
   inspector_id: string | null
   inspector_name: string | null
@@ -304,7 +315,7 @@ export async function getInspectionsPage(
   const page = Math.floor(Number(opts.page)) >= 1 ? Math.min(Math.floor(Number(opts.page)), 1000) : 1
   const pageSize = Number.isFinite(Number(opts.pageSize))
     ? Math.min(Math.max(Math.floor(Number(opts.pageSize)), 1), 100)
-    : 20
+    : 10
   const q = (opts.q ?? '').trim().slice(0, 120)
   const status = (opts.status ?? 'all').trim()
   const air = opts.air ?? 'all'
@@ -352,6 +363,7 @@ export async function getInspectionsPage(
         OR: [
           { supplier: { contains: q, mode: 'insensitive' } },
           { po_reference: { contains: q, mode: 'insensitive' } },
+          { delivery_kind: { contains: q, mode: 'insensitive' } },
           { inspection_status: { contains: q, mode: 'insensitive' } },
           { inspections: { some: { inspector_name: { contains: q, mode: 'insensitive' } } } },
           { inspections: { some: { iar_no: { contains: q, mode: 'insensitive' } } } },
@@ -372,6 +384,9 @@ export async function getInspectionsPage(
         take: pageSize,
         include: {
           _count: { select: { items: true } },
+          // Quantities per item — the remaining balance is derived from the
+          // same stocked_qty watermark the stocking code advances.
+          items: { select: { id: true, quantity: true, stocked_qty: true } },
           inspections: {
             orderBy: { created_at: 'desc' },
             take: 1,
@@ -395,11 +410,14 @@ export async function getInspectionsPage(
       rows: deliveries.map((d) => ({
         delivery_id:       d.id,
         delivery_ref:      d.id.slice(0, 8).toUpperCase(),
+        delivery_kind:     d.delivery_kind,
         supplier:          d.supplier,
         po_reference:      d.po_reference,
         date_delivered:    d.date_delivered?.toISOString().slice(0, 10) ?? null,
         expected_arrival_date: d.expected_arrival_date?.toISOString().slice(0, 10) ?? null,
         item_count:        d._count.items,
+        total_qty:         d.items.reduce((sum, item) => sum + item.quantity, 0),
+        remaining_qty:     d.items.reduce((sum, item) => sum + remainingOf(item), 0),
         delivery_status:   d.delivery_status,
         inspector_id:      d.inspections[0]?.inspector_id ?? null,
         inspector_name:    d.inspections[0]?.inspector_name ?? null,
@@ -1022,11 +1040,11 @@ export async function saveAir(
       select: { id: true },
     })
     await syncInspectionAir(inspection.id)
-    // Passed/partial + AIR now present → move remaining items to stock.
+    // Re-stock the remainder (no-op when the passed inspection already stocked).
     let stockWarning: string | undefined
     try {
       const res = await stockInspectionItems(inspection.id)
-      if (res.stocked) revalidatePath('/personnel/inventory')
+      if (res.stocked) revalidatePath('/personnel/stocks')
     } catch (e) {
       console.error('[saveAir:stock]', e)
       stockWarning =
@@ -1123,11 +1141,11 @@ export async function attachIarImage(
       },
     })
     await syncInspectionAir(inspectionId)
-    // Passed/partial + AIR now present → move remaining items to stock.
+    // Re-stock the remainder (no-op when the passed inspection already stocked).
     let attachWarning: string | undefined
     try {
       const res = await stockInspectionItems(inspectionId)
-      if (res.stocked) revalidatePath('/personnel/inventory')
+      if (res.stocked) revalidatePath('/personnel/stocks')
     } catch (e) {
       console.error('[attachIarImage:stock]', e)
       attachWarning =

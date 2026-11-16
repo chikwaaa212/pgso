@@ -1,8 +1,20 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import type { ComponentType } from "react";
+import {
+  AlertTriangle,
+  CalendarRange,
+  FileSpreadsheet,
+  Gauge,
+  Layers3,
+  Lightbulb,
+  ListChecks,
+  Wallet,
+} from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import styles from "../workspace.module.css";
 import type { SessionResult } from "../analytics/actions";
 import { GppbTable } from "./gppb-table";
 import { downloadGppbExcel } from "./gppb-excel";
@@ -22,6 +34,31 @@ import {
   compareToPlanned,
   type ConsumptionResult,
 } from "@/lib/ppmp/analytics/consumption";
+
+function SectionHead({
+  icon: Icon,
+  kicker,
+  title,
+}: {
+  icon: ComponentType<{ size?: number | string; "aria-hidden"?: boolean | "true" | "false" }>;
+  kicker: string;
+  title: string;
+}) {
+  return (
+    <div className="flex items-start gap-2.5">
+      <span
+        className="mt-0.5 inline-flex size-7 shrink-0 items-center justify-center rounded-md bg-navy-100 text-navy-700"
+        aria-hidden="true"
+      >
+        <Icon size={15} />
+      </span>
+      <div>
+        <p className="text-[10px] font-bold uppercase tracking-[0.09em] text-navy-400">{kicker}</p>
+        <h2 className="text-base font-bold text-navy-900">{title}</h2>
+      </div>
+    </div>
+  );
+}
 
 export function PlanningView({
   result,
@@ -91,6 +128,17 @@ export function PlanningView({
     const share = allTotal > 0 ? Math.round((topTotal / allTotal) * 100) : 0;
     return { top, topTotal, allTotal, share };
   }, [draft]);
+
+  const draftStats = useMemo(() => {
+    const totalCents = draft.reduce((a, r) => a + (r.total_cents ?? 0), 0);
+    const priced = draft.filter((r) => (r.total_cents ?? 0) > 0).length;
+    const unpriced = draft.length - priced;
+    const ceilingPct =
+      ceilingPesos !== null && ceilingPesos > 0
+        ? (totalCents / 100 / ceilingPesos) * 100
+        : null;
+    return { totalCents, priced, unpriced, ceilingPct };
+  }, [draft, ceilingPesos]);
 
   // Consumption check: compare every planned quantity against the issuance
   // history suggestion so a planner can see over/under-planning before export.
@@ -182,10 +230,96 @@ export function PlanningView({
         offices validate this draft before submission.
       </div>
 
+      <Card className="overflow-hidden p-0" aria-label="Planning draft snapshot">
+        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-navy-100 bg-gradient-to-b from-navy-50/70 to-transparent px-6 py-4">
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-[0.09em] text-navy-400">
+              Draft snapshot
+            </p>
+            <h2 className="text-base font-bold text-navy-900">
+              FY {targetYear ?? "TBD"} plan at a glance
+            </h2>
+          </div>
+          <span
+            className={styles.status}
+            data-tone={
+              draftStats.ceilingPct !== null && draftStats.ceilingPct > 100 ? "bad" : "ok"
+            }
+          >
+            <span className={styles.statusDot} aria-hidden="true" />
+            {draftStats.ceilingPct === null
+              ? "No ceiling set"
+              : draftStats.ceilingPct > 100
+                ? "Over the ceiling"
+                : "Within the ceiling"}
+          </span>
+        </div>
+        <div className="grid gap-4 p-6">
+          <div className={styles.kpiGrid}>
+            {([
+              ["Target year", `FY ${targetYear ?? "TBD"}`, "info", "Forward-looking plan", CalendarRange],
+              ["Draft lines", draft.length.toLocaleString("en-PH"), "neutral", "Procurement projects", Layers3],
+              ["Draft total", formatPlanningPesos(draftStats.totalCents), "ok", "Projected budget", Wallet],
+              [
+                "Ceiling used",
+                draftStats.ceilingPct === null ? "No cap" : `${draftStats.ceilingPct.toFixed(1)}%`,
+                draftStats.ceilingPct !== null && draftStats.ceilingPct > 100 ? "bad" : "warn",
+                ceilingPesos === null ? "Set a ceiling to track usage" : `of ${formatPlanningPesos(ceilingPesos * 100)}`,
+                Gauge,
+              ],
+              ["Needs canvass", String(draftStats.unpriced), "warn", "Lines with no priced budget", ListChecks],
+            ] as const).map(([label, value, tone, meta, Icon]) => (
+              <div key={label} className={styles.kpi} data-tone={tone}>
+                <p className={styles.kpiLabel}>
+                  <Icon size={12} aria-hidden="true" className="mr-1 inline align-[-2px]" />
+                  {label}
+                </p>
+                <p className={styles.kpiValue} title={value}>{value}</p>
+                <p className={styles.kpiMeta}>{meta}</p>
+              </div>
+            ))}
+          </div>
+
+          {draftStats.ceilingPct !== null ? (
+            <div>
+              <div className="mb-1 flex items-center justify-between text-xs text-zinc-500">
+                <span>Budget ceiling usage</span>
+                <span className="font-semibold text-navy-900">
+                  {draftStats.ceilingPct.toFixed(1)}%
+                </span>
+              </div>
+              <div
+                className="h-2 overflow-hidden rounded-full bg-navy-100"
+                role="img"
+                aria-label={`${draftStats.ceilingPct.toFixed(1)} percent of the budget ceiling used`}
+              >
+                <div
+                  className={
+                    draftStats.ceilingPct > 100
+                      ? "h-full rounded-full bg-red-500"
+                      : draftStats.ceilingPct > 90
+                        ? "h-full rounded-full bg-amber-500"
+                        : "h-full rounded-full bg-emerald-500"
+                  }
+                  style={{ width: `${Math.min(100, Math.max(2, draftStats.ceilingPct))}%` }}
+                />
+              </div>
+              {draftStats.ceilingPct > 100 ? (
+                <p className="mt-1.5 inline-flex items-center gap-1.5 text-xs font-medium text-red-700">
+                  <AlertTriangle size={12} aria-hidden="true" />
+                  The draft exceeds the ceiling by{" "}
+                  {formatPlanningPesos(draftStats.totalCents - ceilingPesos! * 100)}. Trim lines or raise the cap.
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      </Card>
+
       <Card className="p-6" aria-label="Basis for this planning draft">
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div>
-            <h2 className="text-lg font-semibold">Basis for this planning draft</h2>
+            <SectionHead icon={FileSpreadsheet} kicker="Explainability" title="Basis for this planning draft" />
             <p className="mt-1 text-xs text-zinc-500">
               What the system applied from your files, what it increased, how each line
               was projected, and which values it defaulted — so you can see exactly where
@@ -217,7 +351,7 @@ export function PlanningView({
         <Card className="p-6" aria-label="Consumption check against issuance history">
           <div className="flex flex-wrap items-start justify-between gap-2">
             <div>
-              <h2 className="text-lg font-semibold">Consumption check — actual issuance history</h2>
+              <SectionHead icon={Gauge} kicker="Usage check" title="Consumption check — actual issuance history" />
               <p className="mt-1 text-xs text-zinc-500">
                 Planned quantities vs. what was actually issued in FY{" "}
                 {consumptionCheck.years.join(", ") || "—"}. Advisory only: you decide the
@@ -297,7 +431,7 @@ export function PlanningView({
       ) : null}
 
       <Card className="p-6">
-        <h2 className="text-lg font-semibold">Most recommended for budget planning</h2>
+        <SectionHead icon={Lightbulb} kicker="Priority" title="Most recommended for budget planning" />
         <p className="mt-1 text-xs text-zinc-500">
           Top {recommended.top.length} items by planned base total —{" "}
           <strong className="font-semibold">{formatPlanningPesos(recommended.topTotal)}</strong> of{" "}
@@ -306,32 +440,53 @@ export function PlanningView({
           the final plan.
         </p>
         <div className="mt-3 grid gap-2">
-          {recommended.top.map((r, i) => (
-            <div
-              key={i}
-              className="rounded-md border border-navy-200 bg-navy-50/60 px-3 py-2 text-sm leading-relaxed text-navy-900"
-            >
-              <strong className="font-semibold">
-                #{i + 1} {r.item}
-              </strong>{" "}
-              — {(r.qty ?? 1).toLocaleString("en-PH")} {r.unit} ·{" "}
-              <strong className="font-semibold">{formatPlanningPesos(r.total_cents)}</strong>
-              {(r.total_cents ?? 0) === 0 ? (
-                <span className="text-zinc-600"> — needs canvass first</span>
-              ) : (
-                <span className="text-zinc-600">
-                  {" "}
-                  · {r.proj_type} · {r.delivery_period}
-                </span>
-              )}
-            </div>
-          ))}
+          {recommended.top.map((r, i) => {
+            const share =
+              recommended.allTotal > 0
+                ? ((r.total_cents ?? 0) / recommended.allTotal) * 100
+                : 0;
+            return (
+              <div
+                key={i}
+                className="rounded-md border border-navy-200 bg-white px-3 py-2.5 text-sm leading-relaxed text-navy-900"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="flex items-center gap-2 font-semibold">
+                      <span className="inline-flex size-5 shrink-0 items-center justify-center rounded-full bg-navy-900 text-[10px] font-bold text-white">
+                        {i + 1}
+                      </span>
+                      <span className="truncate" title={r.item}>{r.item}</span>
+                    </p>
+                    <p className="mt-0.5 text-xs text-zinc-600">
+                      {(r.qty ?? 1).toLocaleString("en-PH")} {r.unit}
+                      {(r.total_cents ?? 0) === 0 ? (
+                        <span className="text-amber-800"> · needs canvass first</span>
+                      ) : (
+                        <span> · {r.proj_type} · {r.delivery_period}</span>
+                      )}
+                    </p>
+                  </div>
+                  <div className="shrink-0 text-right">
+                    <p className="font-bold tabular-nums">{formatPlanningPesos(r.total_cents)}</p>
+                    <p className="text-[11px] text-zinc-500 tabular-nums">{share.toFixed(1)}% of draft</p>
+                  </div>
+                </div>
+                <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-navy-100">
+                  <div
+                    className="h-full rounded-full bg-navy-900"
+                    style={{ width: `${Math.min(100, Math.max(2, share))}%` }}
+                  />
+                </div>
+              </div>
+            );
+          })}
         </div>
       </Card>
 
       <Card className="p-6">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 className="text-lg font-semibold">Proposed PPMP draft — GPPB format (Columns 1–12)</h2>
+          <SectionHead icon={ListChecks} kicker="Export" title="Proposed PPMP draft — GPPB format (Columns 1–12)" />
           <div className="flex gap-2">
             <Button type="button" size="sm" onClick={() => void downloadExcel()} disabled={draft.length === 0 || exporting}>
               {exporting ? "Preparing Excel…" : "Export Excel (.xlsx)"}

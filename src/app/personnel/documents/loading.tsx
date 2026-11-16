@@ -1,14 +1,14 @@
 import { Card } from "@/components/ui/card";
-import styles from "../dashboard/page.module.css";
-import air from "../inspections/air-section.module.css";
+import { DocumentsTableSkeleton } from "@/components/personnel/DocumentsTableSkeleton";
+import { FileStack, Info } from "lucide-react";
+import stockStyles from "../stocks/page.module.css";
+import docs from "./page.module.css";
 
 /**
- * Documents-specific skeleton — mirrors the default Delivery tab 1:1
- * (crumb, header + type tabs, search, 8-col table, pager) so content
- * swaps in without layout shift.
- *
- * Static chrome renders as real text with real classes; only live
- * values are pulse placeholders sized to the real cells.
+ * Documents-specific skeleton — mirrors the receipt library 1:1
+ * (eyebrow + header, tip strip, three summary tiles, type tabs with count
+ * pills and the active-tab explanation, instant-search toolbar, tab-exact
+ * table, pager) so content swaps in without layout shift.
  */
 
 const TABS = [
@@ -22,20 +22,15 @@ const TABS = [
   "ICS",
 ] as const;
 
-const HEADERS = [
-  "Ref",
-  "Supplier",
-  "PO ref",
-  "Date delivered",
-  "Items",
-  "Delivery",
-  "Inspection",
-  "Receipt",
+const SUMMARY = [
+  "Documents in library",
+  "Delivery documents",
+  "Unviewed receipts",
 ] as const;
 
 function TextPulse({ className }: { className: string }) {
   return (
-    <div
+    <span
       aria-hidden="true"
       className={`animate-pulse rounded bg-navy-100 ${className}`}
     />
@@ -45,106 +40,91 @@ function TextPulse({ className }: { className: string }) {
 export default function DocumentsLoading() {
   return (
     <section
-      className={styles.section}
+      className={docs.section}
       aria-busy="true"
       aria-label="Loading documents"
     >
-
-      {/* Header — same as the real page */}
-      <div className={styles.headerRow}>
-        <div>
-          <h1 className={styles.title}>Documents</h1>
-          <p className={styles.subtitle} aria-hidden="true">
-            <span className="mt-1 block h-4 w-48 animate-pulse rounded bg-navy-100" />
+      {/* Header — same structure and copy as the real page. */}
+      <header className={docs.header}>
+        <div className={docs.headerText}>
+          <span className={docs.eyebrow}>
+            <FileStack size={13} aria-hidden="true" />
+            Document library
+          </span>
+          <h1 className={docs.title}>Documents</h1>
+          <p className={docs.subtitle}>
+            Every receipt and report in one place. Pick a type below, then click
+            any row — or its <strong>Open</strong> button — to read or print the
+            document.
           </p>
         </div>
-        <div className={styles.actions} aria-hidden="true">
-          <div className={air.tabs} role="tablist" aria-label="Document types">
-            {TABS.map((t) => (
-              <span
-                key={t}
-                className={air.tab}
-                data-active={t === "Delivery"}
-              >
-                {t}
-              </span>
-            ))}
-          </div>
-        </div>
+      </header>
+
+      {/* Tip strip — same blue guidance card. */}
+      <div className={docs.tipStrip} aria-hidden="true">
+        <span className={docs.tipIcon}>
+          <Info size={15} aria-hidden="true" />
+        </span>
+        <p className={docs.tipText}>
+          <strong>New here?</strong> Documents are added automatically as work
+          happens — logging a delivery, passing an inspection, issuing an item,
+          or closing a repair. Nothing here needs to be uploaded by hand.
+        </p>
       </div>
 
-      <Card className={styles.panel}>
-        {/* Controls — same single search as the real page */}
-        <div className={air.controls} aria-hidden="true">
-          <div className={`${air.search} h-9 animate-pulse rounded-md bg-navy-100`} />
-        </div>
+      {/* Summary cards — library total, active tab, unviewed receipts. */}
+      <div className={stockStyles.summary} aria-hidden="true">
+        {SUMMARY.map((label) => (
+          <div key={label} className={stockStyles.summaryCard}>
+            <span
+              className={`${stockStyles.summaryIcon} animate-pulse bg-navy-100`}
+            />
+            <div className={stockStyles.summaryBody}>
+              <p className={stockStyles.summaryLabel}>{label}</p>
+              <p className={stockStyles.summaryValue}>
+                <TextPulse className="my-0.5 inline-block h-6 w-14" />
+              </p>
+              <p className={stockStyles.summaryMeta}>
+                <TextPulse className="mt-1 inline-block h-3 w-32" />
+              </p>
+            </div>
+          </div>
+        ))}
+      </div>
 
-        {/* Table — same 8 columns, 10 rows (default page size) */}
-        <div className={styles.tableWrap}>
-          <table className={styles.table} aria-hidden="true">
-            <thead>
-              <tr>
-                {HEADERS.map((h) => (
-                  <th key={h}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {Array.from({ length: 10 }).map((_, r) => (
-                <tr key={r} style={{ opacity: 1 - r * 0.05 }}>
-                  <td>
-                    <TextPulse className="h-3.5 w-16" />
-                  </td>
-                  <td>
-                    <TextPulse className="h-3.5 w-24" />
-                  </td>
-                  <td>
-                    <TextPulse className="h-3.5 w-20" />
-                  </td>
-                  <td>
-                    <TextPulse className="h-3.5 w-20" />
-                  </td>
-                  <td>
-                    <TextPulse className="h-3.5 w-8" />
-                  </td>
-                  <td>
-                    <div className="h-[22px] w-16 animate-pulse rounded-full bg-navy-100" />
-                  </td>
-                  <td>
-                    <div className="h-[22px] w-16 animate-pulse rounded-full bg-navy-100" />
-                  </td>
-                  <td>
-                    <span className={styles.inspectLinkSecondary}>
-                      View receipt
-                    </span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      {/* Type tabs + active-tab explanation. */}
+      <div className={docs.tabsRow} aria-hidden="true">
+        <div className={docs.tabs} role="tablist" aria-label="Document types">
+          {TABS.map((t) => (
+            <span key={t} className={docs.tab} data-active={t === "Delivery"}>
+              <span className={docs.tabLabel}>{t}</span>
+              <span className={docs.tabCount} data-active={t === "Delivery" ? "true" : undefined}>
+                <span className="inline-block h-2.5 w-3 animate-pulse rounded bg-navy-100" />
+              </span>
+            </span>
+          ))}
         </div>
+        <p className={docs.tabHelp}>
+          <span className="inline-block h-3 w-96 max-w-full animate-pulse rounded bg-navy-100" />
+        </p>
+      </div>
 
-        {/* Pager — same structure as TablePager */}
-        <div className={styles.pager} aria-hidden="true">
-          <span className={styles.pagerInfo}>
-            <span className="block h-3 w-36 animate-pulse rounded bg-navy-100" />
-          </span>
-          <div className={styles.pagerControls}>
-            <span className={styles.pageSizeWrap}>
-              <span>Rows</span>
-              <span className="h-8 w-[5.5rem] animate-pulse rounded-md bg-navy-100" />
-            </span>
-            <span className={styles.pageBtn} aria-hidden="true">
-              ‹
-            </span>
-            <span className={styles.pageBtn} data-active="true">
-              1
-            </span>
-            <span className={styles.pageBtn} aria-hidden="true">
-              ›
-            </span>
+      <Card className={stockStyles.panel}>
+        {/* Toolbar — live count, instant search, All / Unviewed toggle. */}
+        <div className={stockStyles.toolbar} aria-hidden="true">
+          <p className={stockStyles.toolbarInfo}>
+            <TextPulse className="h-3.5 w-44" />
+          </p>
+          <div className={stockStyles.filters}>
+            <div
+              className={`${docs.search} h-8 animate-pulse rounded-md bg-navy-100`}
+            />
+            <div className="h-8 w-[11.5rem] animate-pulse rounded-full bg-navy-100" />
           </div>
         </div>
+
+        {/* Table — exact columns for the delivery tab, 10 rows, real pager. */}
+        <DocumentsTableSkeleton tab="delivery" label="Loading documents" />
       </Card>
     </section>
   );

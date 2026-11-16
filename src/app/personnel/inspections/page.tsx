@@ -29,6 +29,10 @@ import { InspectionHistoryDialog } from './components/inspection-history-dialog'
 import { ViewIarDialog } from './components/view-iar-dialog'
 import { ViewInspectionDialog } from './components/view-inspection-dialog'
 import { TablePager, FIXED_PAGE_SIZE } from '@/components/personnel/TablePager'
+import { PageHeader } from '@/components/personnel/PageHeader'
+import { SummaryTiles } from '@/components/personnel/SummaryTiles'
+import { ClipboardCheck, FileCheck2, FileClock, PackageSearch } from 'lucide-react'
+import { EmptySearchState } from '@/components/personnel/EmptySearchState'
 import { pageWindow } from '@/components/ui/pagination'
 import { useCachedAction } from '@/hooks/use-cached-action'
 import { buildQueryKey, resourcePrefix } from '@/lib/query-keys'
@@ -69,6 +73,27 @@ function resultChipTone(d: UnifiedInspectionRow) {
   return resultTone(d.inspection_status)
 }
 
+/** Delivery source shown in the Type column. */
+function deliveryKindLabel(kind: string | null) {
+  if (kind === 'stock') return 'Stocks'
+  if (kind === 'asset') return 'Assets'
+  return null
+}
+
+/**
+ * Type cell: a dot + label identifying whether the delivery fed supplies
+ * (Stocks) or property (Assets). The dot colour matches the ledger pages.
+ */
+function DeliveryKindCell({ kind }: { kind: string | null }) {
+  const label = deliveryKindLabel(kind)
+  if (!label) return <span className="text-navy-400">—</span>
+  return (
+    <span className={air.kindChip} data-kind={kind ?? undefined}>
+      {label}
+    </span>
+  )
+}
+
 function isRevisableStatus(value: string | null | undefined) {
   const v = (value ?? '').toLowerCase()
   return v === 'partial' || v === 'failed'
@@ -90,6 +115,25 @@ function hasAir(d: UnifiedInspectionRow) {
   return !!(d.iar_no || d.iar_image_url)
 }
 
+/**
+ * Outstanding balance carried by a legacy partial arrival. New inspections
+ * are Passed or Returned only; this stays so old short deliveries still show
+ * why they cannot pass until the balance arrives.
+ */
+function BalanceDueChip({ d }: { d: UnifiedInspectionRow }) {
+  if (d.inspection_status !== 'partial') return null
+  if (!hasAir(d) || d.remaining_qty <= 0) return null
+  const received = Math.max(0, d.total_qty - d.remaining_qty)
+  return (
+    <span
+      className="inline-flex items-center rounded-full border border-yellow-500/50 bg-yellow-500/10 px-2 py-0.5 text-[0.6875rem] font-semibold text-navy-700"
+      title={`${received} of ${d.total_qty} received — ${d.remaining_qty} still to be delivered. Only received quantities move to stocks.`}
+    >
+      {received}/{d.total_qty} received · {d.remaining_qty} due
+    </span>
+  )
+}
+
 /** One fetch loads the newest rows; search + pagination then run in memory. */
 const FETCH_LIMIT = 100
 
@@ -109,7 +153,6 @@ const FILTERS = [
   { value: 'all', label: 'All verdicts' },
   { value: 'pending', label: 'Pending' },
   { value: 'passed', label: 'Passed' },
-  { value: 'partial', label: 'Partial' },
   { value: 'failed', label: 'Returned to supplier' },
 ] as const
 
@@ -122,7 +165,6 @@ const AIR_STATUS_FILTERS = [
 const AIR_RESULT_FILTERS = [
   { value: 'all', label: 'Result: All' },
   { value: 'passed', label: 'Passed' },
-  { value: 'partial', label: 'Partial' },
   { value: 'pending', label: 'Pending' },
 ] as const
 
@@ -156,8 +198,9 @@ function AirTabSkeleton() {
             <thead>
               <tr>
                 <th>PO ref</th>
+                <th>Type</th>
                 <th>Supplier</th>
-                <th>Target arrival</th>
+                <th>Arrival date</th>
                 <th>Date inspected</th>
                 <th>AIR / IAR</th>
                 <th>Result</th>
@@ -170,6 +213,9 @@ function AirTabSkeleton() {
                 <tr key={r} style={{ opacity: 1 - r * 0.05 }}>
                   <td>
                     <div className="h-3.5 w-20 animate-pulse rounded bg-navy-100" />
+                  </td>
+                  <td>
+                    <div className="h-3 w-14 animate-pulse rounded bg-navy-100" />
                   </td>
                   <td>
                     <div className="h-3.5 w-24 animate-pulse rounded bg-navy-100" />
@@ -230,7 +276,7 @@ export default function PersonnelInspectionsPage() {
   const [query, setQuery] = useState('')
   const [airStatus, setAirStatus] = useState('all')
   const [airResult, setAirResult] = useState('all')
-  // Fixed 20 rows/page (no selector) — the DB returns only this window.
+  // Fixed 10 rows/page (no selector) — the DB returns only this window.
   const inspPageSize = FIXED_PAGE_SIZE
   const airPageSize = FIXED_PAGE_SIZE
   const [inspPage, setInspPage] = useState(1)
@@ -335,14 +381,17 @@ export default function PersonnelInspectionsPage() {
   const filtered = useMemo(() => {
     const rows = (inspData?.rows ?? []).map((row): UnifiedInspectionRow => {
       const pending = pendingResults[row.delivery_id]
-      if (!pending) return row
-      return {
-        ...row,
-        result: pending.result,
-        inspection_status: pending.result,
-        inspector_name: pending.inspectorName || row.inspector_name,
-        inspection_date: pending.inspectionDate || row.inspection_date,
-      }
+      const air = pendingAir[row.delivery_id]
+      const next = pending
+        ? {
+            ...row,
+            result: pending.result,
+            inspection_status: pending.result,
+            inspector_name: pending.inspectorName || row.inspector_name,
+            inspection_date: pending.inspectionDate || row.inspection_date,
+          }
+        : row
+      return air ? { ...next, iar_no: air.iarNo } : next
     })
     const q = query.trim().toLowerCase()
     return rows.filter((d) => {
@@ -352,11 +401,12 @@ export default function PersonnelInspectionsPage() {
         d.delivery_ref,
         d.supplier,
         d.po_reference,
+        deliveryKindLabel(d.delivery_kind),
         d.inspector_name,
         resultLabel(d),
       ].some((v) => (v ?? '').toLowerCase().includes(q))
     })
-  }, [inspData, pendingResults, filter, query])
+  }, [inspData, pendingResults, pendingAir, filter, query])
 
   const airMatches = (d: UnifiedInspectionRow) => {
     const q = query.trim().toLowerCase()
@@ -365,6 +415,7 @@ export default function PersonnelInspectionsPage() {
       d.delivery_ref,
       d.supplier,
       d.po_reference,
+      deliveryKindLabel(d.delivery_kind),
       d.inspector_name,
       d.iar_no,
       resultLabel(d),
@@ -383,6 +434,20 @@ export default function PersonnelInspectionsPage() {
   )
   const inspTotal = filtered.length
   const airTotal = airRows.length
+  const hasInspFilters = query.trim() !== '' || filter !== 'all'
+  const hasAirFilters =
+    query.trim() !== '' || airStatus !== 'all' || airResult !== 'all'
+  const clearInspFilters = () => {
+    setQuery('')
+    setFilter('all')
+    setInspPage(1)
+  }
+  const clearAirFilters = () => {
+    setQuery('')
+    setAirStatus('all')
+    setAirResult('all')
+    setAirPage(1)
+  }
   const airStats = {
     total: countsData?.total ?? 0,
     issued: countsData?.issued ?? 0,
@@ -404,9 +469,18 @@ export default function PersonnelInspectionsPage() {
 
   return (
     <section className={styles.section}>
-      <div className={styles.headerRow}>
-        <h1 className={styles.title}>Inspections</h1>
-        <div className={styles.actions}>
+      <PageHeader
+        eyebrow="Quality control"
+        title="Inspections"
+        subtitle="Verify delivered goods before they reach stock or the asset registry. Passed inspections stock the ledger automatically — AIR / IAR paperwork never gates it."
+        meta={
+          <>
+            {inspTotal.toLocaleString('en-PH')} shown
+            <span aria-hidden="true">·</span>
+            {airStats.total.toLocaleString('en-PH')} records total
+          </>
+        }
+        actions={
           <div className={air.tabs} role="tablist" aria-label="Inspections sections">
             <button
               type="button"
@@ -435,8 +509,45 @@ export default function PersonnelInspectionsPage() {
               AIR / IAR
             </button>
           </div>
-        </div>
-      </div>
+        }
+      />
+
+      <SummaryTiles
+        ariaLabel="Inspection summary"
+        tiles={[
+          {
+            label: 'Records',
+            value: airStats.total.toLocaleString('en-PH'),
+            hint: 'Inspection records in scope',
+            icon: PackageSearch,
+            tone: 'info',
+          },
+          {
+            label: 'AIR / IAR issued',
+            value: airStats.issued.toLocaleString('en-PH'),
+            hint: 'Receipts with a document number',
+            icon: FileCheck2,
+            tone: 'ok',
+          },
+          {
+            label: 'Awaiting AIR / IAR',
+            value: airStats.awaiting.toLocaleString('en-PH'),
+            hint:
+              airStats.awaiting === 0
+                ? 'All receipts attached'
+                : 'Passed, awaiting paperwork',
+            icon: FileClock,
+            tone: airStats.awaiting > 0 ? 'warn' : 'ok',
+          },
+          {
+            label: 'In this view',
+            value: inspTotal.toLocaleString('en-PH'),
+            hint: tab === 'inspections' ? 'Inspection rows' : 'AIR / IAR rows',
+            icon: ClipboardCheck,
+            tone: 'neutral',
+          },
+        ]}
+      />
 
       {tab === 'inspections' ? (
         <Card className={styles.panel}>
@@ -477,8 +588,9 @@ export default function PersonnelInspectionsPage() {
                 <thead>
                   <tr>
                     <th>PO ref</th>
+                    <th>Type</th>
                     <th>Supplier</th>
-                    <th>Target arrival</th>
+                    <th>Arrival date</th>
                     <th>Date inspected</th>
                     <th>Result</th>
                     <th style={{ textAlign: "right" }}>Action</th>
@@ -489,6 +601,9 @@ export default function PersonnelInspectionsPage() {
                     <tr key={r} style={{ opacity: 1 - r * 0.05 }}>
                       <td>
                         <div className="h-3.5 w-20 animate-pulse rounded bg-navy-100" />
+                      </td>
+                      <td>
+                        <div className="h-3 w-14 animate-pulse rounded bg-navy-100" />
                       </td>
                       <td>
                         <div className="h-3.5 w-24 animate-pulse rounded bg-navy-100" />
@@ -518,21 +633,28 @@ export default function PersonnelInspectionsPage() {
               </table>
             </div>
           ) : inspVisible.length === 0 ? (
-            <div className={cn(styles.emptyState, "flex-1")}>
-              <div className={styles.emptyCard}>
-                <p className={styles.emptyCardText}>
-                  No inspections match your search or filter.
-                </p>
-              </div>
-            </div>
+            <EmptySearchState
+              title={
+                hasInspFilters
+                  ? 'No items match these filters'
+                  : 'No inspections yet'
+              }
+              description={
+                hasInspFilters
+                  ? 'Try a different search term or verdict.'
+                  : 'A delivery appears here as soon as it is logged.'
+              }
+              onClear={hasInspFilters ? clearInspFilters : undefined}
+            />
           ) : (
             <div className={styles.tableWrap}>
               <table className={styles.table}>
                 <thead>
                   <tr>
                     <th>PO ref</th>
+                    <th>Type</th>
                     <th>Supplier</th>
-                    <th>Target arrival</th>
+                    <th>Arrival date</th>
                     <th>Date inspected</th>
                     <th>Result</th>
                     <th style={{ textAlign: "right" }}>Action</th>
@@ -542,6 +664,7 @@ export default function PersonnelInspectionsPage() {
                   {inspVisible.map((d) => {
                     const isPending = d.inspection_status === 'pending'
                     const isEditable = canEditInspection(d)
+                    const isPassed = d.inspection_status === 'passed'
                     return (
                       <tr
                         key={d.delivery_id}
@@ -555,17 +678,23 @@ export default function PersonnelInspectionsPage() {
                         }}
                       >
                         <td>{d.po_reference ?? '—'}</td>
+                        <td>
+                          <DeliveryKindCell kind={d.delivery_kind} />
+                        </td>
                         <td>{d.supplier ?? '—'}</td>
                         <td>{fmt(d.expected_arrival_date)}</td>
                         <td>{fmt(d.inspection_date)}</td>
                         <td>
-                          <span
-                            className={styles.status}
-                            data-tone={
-                              isPending ? 'warn' : resultTone(d.inspection_status)
-                            }
-                          >
-                            {resultLabel(d)}
+                          <span className="flex flex-wrap items-center gap-1.5">
+                            <span
+                              className={styles.status}
+                              data-tone={
+                                isPending ? 'warn' : resultTone(d.inspection_status)
+                              }
+                            >
+                              {resultLabel(d)}
+                            </span>
+                            <BalanceDueChip d={d} />
                           </span>
                         </td>
                         <td onClick={(e) => e.stopPropagation()}>
@@ -593,6 +722,30 @@ export default function PersonnelInspectionsPage() {
                                 supplier={d.supplier}
                                 poReference={d.po_reference}
                                 triggerClassName={ROW_PRIMARY_CLASS}
+                              />
+                            ) : null}
+                            {!readOnly && isPassed && pendingAir[d.delivery_id] ? (
+                              <span
+                                className={ROW_ACTION_CLASS}
+                                aria-live="polite"
+                              >
+                                Generating…
+                              </span>
+                            ) : null}
+                            {!readOnly && isPassed && !hasAir(d) && !pendingAir[d.delivery_id] ? (
+                              <IarDialog
+                                deliveryId={d.delivery_id}
+                                deliveryRef={d.delivery_ref}
+                                hasSavedInspection
+                                label="Generate AIR / IAR"
+                                triggerClassName={ROW_PRIMARY_CLASS}
+                              />
+                            ) : null}
+                            {isPassed && hasAir(d) && !pendingAir[d.delivery_id] ? (
+                              <ViewIarDialog
+                                deliveryId={d.delivery_id}
+                                deliveryRef={d.delivery_ref}
+                                triggerClassName={ROW_ACTION_CLASS}
                               />
                             ) : null}
                           </div>
@@ -732,21 +885,28 @@ export default function PersonnelInspectionsPage() {
             </div>
 
             {airVisible.length === 0 ? (
-              <div className={cn(styles.emptyState, "flex-1")}>
-                <div className={styles.emptyCard}>
-                  <p className={styles.emptyCardText}>
-                    No AIR / IAR records match your search or filters.
-                  </p>
-                </div>
-              </div>
+              <EmptySearchState
+                title={
+                  hasAirFilters
+                    ? 'No items match these filters'
+                    : 'No AIR / IAR records yet'
+                }
+                description={
+                  hasAirFilters
+                    ? 'Try a different search term, AIR status, or result.'
+                    : 'AIR / IAR records appear here once an inspection is complete.'
+                }
+                onClear={hasAirFilters ? clearAirFilters : undefined}
+              />
             ) : (
               <div className={styles.tableWrap}>
                 <table className={styles.table}>
                   <thead>
                     <tr>
                       <th>PO ref</th>
+                      <th>Type</th>
                       <th>Supplier</th>
-                      <th>Target arrival</th>
+                      <th>Arrival date</th>
                       <th>Date inspected</th>
                       <th>AIR / IAR</th>
                       <th>Result</th>
@@ -785,6 +945,9 @@ export default function PersonnelInspectionsPage() {
                           }}
                         >
                           <td>{d.po_reference ?? '—'}</td>
+                          <td>
+                            <DeliveryKindCell kind={d.delivery_kind} />
+                          </td>
                           <td>{d.supplier ?? '—'}</td>
                           <td>{fmt(d.expected_arrival_date)}</td>
                           <td>{fmt(d.inspection_date)}</td>
@@ -807,11 +970,14 @@ export default function PersonnelInspectionsPage() {
                             </span>
                           </td>
                           <td>
-                            <span
-                              className={styles.status}
-                              data-tone={resultChipTone(d)}
-                            >
-                              {resultLabel(d)}
+                            <span className="flex flex-wrap items-center gap-1.5">
+                              <span
+                                className={styles.status}
+                                data-tone={resultChipTone(d)}
+                              >
+                                {resultLabel(d)}
+                              </span>
+                              <BalanceDueChip d={d} />
                             </span>
                           </td>
                           <td className={d.iar_no ? 'font-mono text-xs' : undefined}>

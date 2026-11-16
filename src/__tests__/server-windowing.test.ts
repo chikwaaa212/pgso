@@ -46,8 +46,8 @@ describe("getUnifiedAssetsPage: UNION window, not 2x2000 merge", () => {
   it("LIKE-escapes user search text", () => {
     assert.match(body, /escapeLike\(q\)/);
   });
-  it("PAGE_SIZE is the small page (15)", () => {
-    assert.equal(PAGE_SIZE, 15);
+  it("PAGE_SIZE is the small page (10)", () => {
+    assert.equal(PAGE_SIZE, 10);
   });
 });
 
@@ -61,7 +61,7 @@ describe("pageSize honoring restored (admin full lists un-truncated)", () => {
     });
   }
   it("getInventoryPage honors opts.pageSize", () => {
-    const inv = src("../app/personnel/inventory/actions.ts");
+    const inv = src("../app/personnel/stocks/actions.ts");
     assert.match(fnBody(inv, "getInventoryPage"), /opts\.pageSize/);
   });
 });

@@ -34,7 +34,7 @@ const EMPTY_PAGE: AdminPpmpFilesPage = {
   data: [],
   total: 0,
   page: 1,
-  pageSize: 15,
+  pageSize: 10,
   totalPages: 1,
 }
 

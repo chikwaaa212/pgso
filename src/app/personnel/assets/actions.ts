@@ -66,6 +66,14 @@ const NUMERIC_KEYS = new Set(["quantity", "cylinders"]);
 const DECIMAL_KEYS = new Set(["total_cost", "unit_cost"]);
 const DATE_KEYS = new Set(["date_acquired", "date_received"]);
 
+/** Fields owned by the issued PAR/ICS once an item is assigned. */
+const ASSIGNED_LOCKED_KEYS = [
+  "quantity",
+  "unit",
+  "status",
+  "end_user",
+] as const;
+
 export interface AssetRow {
   id: string;
   account_code: string | null;
@@ -149,6 +157,18 @@ export interface StockRow {
   custom_fields: CustomBag;
 }
 
+/** One employee an item was issued to (PAR/ICS), newest first. */
+export interface AssetAssignee {
+  /** Profile id, when the record carries one. */
+  id: string | null;
+  name: string;
+  doc_type: string | null;
+  doc_no: string | null;
+  date: string | null;
+  /** True for the holder flagged on the asset record. */
+  current: boolean;
+}
+
 export interface UnifiedAssetRow {
   id: string;
   source: "asset" | "stock";
@@ -189,18 +209,58 @@ export interface UnifiedAssetRow {
   qr_code: string | null;
   assigned_to: string | null;
   qr_data_url: string;
+  /** Employees issued this item (via PAR/ICS or the holder flag). */
+  assignees: AssetAssignee[];
   /** User-defined column values, keyed by custom field key. */
   custom_fields: CustomBag;
 }
 
+/**
+ * Master Data row behind an asset/stock code. Matches the catalog code
+ * exactly first, then the base of a generated `<base>-NNNN` code, so a
+ * sequenced code still resolves to its account title/name.
+ */
+async function catalogForAccountCode(accountCode: string | null | undefined) {
+  const code = String(accountCode ?? '').trim()
+  if (!code) return null
+  const bases = [code]
+  const seq = /^(.+)-(\d{1,6})$/.exec(code)
+  if (seq) bases.push(seq[1])
+  const rows = await prisma.accountCatalog
+    .findMany({
+      where: {
+        status: 'active',
+        OR: bases.map((base) => ({ account_code: { equals: base, mode: 'insensitive' } })),
+      },
+      select: {
+        account_code: true,
+        account_title: true,
+        account_name: true,
+        asset_type: true,
+      },
+    })
+    .catch(() => [])
+  const norm = (v: string | null | undefined) => (v ?? '').trim().toLowerCase()
+  const exact = rows.find((r) => norm(r.account_code) === norm(code))
+  return exact ?? rows.find((r) => bases.some((b) => norm(r.account_code) === norm(b))) ?? rows[0] ?? null
+}
+
 function mapStockToUnified(stock: StockRow): UnifiedAssetRow {
+  // Inventory has no title/name columns: a passed inspection stores the
+  // delivery's catalog Account Title in `custom_fields`, and older rows are
+  // resolved from Master Data by `getUnifiedAsset`.
+  const bag = stock.custom_fields ?? {}
+  const bagText = (key: string) => {
+    const value = (bag as Record<string, unknown>)[key]
+    return typeof value === 'string' && value.trim() ? value.trim() : null
+  }
   return {
     id: stock.id,
     source: "stock",
     account_code: stock.account_code,
     identifier: null,
-    account_title: null,
-    account_name: null,
+    account_title: bagText('account_title'),
+    account_name: bagText('account_name'),
     category: stock.category,
     article: stock.item_name,
     quantity: stock.quantity,
@@ -234,6 +294,7 @@ function mapStockToUnified(stock: StockRow): UnifiedAssetRow {
     qr_code: null,
     assigned_to: null,
     qr_data_url: stock.qr_data_url,
+    assignees: [],
     custom_fields: stock.custom_fields,
   };
 }
@@ -242,6 +303,7 @@ function mapAssetToUnified(asset: AssetRow): UnifiedAssetRow {
   return {
     ...asset,
     source: "asset",
+    assignees: [],
   };
 }
 
@@ -563,7 +625,7 @@ export async function updateStock(
 
 export interface UnifiedAssetsPageOpts {
   page?: number
-  /** Window size (default PAGE_SIZE, clamped 1..100). UI lists omit it. */
+  /** Window size (default PAGE_SIZE, clamped 1..1000). UI lists omit it. */
   pageSize?: number
   q?: string
   status?: string
@@ -571,6 +633,14 @@ export interface UnifiedAssetsPageOpts {
   condition?: string
   unit?: string
   category?: string
+  /**
+   * Registry origin tab:
+   * - `added` (default) — rows registered in the `assets` table (manual add /
+   *   Excel import / direct edits).
+   * - `inspected` — asset-kind lots a passed inspection stocked into
+   *   inventory (`delivery_kind = 'asset'` + a passed delivery item match).
+   */
+  origin?: string
   /** Skip QR hydration (documents tab blanks QR anyway) — faster window. */
   slim?: boolean
 }
@@ -613,7 +683,9 @@ export async function getAssetFilterOptions(): Promise<{
 }
 
 /**
- * Server-paginated unified registry window (PAGE_SIZE = 15).
+ * Server-paginated unified registry window (defaults to PAGE_SIZE = 10;
+ * the personnel registry loads one bounded window — up to 1000 rows — and
+ * filters/pages it in memory for instant search).
  *
  * Single raw-SQL UNION ALL over assets + inventory with ORDER BY + LIMIT /
  * OFFSET and COUNT(*) OVER() — one DB round-trip for the window AND the
@@ -641,13 +713,14 @@ export async function getUnifiedAssetsPage(
   const { Prisma } = await import('@prisma/client')
   const page = parsePage(opts.page)
   const rawSize = Math.floor(Number(opts.pageSize))
-  const pageSize = Number.isFinite(rawSize) ? Math.min(Math.max(rawSize, 1), 100) : PAGE_SIZE
+  const pageSize = Number.isFinite(rawSize) ? Math.min(Math.max(rawSize, 1), 1000) : PAGE_SIZE
   const q = parseQuery(opts.q)
   const status = (opts.status ?? 'all').trim().toLowerCase()
   const source = (opts.source ?? 'all').trim().toLowerCase()
   const condition = (opts.condition ?? 'all').trim().toLowerCase()
   const unit = (opts.unit ?? 'all').trim().toLowerCase()
   const category = (opts.category ?? 'all').trim().toLowerCase()
+  const origin = (opts.origin ?? 'added').trim().toLowerCase() === 'inspected' ? 'inspected' : 'added'
   const slim = opts.slim === true
   // Fail-closed before cache: employee/anon never reach the global pool,
   // so one role never receives another role's cached page.
@@ -669,9 +742,12 @@ export async function getUnifiedAssetsPage(
         // Stocks carry no status/condition of their own (they surface as
         // status 'available'): a status/condition filter excludes the branch,
         // matching the old in-memory semantics exactly.
-        const wantAssets = source === 'all' || source === 'asset'
+        const inspected = origin === 'inspected'
+        // Origin tabs: `added` is the asset register (assets table only);
+        // `inspected` shows asset-kind lots stocked by a passed inspection.
+        const wantAssets = !inspected && (source === 'all' || source === 'asset')
         const wantStocks =
-          (source === 'all' || source === 'stock') &&
+          (inspected || source === 'all' || source === 'stock') &&
           (status === 'all' || status === 'available') &&
           condition === 'all'
         if (!wantAssets && !wantStocks) return empty
@@ -686,6 +762,19 @@ export async function getUnifiedAssetsPage(
         const stockConds: InstanceType<typeof Prisma.Sql>[] = []
         if (unit !== 'all') stockConds.push(Prisma.sql`lower(s.unit) = ${unit}`)
         if (category !== 'all') stockConds.push(Prisma.sql`lower(s.category) = ${category}`)
+        if (inspected) {
+          // Asset-kind lots only, and only those a passed inspection fed —
+          // the same (item_name, unit) match stocking uses.
+          stockConds.push(Prisma.sql`s.delivery_kind = 'asset'`)
+          stockConds.push(Prisma.sql`EXISTS (
+            SELECT 1
+            FROM delivery_items di
+            JOIN inspections i ON i.delivery_id = di.delivery_id
+            WHERE i.result = 'passed'
+              AND lower(di.item_name) = lower(s.item_name)
+              AND di.unit IS NOT DISTINCT FROM s.unit
+          )`)
+        }
 
         const assetCols = Prisma.sql`
           a.id::text AS id, 'asset' AS source,
@@ -910,13 +999,122 @@ export async function getUnifiedAssetsPage(
         const safePage = clampPage(total > 0 ? Math.floor(offset / pageSize) + 1 : 1, Math.max(1, total))
         const totalPages = totalPagesFor(total, pageSize)
         const mapped = raw.map((r) => toUnified(r))
+        // Assigned employees — the holder on the asset record plus everyone a
+        // PAR/ICS was issued to. Two extra queries for the whole window.
+        let enriched = mapped
+        if (mapped.length > 0) {
+          try {
+            const ids = mapped.map((row) => row.id)
+            const idList = Prisma.join(ids.map((id) => Prisma.sql`${id}::uuid`))
+            // Consolidated PAR/ICS docs leave the FK columns null and keep the
+            // items in issuance_data.lines[], so match those too.
+            const textList = Prisma.join(ids.map((id) => Prisma.sql`${id}::text`))
+            const issued = await prisma
+              .$queryRaw<
+                Array<{
+                  asset_id: string | null
+                  inventory_id: string | null
+                  employee_id: string
+                  doc_type: string | null
+                  doc_no: string | null
+                  doc_date: Date | string | null
+                  issuance_data: Record<string, unknown> | null
+                }>
+              >`SELECT asset_id::text AS asset_id, inventory_id::text AS inventory_id,
+                       employee_id::text AS employee_id, doc_type, doc_no, doc_date,
+                       issuance_data
+                 FROM issuance_records
+                 WHERE asset_id IN (${idList}) OR inventory_id IN (${idList})
+                    OR EXISTS (
+                      SELECT 1
+                      FROM jsonb_array_elements(
+                        CASE
+                          WHEN jsonb_typeof(issuance_data->'lines') = 'array'
+                          THEN issuance_data->'lines'
+                          ELSE '[]'::jsonb
+                        END
+                      ) line
+                      WHERE line->>'assetId' IN (${textList})
+                         OR line->>'inventoryId' IN (${textList})
+                    )
+                 ORDER BY created_at DESC`.catch(() => [])
+            const lineItemIds = (data: Record<string, unknown> | null): string[] => {
+              const lines = data?.lines
+              if (!Array.isArray(lines)) return []
+              return lines.flatMap((line) => {
+                const l = line as { assetId?: unknown; inventoryId?: unknown } | null
+                return [l?.assetId, l?.inventoryId].filter(
+                  (v): v is string => typeof v === 'string' && v.length > 0
+                )
+              })
+            }
+            const need = new Set<string>()
+            for (const r of issued) if (r.employee_id) need.add(r.employee_id)
+            for (const a of mapped) if (a.assigned_to) need.add(a.assigned_to)
+            const names = new Map<string, string>()
+            if (need.size > 0) {
+              const profiles = await prisma.profile
+                .findMany({
+                  where: { id: { in: [...need] } },
+                  select: { id: true, full_name: true },
+                })
+                .catch(() => [])
+              for (const p of profiles) names.set(p.id, p.full_name ?? 'Unknown employee')
+            }
+            const byItem = new Map<string, AssetAssignee[]>()
+            for (const r of issued) {
+              const itemIds = [
+                r.asset_id,
+                r.inventory_id,
+                ...lineItemIds(r.issuance_data),
+              ].filter((v): v is string => typeof v === 'string' && v.length > 0)
+              for (const itemId of itemIds) {
+                const list = byItem.get(itemId) ?? []
+                if (list.some((a) => a.id === r.employee_id)) continue
+                list.push({
+                  id: r.employee_id,
+                  name: names.get(r.employee_id) ?? 'Unknown employee',
+                  doc_type: r.doc_type,
+                  doc_no: r.doc_no,
+                  date: isoDay(r.doc_date),
+                  current: false,
+                })
+                byItem.set(itemId, list)
+              }
+            }
+            enriched = mapped.map((row) => {
+              const list = [...(byItem.get(row.id) ?? [])]
+              if (row.assigned_to) {
+                const idx = list.findIndex((a) => a.id === row.assigned_to)
+                if (idx >= 0) {
+                  list[idx] = { ...list[idx], current: true }
+                } else {
+                  const name = names.get(row.assigned_to)
+                  if (name) {
+                    list.unshift({
+                      id: row.assigned_to,
+                      name,
+                      doc_type: null,
+                      doc_no: null,
+                      date: null,
+                      current: true,
+                    })
+                  }
+                }
+              }
+              return { ...row, assignees: list }
+            })
+          } catch {
+            /* keep rows without assignee detail */
+          }
+        }
         if (slim) {
-          const slimRows = mapped.map((a) => ({ ...a, qr_data_url: '' }))
+          const slimRows = enriched.map((a) => ({ ...a, qr_data_url: '' }))
           return { rows: slimRows, data: slimRows, total, page: safePage, pageSize, totalPages }
         }
-        // Hydrate QR only for the visible window (15).
+        // Hydrate QR only for the visible window (10).
         const rows = await Promise.all(
-          mapped.map(async (a) => ({
+          enriched.map(async (a) => ({
             ...a,
             qr_data_url:
               a.source === 'asset'
@@ -930,20 +1128,37 @@ export async function getUnifiedAssetsPage(
         return { rows: [], data: [], total: 0, page: 1, pageSize, totalPages: 1 }
       }
     },
-    { page, pageSize, q, status, source, condition, unit, category, slim }
+    { page, pageSize, q, status, source, condition, unit, category, origin, slim }
   )
+}
+
+/**
+ * Fill missing Account Title / Account Name from Master Data. Asset rows
+ * normally store both; stock lots only carry the title inside
+ * `custom_fields`, and rows stocked before that existed have neither — the
+ * catalog row (exact code or the base of a generated sequence) supplies them.
+ */
+async function withCatalogLabels(row: UnifiedAssetRow): Promise<UnifiedAssetRow> {
+  if (row.account_title && row.account_name) return row
+  const catalog = await catalogForAccountCode(row.account_code)
+  if (!catalog) return row
+  return {
+    ...row,
+    account_title: row.account_title ?? catalog.account_title ?? null,
+    account_name: row.account_name ?? catalog.account_name ?? null,
+  }
 }
 
 export async function getUnifiedAsset(id: string): Promise<UnifiedAssetRow | null> {
   try {
     const asset = await getAsset(id);
     if (asset) {
-      return mapAssetToUnified(asset);
+      return withCatalogLabels(mapAssetToUnified(asset));
     }
 
     const stock = await getStock(id);
     if (stock) {
-      return mapStockToUnified(stock);
+      return withCatalogLabels(mapStockToUnified(stock));
     }
 
     return null;
@@ -982,6 +1197,16 @@ export interface AssetHistoryIssuance {
   quantity: number;
   total_amount: number | null;
   created_at: string | null;
+  /** Personnel who recorded/approved the assignment (issuance_records.created_by). */
+  assigned_by_name: string | null;
+  /** Set when the assignment was driven by an employee request. */
+  request_id: string | null;
+  /** "request" — approved request produced this; "direct" — walk-in issuance. */
+  source: "request" | "direct";
+  /** Issuance purpose/description stored with the document snapshot. */
+  purpose: string | null;
+  /** Unit of measure from the document snapshot. */
+  unit: string | null;
 }
 
 export interface AssetHistoryRequest {
@@ -989,9 +1214,12 @@ export interface AssetHistoryRequest {
   request_type: string;
   status: string | null;
   date_requested: string | null;
+  date_resolved: string | null;
   employee_id: string;
   employee_name: string;
   description: string;
+  /** Personnel the request was routed to (the one who approved/handled it). */
+  handled_by_name: string | null;
 }
 
 export interface AssetHistory {
@@ -1016,24 +1244,45 @@ export async function getAssetHistory(id: string): Promise<AssetHistory> {
   };
   if (!id) return empty;
   try {
-    const asset = await prisma.asset.findUnique({
-      where: { id },
-      select: {
-        id: true,
-        qr_code: true,
-        account_code: true,
-        article: true,
-        description: true,
-        account_title: true,
-        category: true,
-        assigned_to: true,
-      },
-    });
-    if (!asset) return empty;
+    // The registry mixes real assets with stock (inventory) lots — both open
+    // the same detail page, so history must resolve either record.
+    const [asset, stock] = await Promise.all([
+      prisma.asset
+        .findUnique({
+          where: { id },
+          select: {
+            id: true,
+            qr_code: true,
+            account_code: true,
+            article: true,
+            description: true,
+            account_title: true,
+            category: true,
+            assigned_to: true,
+          },
+        })
+        .catch(() => null),
+      prisma.inventoryItem
+        .findUnique({
+          where: { id },
+          select: {
+            id: true,
+            item_name: true,
+            account_code: true,
+            category: true,
+            unit: true,
+            location: true,
+          },
+        })
+        .catch(() => null),
+    ]);
+    if (!asset && !stock) return empty;
 
-    const labelBits = [asset.qr_code ?? asset.account_code, asset.article, asset.description].filter(
-      Boolean
-    ) as string[];
+    const labelBits = (
+      asset
+        ? [asset.qr_code ?? asset.account_code, asset.article, asset.description]
+        : [stock?.account_code, stock?.item_name]
+    ).filter(Boolean) as string[];
     const assetLabel = labelBits.length > 0 ? labelBits.join(" — ").slice(0, 80) : "Asset";
 
     const [repairs, issuanceDbRows, requestRows, requestLines, profiles] = await Promise.all([
@@ -1064,17 +1313,23 @@ export async function getAssetHistory(id: string): Promise<AssetHistory> {
           doc_no: string | null;
           doc_date: Date | string | null;
           asset_id: string | null;
+          inventory_id: string | null;
           employee_id: string;
+          request_id: string | null;
           quantity: number;
           total_amount: unknown;
           issuance_data: Record<string, unknown> | null;
+          created_by: string | null;
           created_at: Date | string | null;
         }>
       >`SELECT id::text AS id, doc_type, doc_no, doc_date,
               asset_id::text AS asset_id,
-              employee_id::text AS employee_id, quantity, total_amount,
-              issuance_data, created_at
-       FROM issuance_records WHERE asset_id = ${id}::uuid
+              inventory_id::text AS inventory_id,
+              employee_id::text AS employee_id,
+              request_id::text AS request_id, quantity, total_amount,
+              issuance_data, created_by::text AS created_by, created_at
+       FROM issuance_records
+       WHERE asset_id = ${id}::uuid OR inventory_id = ${id}::uuid
        ORDER BY created_at DESC LIMIT 50`.catch(() => []),
       // Requests naming this asset (directly or via line items) — approvals
       // assign assets without necessarily creating an issuance row.
@@ -1088,7 +1343,9 @@ export async function getAssetHistory(id: string): Promise<AssetHistory> {
             request_type: true,
             status: true,
             date_requested: true,
+            date_resolved: true,
             employee_id: true,
+            recipient_id: true,
             asset_id: true,
             description: true,
           },
@@ -1099,7 +1356,7 @@ export async function getAssetHistory(id: string): Promise<AssetHistory> {
         .catch(() => [] as { request_id: string; asset_id: string | null }[]),
       prisma.profile
         .findMany({
-          where: { id: { in: [asset.assigned_to].filter(Boolean) as string[] } },
+          where: { id: { in: [asset?.assigned_to].filter(Boolean) as string[] } },
           select: { id: true, full_name: true },
         })
         .catch(() => [] as { id: string; full_name: string | null }[]),
@@ -1125,16 +1382,22 @@ export async function getAssetHistory(id: string): Promise<AssetHistory> {
       try {
         const lines = (data as { lines?: unknown } | null)?.lines;
         if (!Array.isArray(lines)) return [];
-        return lines
-          .map((l) => (l as { assetId?: unknown } | null)?.assetId)
-          .filter((v): v is string => typeof v === "string" && v.length > 0);
+        return lines.flatMap((l) => {
+          const line = l as { assetId?: unknown; inventoryId?: unknown } | null;
+          return [line?.assetId, line?.inventoryId].filter(
+            (v): v is string => typeof v === "string" && v.length > 0
+          );
+        });
       } catch {
         return [];
       }
     };
 
     const matchedIssuances = issuanceDbRows.filter(
-      (r) => r.asset_id === id || lineAssetIds(r.issuance_data).includes(id)
+      (r) =>
+        r.asset_id === id ||
+        r.inventory_id === id ||
+        lineAssetIds(r.issuance_data).includes(id)
     );
 
     const requestIdsForAsset = new Set(
@@ -1158,7 +1421,9 @@ export async function getAssetHistory(id: string): Promise<AssetHistory> {
             request_type: true,
             status: true,
             date_requested: true,
+            date_resolved: true,
             employee_id: true,
+            recipient_id: true,
             asset_id: true,
             description: true,
           },
@@ -1169,10 +1434,16 @@ export async function getAssetHistory(id: string): Promise<AssetHistory> {
     // Names for everyone referenced on this sheet (bounded id list).
     try {
       const need = new Set<string>()
-      if (asset.assigned_to) need.add(asset.assigned_to)
+      if (asset?.assigned_to) need.add(asset.assigned_to)
       for (const r of repairs) if (r.reported_by) need.add(r.reported_by as string)
-      for (const r of matchedIssuances) if (r.employee_id) need.add(r.employee_id)
-      for (const r of matchedRequests) if (r.employee_id) need.add(r.employee_id)
+      for (const r of matchedIssuances) {
+        if (r.employee_id) need.add(r.employee_id)
+        if (r.created_by) need.add(r.created_by)
+      }
+      for (const r of matchedRequests) {
+        if (r.employee_id) need.add(r.employee_id)
+        if (r.recipient_id) need.add(r.recipient_id)
+      }
       const have = new Set(profiles.map((p) => p.id))
       const missing = [...need].filter((nid) => !have.has(nid)).slice(0, 100)
       if (missing.length > 0) {
@@ -1187,14 +1458,20 @@ export async function getAssetHistory(id: string): Promise<AssetHistory> {
     } catch { /* names fall back to Unknown */ }
 
     return {
-      assignedToName: asset.assigned_to ? (names.get(asset.assigned_to) ?? null) : null,
+      // A stock lot has no `assigned_to`; the holder is whoever received the
+      // most recent PAR/ICS on it.
+      assignedToName: asset?.assigned_to
+        ? (names.get(asset.assigned_to) ?? null)
+        : matchedIssuances.length > 0
+          ? (names.get(matchedIssuances[0].employee_id) ?? null)
+          : null,
       repairs: repairs.map((r) => ({
         id: r.id,
         asset_id: id,
         asset_label: assetLabel,
-        account_code: asset.account_code,
-        account_title: asset.account_title,
-        asset_type: asset.category,
+        account_code: asset?.account_code ?? stock?.account_code ?? null,
+        account_title: asset?.account_title ?? null,
+        asset_type: asset?.category ?? stock?.category ?? null,
         reported_by: r.reported_by,
         reporter_name: names.get(r.reported_by) ?? "Unknown employee",
         repair_date: r.repair_date.toISOString().slice(0, 10),
@@ -1204,25 +1481,48 @@ export async function getAssetHistory(id: string): Promise<AssetHistory> {
         technician: r.technician,
         created_at: r.created_at ? isoDateTime(r.created_at) : null,
       })),
-      issuances: matchedIssuances.map((r) => ({
-        id: r.id,
-        doc_type: r.doc_type,
-        doc_no: r.doc_no,
-        doc_date: isoDate(r.doc_date),
-        employee_id: r.employee_id,
-        employee_name: names.get(r.employee_id) ?? "Unknown employee",
-        quantity: r.quantity,
-        total_amount: num(r.total_amount),
-        created_at: isoDateTime(r.created_at),
-      })),
+      issuances: matchedIssuances.map((r) => {
+        const data = (r.issuance_data ?? {}) as {
+          description?: unknown;
+          unit?: unknown;
+        };
+        return {
+          id: r.id,
+          doc_type: r.doc_type,
+          doc_no: r.doc_no,
+          doc_date: isoDate(r.doc_date),
+          employee_id: r.employee_id,
+          employee_name: names.get(r.employee_id) ?? "Unknown employee",
+          quantity: r.quantity,
+          total_amount: num(r.total_amount),
+          created_at: isoDateTime(r.created_at),
+          assigned_by_name: r.created_by
+            ? (names.get(r.created_by) ?? "Unknown personnel")
+            : null,
+          request_id: r.request_id,
+          source: r.request_id ? ("request" as const) : ("direct" as const),
+          purpose:
+            typeof data.description === "string" && data.description.trim() !== ""
+              ? data.description.trim()
+              : null,
+          unit:
+            typeof data.unit === "string" && data.unit.trim() !== ""
+              ? data.unit.trim()
+              : null,
+        };
+      }),
       requests: matchedRequests.map((r) => ({
         id: r.id,
         request_type: r.request_type,
         status: r.status,
         date_requested: r.date_requested ? isoDateTime(r.date_requested) : null,
+        date_resolved: r.date_resolved ? isoDateTime(r.date_resolved) : null,
         employee_id: r.employee_id,
         employee_name: names.get(r.employee_id) ?? "Unknown employee",
         description: r.description,
+        handled_by_name: r.recipient_id
+          ? (names.get(r.recipient_id) ?? null)
+          : null,
       })),
     };
   } catch (e) {
@@ -1304,7 +1604,41 @@ export async function updateUnifiedAsset(
     }
   }
 
-  const before = await prisma.asset.findUnique({ where: { id }, select: { id: true, account_code: true, article: true } }).catch(() => null);
+  const before = await prisma.asset
+    .findUnique({
+      where: { id },
+      select: {
+        id: true,
+        account_code: true,
+        article: true,
+        assigned_to: true,
+        quantity: true,
+      },
+    })
+    .catch(() => null);
+
+  // An issued unit is owned by its PAR/ICS. Quantity, unit, status and end
+  // user must stay in sync with the accountability document, so they are not
+  // editable once the item is assigned — the stored values win.
+  const issuedCount = await prisma.issuanceRecord
+    .count({
+      where: { OR: [{ asset_id: id }, { inventory_id: id }] },
+    })
+    .catch(() => 0);
+  const stockRow =
+    source === "stock"
+      ? await prisma.inventoryItem
+          .findUnique({ where: { id }, select: { quantity: true } })
+          .catch(() => null)
+      : null;
+  const assigned =
+    !!before?.assigned_to ||
+    issuedCount > 0 ||
+    (before?.quantity != null && before.quantity <= 0) ||
+    (stockRow?.quantity != null && stockRow.quantity <= 0);
+  if (assigned) {
+    for (const key of ASSIGNED_LOCKED_KEYS) delete data[key];
+  }
 
   try {
     if (source === "stock") {
@@ -1312,7 +1646,7 @@ export async function updateUnifiedAsset(
       const stockData: Record<string, unknown> = {};
       const itemName = formData.get("article") as string | null;
       if (itemName) stockData["item_name"] = String(itemName).trim().slice(0, 500);
-      const unit = formData.get("unit") as string | null;
+      const unit = assigned ? null : (formData.get("unit") as string | null);
       if (unit) {
         const canonical = await resolveUnitName(unit);
         if (!canonical) {
@@ -1323,7 +1657,7 @@ export async function updateUnifiedAsset(
         }
         stockData["unit"] = canonical;
       }
-      const qtyRaw = formData.get("quantity");
+      const qtyRaw = assigned ? null : formData.get("quantity");
       if (qtyRaw) stockData["quantity"] = Number(qtyRaw);
       const loc = formData.get("location") as string | null;
       if (loc) stockData["location"] = String(loc).trim().slice(0, 500);
@@ -1354,8 +1688,23 @@ export async function updateUnifiedAsset(
           select: { id: true, account_code: true, article: true },
         });
       } else {
+        // Assigned stock rows may have no Asset row yet. Seed the locked
+        // columns from the inventory record so the new row matches the issued
+        // quantities instead of the (ignored) form values.
+        const seed = assigned
+          ? await prisma.inventoryItem
+              .findUnique({
+                where: { id },
+                select: { quantity: true, unit: true },
+              })
+              .catch(() => null)
+          : null;
         record = await prisma.asset.create({
-          data: { ...data, id },
+          data: {
+            ...data,
+            id,
+            ...(assigned ? { quantity: seed?.quantity ?? null, unit: seed?.unit ?? null } : {}),
+          },
           select: { id: true, account_code: true, article: true },
         });
       }

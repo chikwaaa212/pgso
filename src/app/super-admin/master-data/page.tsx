@@ -852,7 +852,7 @@ export default function SuperAdminMasterDataPage() {
                     matches={matchesStockHeader}
                     columns={[
                       { header: "Code", render: (s) => s.account_code ?? "—" },
-                      { header: "Asset type", render: (s) => s.asset_type ?? "—" },
+                      { header: "Stock type", render: (s) => s.asset_type ?? "—" },
                       { header: "Title", render: (s) => s.account_title ?? s.name },
                       {
                         header: "Status",

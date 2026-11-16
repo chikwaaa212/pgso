@@ -12,10 +12,10 @@ const MIGRATED: Array<[file: string, module: string, resources: string[]]> = [
   ["../app/personnel/dashboard/page.tsx", "personnel", ["dashboard"]],
   ["../app/personnel/deliveries/delivery-table.tsx", "personnel", ["deliveries"]],
   ["../app/personnel/inspections/page.tsx", "personnel", ["inspections", "inspections-air", "inspections-counts"]],
-  ["../app/personnel/inventory/page.tsx", "personnel", ["inventory", "inventory-stats"]],
+  ["../app/personnel/stocks/page.tsx", "personnel", ["inventory", "inventory-stats"]],
   ["../app/personnel/assets/page.tsx", "personnel", ["assets"]],
   ["../app/personnel/documents/page.tsx", "personnel", ["documents", "documents-counts", "documents-viewed"]],
-  ["../app/personnel/issues/page.tsx", "personnel", ["issues", "issues-type-options", "issues-completed"]],
+  ["../app/personnel/issues/page.tsx", "personnel", ["issues", "issues-completed"]],
   ["../app/personnel/issuances/page.tsx", "personnel", ["issuances"]],
   ["../app/personnel/requests/page.tsx", "personnel", ["requests"]],
   ["../app/personnel/repairs/page.tsx", "personnel", ["repairs"]],
@@ -25,7 +25,7 @@ const MIGRATED: Array<[file: string, module: string, resources: string[]]> = [
   ["../app/super-admin/requests/page.tsx", "super-admin", ["requests"]],
   ["../app/super-admin/repairs/page.tsx", "super-admin", ["repairs"]],
   ["../app/super-admin/logs/page.tsx", "super-admin", ["logs", "logs-modules"]],
-  ["../app/super-admin/inventory/page.tsx", "super-admin", ["inventory", "inventory-stats"]],
+  ["../app/super-admin/stocks/page.tsx", "super-admin", ["inventory", "inventory-stats"]],
   ["../app/super-admin/documents/page.tsx", "super-admin", ["documents", "documents-counts", "documents-viewed"]],
   ["../app/super-admin/assets/page.tsx", "super-admin", ["assets"]],
   ["../app/super-admin/issues/page.tsx", "super-admin", ["issues", "issues-type-options", "issues-completed"]],
@@ -66,7 +66,7 @@ describe("Phase 4: no ad-hoc list keys remain", () => {
       assert.match(body, /buildQueryKey\(\{/);
       for (const r of resources) {
         assert.ok(
-          body.includes(`resource: '${r}'`),
+          new RegExp(`resource:\\s*['"]${r}['"]`).test(body),
           `${f} must mint resource '${r}' via buildQueryKey`
         );
       }
@@ -113,7 +113,6 @@ describe("Phase 4: documented exceptions (static + record keys stay)", () => {
   it("static lookups keep persistable legacy keys", () => {
     assert.match(src("../app/personnel/assets/custom-columns.tsx"), /CLIENT_CACHE_KEYS\.assetCustomFields/);
     assert.match(src("../hooks/use-master-data.ts"), /pgso:master-data:active/);
-    assert.match(src("../app/personnel/inventory/page.tsx"), /inventory\}-filters/);
     assert.match(src("../app/personnel/assets/page.tsx"), /assets\}-filter-options/);
     assert.match(src("../app/super-admin/assets/page.tsx"), /adminAssets\}-filter-options/);
   });

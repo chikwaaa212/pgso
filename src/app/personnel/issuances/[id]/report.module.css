@@ -1,0 +1,536 @@
+/* ─── Issuance report page ([id]) ────────────────────────────────────────────
+   A workspace shell around the untouched Appendix 71/59 form: page header,
+   value/quantity summary, the document on the left, facts + related issuances
+   on the right. Matches the Assets / Issues / Stocks screens. */
+
+.page {
+  min-height: 100vh;
+  padding: 1.5rem 1rem 2.5rem;
+  background-color: #fff;
+}
+
+.shell {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  width: 100%;
+  max-width: 84rem;
+  margin-inline: auto;
+}
+
+/* ── Header ──────────────────────────────────────────────────────────────── */
+.header {
+  display: flex;
+  flex-direction: column;
+  gap: 0.875rem;
+  padding-bottom: 0.875rem;
+  border-bottom: 1px solid var(--color-navy-100);
+}
+
+@media (min-width: 960px) {
+  .header {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+  }
+}
+
+.headerMain {
+  min-width: 0;
+}
+
+.back {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3125rem;
+  margin-bottom: 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-navy-500);
+  text-decoration: none;
+  transition: color 0.15s;
+}
+
+.back:hover {
+  color: var(--color-navy-900);
+}
+
+.headline {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.docIcon {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 2.75rem;
+  height: 2.75rem;
+  border: 1px solid var(--color-navy-200);
+  border-radius: 10px;
+  background-color: #f8fafc;
+  color: var(--color-navy-700);
+}
+
+.docIcon[data-kind="PAR"] {
+  border-color: #bbf7d0;
+  background-color: #f0fdf4;
+  color: #15803d;
+}
+
+.docIcon[data-kind="ICS"] {
+  border-color: #bfdbfe;
+  background-color: #eff6ff;
+  color: #1d4ed8;
+}
+
+.headlineText {
+  min-width: 0;
+}
+
+.titleRow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.title {
+  margin: 0;
+  font-size: 1.5rem;
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  color: var(--color-navy-900);
+}
+
+.docTag {
+  display: inline-flex;
+  align-items: center;
+  height: 1.25rem;
+  padding-inline: 0.4rem;
+  border-radius: 3px;
+  background-color: var(--color-navy-100);
+  color: var(--color-navy-700);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.docTag[data-kind="PAR"] {
+  background-color: #dcfce7;
+  color: #166534;
+}
+
+.docTag[data-kind="ICS"] {
+  background-color: #dbeafe;
+  color: #1d4ed8;
+}
+
+.metaRow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.3125rem;
+}
+
+.meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.75rem;
+  color: var(--color-navy-500);
+}
+
+.meta strong {
+  font-weight: 600;
+  color: var(--color-navy-800);
+}
+
+.metaDot {
+  width: 3px;
+  height: 3px;
+  border-radius: 9999px;
+  background-color: var(--color-navy-300);
+}
+
+/* ── Actions (24px yellow) ───────────────────────────────────────────────── */
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.btnPrimary,
+.btnMuted {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.3125rem;
+  flex-shrink: 0;
+  height: 1.5rem;
+  padding-block: 0;
+  padding-inline: 0.625rem;
+  border-radius: 4px;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  text-decoration: none;
+  transition: background-color 0.15s, border-color 0.15s, opacity 0.15s;
+}
+
+.btnPrimary {
+  border: 1px solid var(--color-yellow-600);
+  background-color: var(--color-yellow-500);
+  color: var(--color-navy-900);
+  opacity: 0.9;
+}
+
+.btnPrimary:hover {
+  background-color: var(--color-yellow-400);
+  border-color: var(--color-yellow-500);
+  opacity: 1;
+}
+
+.btnMuted {
+  border: 1px solid rgba(234, 179, 8, 0.4);
+  background-color: rgba(234, 179, 8, 0.2);
+  color: var(--color-navy-900);
+}
+
+.btnMuted:hover {
+  background-color: rgba(234, 179, 8, 0.32);
+  border-color: rgba(234, 179, 8, 0.55);
+}
+
+.btnPrimary:focus-visible,
+.btnMuted:focus-visible {
+  outline: 2px solid var(--color-navy-900);
+  outline-offset: 2px;
+}
+
+.btnPrimary:disabled,
+.btnMuted:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* ── Summary tiles ───────────────────────────────────────────────────────── */
+.summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  gap: 0.625rem;
+}
+
+.tile {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.75rem 0.875rem;
+  background-color: #fff;
+  border: 1px solid var(--color-navy-200);
+  border-radius: 0.75rem;
+}
+
+.tileLabel {
+  display: flex;
+  align-items: center;
+  gap: 0.3125rem;
+  margin: 0;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-navy-500);
+}
+
+.tileValue {
+  margin: 0;
+  font-size: 1.0625rem;
+  font-weight: 700;
+  line-height: 1.25;
+  color: var(--color-navy-900);
+  font-variant-numeric: tabular-nums;
+}
+
+.tileMeta {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--color-navy-500);
+}
+
+/* ── Layout ──────────────────────────────────────────────────────────────── */
+.layout {
+  display: grid;
+  gap: 1rem;
+  align-items: start;
+}
+
+@media (min-width: 1100px) {
+  .layout {
+    grid-template-columns: minmax(0, 1fr) 20rem;
+  }
+}
+
+.docColumn {
+  min-width: 0;
+}
+
+.paper {
+  display: flex;
+  justify-content: center;
+  padding: 1rem;
+  background-color: #fff;
+  border: 1px solid var(--color-navy-200);
+  border-radius: 8px;
+  box-shadow: 0 10px 28px rgb(27 42 74 / 0.08);
+  overflow-x: auto;
+}
+
+/* ── Sidebar cards ───────────────────────────────────────────────────────── */
+.side {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  min-width: 0;
+}
+
+.card {
+  padding: 0.875rem 1rem 1rem;
+  background-color: #fff;
+  border: 1px solid var(--color-navy-200);
+  border-radius: 4px;
+}
+
+.cardTitle {
+  margin: 0 0 0.625rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--color-navy-900);
+}
+
+.facts {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+}
+
+.factRow {
+  display: grid;
+  grid-template-columns: 6.5rem minmax(0, 1fr);
+  gap: 0.625rem;
+  align-items: baseline;
+  padding: 0.4375rem 0;
+  border-bottom: 1px solid var(--color-navy-100);
+}
+
+.factRow:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.factKey {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--color-navy-500);
+}
+
+.factValue {
+  margin: 0;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  line-height: 1.45;
+  color: var(--color-navy-900);
+  overflow-wrap: anywhere;
+}
+
+.factMuted {
+  font-weight: 400;
+  color: var(--color-navy-400);
+}
+
+/* Related issuances */
+.related {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.relatedItem {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.625rem;
+  border: 1px solid var(--color-navy-200);
+  border-radius: 4px;
+  transition: border-color 0.15s, background-color 0.15s;
+}
+
+.relatedItem:hover {
+  border-color: var(--color-navy-300);
+  background-color: #f8fafc;
+}
+
+.relatedBody {
+  min-width: 0;
+  flex: 1;
+}
+
+.relatedMain {
+  display: block;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--color-navy-900);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.relatedMeta {
+  display: block;
+  margin-top: 0.0625rem;
+  font-size: 0.75rem;
+  color: var(--color-navy-500);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.relatedKind {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  height: 1.125rem;
+  padding-inline: 0.375rem;
+  border-radius: 3px;
+  background-color: var(--color-navy-100);
+  color: var(--color-navy-700);
+  font-size: 0.625rem;
+  font-weight: 700;
+}
+
+.relatedKind[data-kind="PAR"] {
+  background-color: #dcfce7;
+  color: #166534;
+}
+
+.relatedKind[data-kind="ICS"] {
+  background-color: #dbeafe;
+  color: #1d4ed8;
+}
+
+.relatedOpen {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  height: 1.5rem;
+  padding-inline: 0.625rem;
+  border: 1px solid rgba(234, 179, 8, 0.4);
+  border-radius: 4px;
+  background-color: rgba(234, 179, 8, 0.2);
+  color: var(--color-navy-900);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: background-color 0.15s, border-color 0.15s;
+}
+
+.relatedOpen:hover {
+  background-color: rgba(234, 179, 8, 0.32);
+  border-color: rgba(234, 179, 8, 0.55);
+}
+
+.emptyRelated {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--color-navy-500);
+}
+
+/* ── Loading skeleton ────────────────────────────────────────────────────── */
+.sk {
+  display: block;
+  border-radius: 4px;
+  background-color: var(--color-navy-100);
+  animation: skPulse 1.6s ease-in-out infinite;
+}
+
+@keyframes skPulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+.paperSkeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  width: 100%;
+  max-width: 52rem;
+  min-height: 34rem;
+  padding: 1.5rem;
+  background-color: #fff;
+  border: 1px solid var(--color-navy-200);
+  border-radius: 4px;
+}
+
+/* ── Print: only the form itself, inset from the paper edge ──────────────── */
+@page {
+  size: A4 portrait;
+  margin: 0;
+}
+
+@media print {
+  .page {
+    min-height: 0;
+    padding: 10mm;
+    background: #fff;
+  }
+
+  .shell {
+    display: block;
+    max-width: none;
+    min-height: 0;
+    gap: 0;
+  }
+
+  .header,
+  .actions,
+  .summary,
+  .side {
+    display: none !important;
+  }
+
+  .layout {
+    display: block;
+  }
+
+  .docColumn {
+    width: 100%;
+  }
+
+  .paper {
+    width: 100%;
+    max-width: none;
+    padding: 0;
+    border: none;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    overflow: visible;
+  }
+}

@@ -90,7 +90,9 @@ function itemStatusLabel(status: string | undefined) {
 }
 
 function deliveryLabel(value: string | null | undefined) {
-  return value === "awaiting" ? "Waiting for arrival" : "Delivered";
+  if (value === "awaiting") return "Waiting for arrival";
+  if (value === "arrival") return "Arrival";
+  return "Delivered";
 }
 
 function Pill({ label, tone }: { label: string; tone: Tone }) {

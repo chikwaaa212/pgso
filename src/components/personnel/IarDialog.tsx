@@ -60,6 +60,7 @@ export function IarDialog({
   deliveryRef,
   hasSavedInspection = false,
   triggerClassName,
+  label = "Generate IAR",
 }: {
   deliveryId: string;
   deliveryRef: string;
@@ -68,6 +69,8 @@ export function IarDialog({
   hasSavedInspection?: boolean;
   /** Optional trigger styling (e.g. compact 24px row actions). */
   triggerClassName?: string;
+  /** Optional trigger label (defaults to "Generate IAR"). */
+  label?: string;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -174,7 +177,7 @@ export function IarDialog({
             triggerClassName ?? "h-8"
           )}
         >
-          Generate IAR
+          {label}
         </Button>
       </DialogTrigger>
 

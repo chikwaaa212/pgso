@@ -1,6 +1,19 @@
 "use client";
 
-import { Bar, BarChart, CartesianGrid, Line, LineChart, XAxis, YAxis } from "recharts";import { Card } from "@/components/ui/card";
+import { Bar, BarChart, CartesianGrid, Line, LineChart, XAxis, YAxis } from "recharts";
+import type { ComponentType, ReactNode } from "react";
+import {
+  AlertTriangle,
+  CalendarDays,
+  FileText,
+  Info,
+  Lightbulb,
+  Sparkles,
+  TrendingUp,
+  Wallet,
+} from "lucide-react";
+import { Card } from "@/components/ui/card";
+import styles from "../workspace.module.css";
 import {
   ChartContainer,
   ChartLegend,
@@ -11,7 +24,6 @@ import {
 } from "@/components/ui/chart";
 import type { SessionResult } from "./actions";
 import type { EvidenceRef } from "@/lib/ppmp/analytics/types";
-import type { ReactNode } from "react";
 
 function peso(cents: number | null): string {
   if (cents === null || cents === undefined) return "—";
@@ -34,6 +46,32 @@ function fmtQty(qty: number | null): string {
 /** Plain-language lead paragraph under each card heading. */
 function Interpretation({ children }: { children: ReactNode }) {
   return <p className="mt-2 text-sm leading-relaxed text-navy-900">{children}</p>;
+}
+
+/** Consistent card heading with an icon and a numbered kicker. */
+function SectionHead({
+  icon: Icon,
+  kicker,
+  title,
+}: {
+  icon: ComponentType<{ size?: number | string; "aria-hidden"?: boolean | "true" | "false" }>;
+  kicker: string;
+  title: string;
+}) {
+  return (
+    <div className="flex items-start gap-2.5">
+      <span
+        className="mt-0.5 inline-flex size-7 shrink-0 items-center justify-center rounded-md bg-navy-100 text-navy-700"
+        aria-hidden="true"
+      >
+        <Icon size={15} />
+      </span>
+      <div>
+        <p className="text-[10px] font-bold uppercase tracking-[0.09em] text-navy-400">{kicker}</p>
+        <h2 className="text-base font-bold text-navy-900">{title}</h2>
+      </div>
+    </div>
+  );
 }
 
 const SERIES_COLORS = ["#1b2a4a", "#b8912a", "#2d4a7a", "#8a9bb5", "#4a6080"];
@@ -111,48 +149,89 @@ export function ResultsView({ result }: { result: SessionResult }) {
   }));
   return (
     <div className="grid gap-4">
-      <Card className="p-6">
-        <h2 className="text-lg font-semibold">Overview</h2>
-        <p className="mt-1 text-sm text-zinc-600">
-          {files.map((f) => f.filename).join(" · ")}
-          {result.configVersion !== null && result.configVersion !== undefined
-            ? ` · rules v${result.configVersion}`
-            : ""}
-        </p>
-        <dl className="mt-4 grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
-          {[
-            ["Files", String(report.overview.files)],
-            ["Fiscal years", report.overview.years.join(", ") || "—"],
-            ["Line items", report.overview.line_items.toLocaleString("en-PH")],
-            ["Total est. budget", peso(report.overview.total_budget_cents)],
-            ["Offices", String(report.overview.offices)],
-            ["Categories", String(report.overview.categories)],
-            ["Budget-only lines", String(report.overview.budget_only_lines)],
-            ["Low-confidence lines", String(report.overview.low_confidence_lines)],
-          ].map(([label, value]) => (
-            <div key={label} className="rounded-md border border-navy-200 px-3 py-2">
-              <dt className="text-xs text-zinc-500">{label}</dt>
-              <dd className="truncate font-semibold text-navy-900" title={value}>{value}</dd>
-            </div>
-          ))}
-        </dl>
-        {chartData.length > 0 ? (
-          <ChartContainer config={yearlyChartConfig} className="mt-4 max-h-[280px] w-full">
-            <BarChart accessibilityLayer data={chartData}>
-              <CartesianGrid vertical={false} />
-              <XAxis dataKey="year" tickLine={false} tickMargin={10} axisLine={false} />
-              <YAxis tickLine={false} axisLine={false} width={48} allowDecimals={false} />
-              <ChartTooltip cursor={false} content={<ChartTooltipContent indicator="dashed" />} />
-              <ChartLegend content={<ChartLegendContent />} />
-              <Bar dataKey="budget" fill="var(--color-budget)" radius={4} />
-              <Bar dataKey="items" fill="var(--color-items)" radius={4} />
-            </BarChart>
-          </ChartContainer>
-        ) : null}
+      <Card className="overflow-hidden p-0">
+        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-navy-100 bg-gradient-to-b from-navy-50/70 to-transparent px-6 py-4">
+          <div className="min-w-0">
+            <p className="text-[10px] font-bold uppercase tracking-[0.09em] text-navy-400">
+              At a glance
+            </p>
+            <h2 className="text-base font-bold text-navy-900">Overview</h2>
+            <p className="mt-1 flex flex-wrap gap-x-2 gap-y-0.5 text-xs text-zinc-500">
+              {files.map((f) => f.filename).join(" · ")}
+              {result.configVersion !== null && result.configVersion !== undefined
+                ? ` · rules v${result.configVersion}`
+                : ""}
+            </p>
+          </div>
+          <span className={styles.status} data-tone="ok">
+            <span className={styles.statusDot} aria-hidden="true" />
+            Parsed from {report.overview.files} file{report.overview.files === 1 ? "" : "s"}
+          </span>
+        </div>
+        <div className="p-6">
+          <div className={styles.kpiGrid}>
+            {([
+              ["Files compared", String(report.overview.files), "info", "Uploaded workbooks in this run"],
+              [
+                "Fiscal years",
+                report.overview.years.join(", ") || "—",
+                "warn",
+                "Years covered by the parsed rows",
+              ],
+              [
+                "Line items",
+                report.overview.line_items.toLocaleString("en-PH"),
+                "ok",
+                "Readable procurement lines",
+              ],
+              [
+                "Total est. budget",
+                peso(report.overview.total_budget_cents),
+                "info",
+                "Sum of recorded budgets",
+              ],
+              ["Offices", String(report.overview.offices), "neutral", "Distinct implementing units"],
+              ["Categories", String(report.overview.categories), "neutral", "Distinct item groups"],
+              [
+                "Budget-only lines",
+                String(report.overview.budget_only_lines),
+                "warn",
+                "Rows with a budget but no quantity",
+              ],
+              [
+                "Low-confidence lines",
+                String(report.overview.low_confidence_lines),
+                "bad",
+                "Rows needing a manual check",
+              ],
+            ] as const).map(([label, value, tone, meta]) => (
+              <div key={label} className={styles.kpi} data-tone={tone}>
+                <p className={styles.kpiLabel}>{label}</p>
+                <p className={styles.kpiValue} title={value}>
+                  {value}
+                </p>
+                <p className={styles.kpiMeta}>{meta}</p>
+              </div>
+            ))}
+          </div>
+          {chartData.length > 0 ? (
+            <ChartContainer config={yearlyChartConfig} className="mt-5 max-h-[280px] w-full">
+              <BarChart accessibilityLayer data={chartData}>
+                <CartesianGrid vertical={false} />
+                <XAxis dataKey="year" tickLine={false} tickMargin={10} axisLine={false} />
+                <YAxis tickLine={false} axisLine={false} width={48} allowDecimals={false} />
+                <ChartTooltip cursor={false} content={<ChartTooltipContent indicator="dashed" />} />
+                <ChartLegend content={<ChartLegendContent />} />
+                <Bar dataKey="budget" fill="var(--color-budget)" radius={4} />
+                <Bar dataKey="items" fill="var(--color-items)" radius={4} />
+              </BarChart>
+            </ChartContainer>
+          ) : null}
+        </div>
       </Card>
 
       <Card className="p-6">
-        <h2 className="text-lg font-semibold">Quarterly schedule</h2>
+        <SectionHead icon={CalendarDays} kicker="Timing" title="Quarterly schedule" />
         <p className="mt-1 text-sm text-zinc-600">{result.report.quarterly.rule}</p>
         {result.report.quarterly.cells.length === 0 ? (
           <p className="mt-2 text-sm text-zinc-600">
@@ -194,7 +273,7 @@ export function ResultsView({ result }: { result: SessionResult }) {
       </Card>
 
       <Card className="p-6">
-        <h2 className="text-lg font-semibold">File insights</h2>
+        <SectionHead icon={FileText} kicker="Contents" title="File insights" />
         <p className="mt-1 text-sm text-zinc-600">
           What this file contains — no history needed. Figures below are computed directly from the parsed lines.
         </p>
@@ -288,7 +367,7 @@ export function ResultsView({ result }: { result: SessionResult }) {
 
       <div className="grid gap-4 lg:grid-cols-2">
       <Card className="p-6">
-        <h2 className="text-lg font-semibold">Trends</h2>
+        <SectionHead icon={TrendingUp} kicker="Movement" title="Trends" />
         {report.trends.length === 0 ? (
           result.report.fileInsights.deliveryMomentum ? (
             <div className="mt-2 text-sm">
@@ -403,7 +482,7 @@ export function ResultsView({ result }: { result: SessionResult }) {
       </Card>
 
       <Card className="p-6">
-        <h2 className="text-lg font-semibold">Potential anomalies</h2>
+        <SectionHead icon={AlertTriangle} kicker="For review" title="Potential anomalies" />
         <p className="mt-1 text-sm text-zinc-600">
           Rule-based flags for human review — not findings of error, fraud, or impropriety.
         </p>
@@ -439,7 +518,7 @@ export function ResultsView({ result }: { result: SessionResult }) {
 
       <div className="grid gap-4 lg:grid-cols-2">
       <Card className="p-6">
-        <h2 className="text-lg font-semibold">Cost analysis</h2>
+        <SectionHead icon={Wallet} kicker="Spend" title="Cost analysis" />
         {report.costs.length === 0 ? (
           result.report.fileInsights.byCategory.some((c) => c.budget_cents !== null) ? (
             <div className="mt-2 text-sm">
@@ -556,7 +635,7 @@ export function ResultsView({ result }: { result: SessionResult }) {
       </Card>
 
       <Card className="p-6">
-        <h2 className="text-lg font-semibold">Forecast</h2>
+        <SectionHead icon={Sparkles} kicker="Projection" title="Forecast" />
         {report.forecasts.length === 0 ? (
           result.report.quarterly.cells.some((c) => c.budget_cents !== null && c.budget_cents !== undefined) ? (
             <div className="mt-2 text-sm">
@@ -607,7 +686,7 @@ export function ResultsView({ result }: { result: SessionResult }) {
       </div>
 
       <Card className="p-6">
-        <h2 className="text-lg font-semibold">Recommendations for review</h2>
+        <SectionHead icon={Lightbulb} kicker="Advisory" title="Recommendations for review" />
         <p className="mt-1 text-sm text-zinc-600">Advisory only — PGSO personnel make the final decision.</p>
         {report.recommendations.length === 0 ? (
           <p className="mt-2 text-sm text-zinc-600">Nothing exceeds the review thresholds.</p>
@@ -630,7 +709,7 @@ export function ResultsView({ result }: { result: SessionResult }) {
 
       {report.limitations.length > 0 ? (
         <Card className="p-6">
-          <h2 className="text-lg font-semibold">Limitations</h2>
+          <SectionHead icon={Info} kicker="Caveats" title="Limitations" />
           <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-zinc-600">
             {report.limitations.map((l, i) => (
               <li key={i}>{l}</li>

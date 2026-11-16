@@ -3,10 +3,10 @@
 import { requirePersonnelScope } from '@/lib/personnel-scope'
 import {
   getAgingReport,
-  getAssetConditionReport,
+  getAssetAvailabilityReport,
   getQuarterlyIssuanceReport,
   type AgingReport,
-  type AssetConditionReport,
+  type AssetAvailabilityReport,
   type QuarterlyIssuanceReport,
   type ReportPortal,
 } from '@/lib/reporting-queries'
@@ -39,7 +39,7 @@ export async function fetchQuarterlyIssuanceReport(opts: {
   return getQuarterlyIssuanceReport(opts)
 }
 
-export async function fetchAssetConditionReport(): Promise<AssetConditionReport> {
+export async function fetchAssetAvailabilityReport(): Promise<AssetAvailabilityReport> {
   await requirePersonnelScope()
-  return getAssetConditionReport()
+  return getAssetAvailabilityReport()
 }

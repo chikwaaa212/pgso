@@ -9,7 +9,7 @@ describe("dead code removed (no orphaned readers)", () => {
   const all = [
     "app/personnel/documents/actions.ts",
     "app/personnel/issuances/actions.ts",
-    "app/personnel/inventory/actions.ts",
+    "app/personnel/stocks/actions.ts",
     "app/personnel/repairs/actions.ts",
     "app/super-admin/browse/actions.ts",
     "app/employee/actions.ts",

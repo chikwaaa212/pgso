@@ -7,3 +7,16 @@
 .main {
   flex: 1 1 0%;
 }
+
+/* Print: no full-viewport app frame — prevents an extra blank sheet after the
+   document (root min-height 100vh would otherwise spill onto page 2). */
+@media print {
+  .root {
+    display: block;
+    min-height: 0;
+  }
+
+  .main {
+    flex: none;
+  }
+}

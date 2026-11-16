@@ -1,16 +1,18 @@
 "use client";
 
-import { Suspense, useCallback, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
-  Check,
-  Loader2,
-  Pencil,
-  Play,
-  Receipt,
-  RotateCcw,
+  CircleCheck,
+  Clock3,
+  LoaderCircle,
+  PackageSearch,
+  Plus,
+  Wrench,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Card } from "@/components/ui/card";
+import { PageHeader } from "@/components/personnel/PageHeader";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
@@ -32,6 +34,7 @@ import {
 } from "@/components/ui/select";
 import { DatePicker } from "@/components/ui/date-picker";
 import { TablePager, FIXED_PAGE_SIZE } from "@/components/personnel/TablePager";
+import { EmptySearchState } from "@/components/personnel/EmptySearchState";
 import { ReceiptLoading } from "@/components/personnel/ReceiptLoading";
 import { RepairCreateDialog } from "@/components/personnel/RepairCreateDialog";
 import { useScanPrefill } from "@/hooks/use-scan-prefill";
@@ -40,6 +43,7 @@ import { useCachedAction } from "@/hooks/use-cached-action";
 import { useReceipt } from "@/hooks/use-receipt";
 import { buildQueryKey, resourcePrefix } from "@/lib/query-keys";
 import { CLIENT_CACHE_KEYS, bustClientCache } from "@/lib/client-cache";
+import { cn } from "@/lib/utils";
 import RepairsLoading from "./loading";
 import { RepairReceipt } from "./repair-receipt";
 import { ReceiptOverlay } from "../documents/receipt-overlay";
@@ -54,6 +58,7 @@ import {
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import styles from "../dashboard/page.module.css";
 import air from "../inspections/air-section.module.css";
+import stockStyles from "../stocks/page.module.css";
 import rep from "./page.module.css";
 
 function tone(status: string | null) {
@@ -108,6 +113,29 @@ const STATUS_TABS = [
   { value: "completed", label: "Completed" },
 ] as const;
 
+type StatusTab = (typeof STATUS_TABS)[number]["value"];
+
+/** Yellow 24px action buttons — same treatment as Assets / Stocks. */
+const ACTION_BTN = cn(
+  "h-6 shrink-0 gap-1.5 whitespace-nowrap rounded-[4px] border border-yellow-500 bg-yellow-500 px-3 text-xs font-semibold",
+  "text-navy-900 opacity-[0.85] transition-colors hover:bg-yellow-400 hover:text-navy-900 hover:opacity-100 disabled:opacity-40"
+);
+
+/** Neutral 24px details button — label only, no icon. */
+const DETAIL_BTN = cn(
+  "h-6 shrink-0 whitespace-nowrap rounded-[4px] border border-navy-200 bg-white px-3 text-xs font-semibold",
+  "text-navy-700 transition-colors hover:border-navy-300 hover:bg-navy-50"
+);
+
+/** The whole ticket window is loaded once; search/status/page stay local. */
+const FETCH_LIMIT = 1000;
+
+const NUMBER = new Intl.NumberFormat("en-PH");
+
+function fmtNumber(value: number) {
+  return NUMBER.format(value);
+}
+
 export default function PersonnelRepairsPage() {
   return (
     <Suspense fallback={<RepairsLoading />}>
@@ -117,43 +145,122 @@ export default function PersonnelRepairsPage() {
 }
 
 function PersonnelRepairsContent() {
-  const [query, setQuery] = useState("");
-  const [statusTab, setStatusTab] =
-    useState<(typeof STATUS_TABS)[number]["value"]>("all");
-  // Fixed 20 rows/page (no selector) — server pages the DB window.
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
+  const [query, setQuery] = useState(searchParams.get("q") ?? "");
+  const [statusTab, setStatusTab] = useState<StatusTab>(() => {
+    const fromUrl = searchParams.get("status");
+    return STATUS_TABS.some((t) => t.value === fromUrl)
+      ? (fromUrl as StatusTab)
+      : "all";
+  });
+  // Fixed 10 rows/page (no selector) — paging runs in memory.
   const pageSize = FIXED_PAGE_SIZE;
-  const [page, setPage] = useState(1);
-  const debouncedQuery = useDebouncedValue(query, 250);
-  // Server-paged list: search/status/page filter in the DB.
+  const [page, setPage] = useState(
+    Math.max(1, Number(searchParams.get("page")) || 1)
+  );
+  // Only the URL write is debounced — the table reads `query` directly so
+  // typing filters on the same keystroke, with no fetch involved.
+  const debouncedQuery = useDebouncedValue(query, 300);
+  const [actingId, setActingId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState("");
+
+  // URL persistence: page/search/status survive reload + back-navigation.
+  const setUrl = useCallback(
+    (next: Record<string, string | null>) => {
+      const params = new URLSearchParams(searchParams.toString());
+      for (const [k, v] of Object.entries(next)) {
+        if (v === null || v === "" || v === "all") params.delete(k);
+        else params.set(k, v);
+      }
+      router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+    },
+    [searchParams, router, pathname]
+  );
+
+  useEffect(() => {
+    setUrl({
+      page: page === 1 ? null : String(page),
+      q: debouncedQuery || null,
+      status: statusTab,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, debouncedQuery, statusTab]);
+
+  // One read for the whole own-ticket window. Search, status, and paging
+  // then run in memory so results are instant and never re-fetch or show a
+  // stale page while typing.
   const cacheKey = buildQueryKey({
     module: 'personnel',
     resource: 'repairs',
-    page,
-    pageSize,
-    filters: { q: debouncedQuery, status: statusTab },
+    page: 1,
+    pageSize: FETCH_LIMIT,
+    filters: { scope: "all" },
   });
   const {
     data: pageData,
     loading,
-    isValidating,
+    error: pageError,
     refresh: refreshRows,
+    mutate,
   } = useCachedAction(
     cacheKey,
-    () =>
-      getRepairsPage({
-        page,
-        pageSize,
-        q: debouncedQuery,
-        status: statusTab,
-      }),
+    () => getRepairsPage({ page: 1, pageSize: FETCH_LIMIT }),
     {
       staleTime: 30_000,
     }
   );
   const rows = useMemo(() => pageData?.rows ?? [], [pageData]);
-  const total = pageData?.total ?? 0;
-  const [actingId, setActingId] = useState<string | null>(null);
-  const [actionError, setActionError] = useState("");
+
+  // Optimistic create: the new pending ticket paints instantly at the top of
+  // the list while `createRepair` is still running. Success replaces it with
+  // the server row via `reload`; failure removes it.
+  const handleOptimisticCreate = useCallback(
+    (row: RepairRow) => {
+      // Jump to the first page + "All" tab so the new pending ticket is
+      // actually visible instead of being hidden by the active filter.
+      setPage(1);
+      setStatusTab("all");
+      mutate((prev) =>
+        prev
+          ? { rows: [row, ...prev.rows], total: prev.total + 1 }
+          : { rows: [row], total: 1 }
+      );
+    },
+    [mutate]
+  );
+
+  const handleOptimisticRemove = useCallback(
+    (id: string) => {
+      mutate((prev) =>
+        prev
+          ? {
+              rows: prev.rows.filter((row) => row.id !== id),
+              total: Math.max(0, prev.total - 1),
+            }
+          : prev
+      );
+    },
+    [mutate]
+  );
+
+  /** Patch one row in place — used by optimistic start/complete/edit writes. */
+  const patchRow = useCallback(
+    (row: RepairRow) => {
+      mutate((prev) =>
+        prev
+          ? {
+              ...prev,
+              rows: prev.rows.map((current) =>
+                current.id === row.id ? row : current
+              ),
+            }
+          : prev
+      );
+    },
+    [mutate]
+  );
 
   // Create-repair dialog (shared with the super-admin portal). A scanned
   // asset tag opens it with the asset + current holder prefilled.
@@ -167,13 +274,22 @@ function PersonnelRepairsContent() {
   );
 
   const [editOpen, setEditOpen] = useState(false);
-  const [editing, setEditing] = useState<RepairRow | null>(null);  const [editDate, setEditDate] = useState("");
+  const [editing, setEditing] = useState<RepairRow | null>(null);
+  const [editDate, setEditDate] = useState("");
   const [editDescription, setEditDescription] = useState("");
   const [editTechnician, setEditTechnician] = useState("");
   const [editCost, setEditCost] = useState("");
   const [editStatus, setEditStatus] = useState("pending");
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError] = useState("");
+
+  // Read-only details overlay — keeps the table to the essential columns.
+  const [detailOpen, setDetailOpen] = useState(false);
+  const [detailRow, setDetailRow] = useState<RepairRow | null>(null);
+  const openDetails = (row: RepairRow) => {
+    setDetailRow(row);
+    setDetailOpen(true);
+  };
 
   // Receipt viewer — modal-only (no dedicated page). First open fetches
   // with a spinner; repeats paint instantly from memory/sessionStorage
@@ -221,11 +337,39 @@ function PersonnelRepairsContent() {
     refreshRows();
   };
 
-  // Server already filtered + paged.
-  const visible = rows;
+  // Local filtering + paging over the loaded ticket window.
+  const filtered = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    return rows.filter((row) => {
+      const status = row.status ?? "pending";
+      if (statusTab !== "all" && status !== statusTab) return false;
+      if (!needle) return true;
+      return [
+        row.asset_label,
+        row.account_code,
+        row.account_title,
+        row.asset_type,
+        row.reporter_name,
+        row.description,
+        row.technician,
+        statusLabel(row.status),
+        fmt(row.repair_date),
+        fmt(row.created_at),
+        fmtCost(row.cost),
+      ].some(
+        (value) => value != null && value.toLowerCase().includes(needle)
+      );
+    });
+  }, [rows, query, statusTab]);
+
+  const total = filtered.length;
+  const hasFilters = query.trim() !== "" || statusTab !== "all";
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
   const safePage = Math.min(Math.max(1, page), pageCount);
-  const searching = query.trim() !== debouncedQuery.trim();
+  const visible = filtered.slice(
+    (safePage - 1) * pageSize,
+    safePage * pageSize
+  );
 
   const stats = useMemo(() => {
     let pending = 0;
@@ -236,33 +380,48 @@ function PersonnelRepairsContent() {
       else if (r.status === "in_progress") inProgress += 1;
       else pending += 1;
     }
-    return { total, pending, inProgress, completed };
-  }, [rows, total]);
+    return { total: rows.length, pending, inProgress, completed };
+  }, [rows]);
 
-  // Cold start only: background refetches keep stale rows visible with
-  // an "updating…" badge instead of flashing the full skeleton.
+  const clearFilters = () => {
+    setQuery("");
+    setStatusTab("all");
+    setPage(1);
+  };
+
+  // Cold start only: background refetches keep stale rows visible instead of
+  // flashing the full skeleton.
   if (loading && rows.length === 0) {
     return <RepairsLoading />;
   }
 
   async function onProgress(id: string, status: string) {
     if (actingId) return;
+    const previous = rows.find((row) => row.id === id) ?? null;
     setActingId(id);
     setActionError("");
+    // Paint the new status immediately; the server write runs behind it.
+    if (previous) patchRow({ ...previous, status });
     try {
       const res = await setRepairStatus(id, status);
       if (!res.success) {
+        if (previous) patchRow(previous);
         const msg = res.error ?? "Failed to update the repair.";
         setActionError(msg);
         toast.error(msg, { duration: 2000, closeButton: true });
         return;
       }
       reload();
-      toast.success("Repair updated successfully.", {
-        duration: 2000,
-        closeButton: true,
-      });
+      toast.success(
+        status === "completed"
+          ? "Repair completed."
+          : status === "in_progress"
+            ? "Repair started."
+            : "Repair updated.",
+        { duration: 2000, closeButton: true }
+      );
     } catch {
+      if (previous) patchRow(previous);
       const msg = "Failed to update the repair. Please try again.";
       setActionError(msg);
       toast.error(msg, { duration: 2000, closeButton: true });
@@ -272,6 +431,7 @@ function PersonnelRepairsContent() {
   }
 
   function openEdit(row: RepairRow) {
+    setDetailOpen(false);
     setEditing(row);
     setEditDate(row.repair_date.slice(0, 10));
     setEditDescription(row.description);
@@ -285,6 +445,7 @@ function PersonnelRepairsContent() {
   function openStart(row: RepairRow) {
     // Starting a repair requires the full info — open the form with
     // progress preset to in_progress instead of flipping status directly.
+    setDetailOpen(false);
     setEditing(row);
     setEditDate(row.repair_date.slice(0, 10));
     setEditDescription(row.description);
@@ -298,6 +459,7 @@ function PersonnelRepairsContent() {
   function openComplete(row: RepairRow) {
     // Completing requires the final info (technician + cost) — collect it
     // in the form instead of flipping status directly.
+    setDetailOpen(false);
     setEditing(row);
     setEditDate(row.repair_date.slice(0, 10));
     setEditDescription(row.description);
@@ -310,10 +472,22 @@ function PersonnelRepairsContent() {
 
   async function onEditSave() {
     if (!editing || editSaving) return;
+    const target = editing;
+    const optimistic: RepairRow = {
+      ...target,
+      repair_date: editDate,
+      description: editDescription.trim(),
+      technician: editTechnician.trim() || null,
+      cost: editCostNum,
+      status: editStatus,
+    };
     setEditSaving(true);
     setEditError("");
+    // Instant close + instant row patch; the write runs in the background.
+    setEditOpen(false);
+    patchRow(optimistic);
     try {
-      const res = await updateRepair(editing.id, {
+      const res = await updateRepair(target.id, {
         repairDate: editDate,
         description: editDescription,
         technician: editTechnician,
@@ -321,22 +495,23 @@ function PersonnelRepairsContent() {
         status: editStatus,
       });
       if (!res.success) {
+        patchRow(target);
         const msg = res.error ?? "Failed to update the repair.";
         setEditError(msg);
         toast.error(msg, { duration: 2000, closeButton: true });
         return;
       }
-      setEditOpen(false);
       setEditing(null);
       reload();
       const doneLabel =
         editStatus === "completed"
-          ? "Repair completed successfully."
+          ? "Repair completed."
           : editStatus === "in_progress"
-            ? "Repair started successfully."
-            : "Repair updated successfully.";
+            ? "Repair started."
+            : "Repair updated.";
       toast.success(doneLabel, { duration: 2000, closeButton: true });
     } catch {
+      patchRow(target);
       const msg = "Failed to update the repair. Please try again.";
       setEditError(msg);
       toast.error(msg, { duration: 2000, closeButton: true });
@@ -359,28 +534,29 @@ function PersonnelRepairsContent() {
 
   return (
     <section className={styles.section}>
-      <div className={styles.headerRow}>
-        <div>
-          <h1 className={styles.title}>Repairs</h1>
-          <p className={styles.subtitle}>
-            {total} {total === 1 ? "ticket" : "tickets"} found · only your tickets
-            {stats.pending > 0 ? ` · ${stats.pending} pending on this page` : ""}
-            {(isValidating || searching) ? " · updating…" : ""}
-          </p>
-        </div>
-        <div className={styles.actions}>
-          <Button
-            type="button"
-            onClick={() => {
-              setScanPrefill(null);
-              setDialogOpen(true);
-            }}
-            className="h-8 gap-2 rounded-[4px] px-3.5 text-xs font-semibold"
-          >
-            New repair
-          </Button>
-        </div>
-      </div>
+      <PageHeader
+        eyebrow="Maintenance"
+        title="Repairs"
+        subtitle="Only the repair tickets you logged, in one place — from pending drop-offs to completed receipts."
+        meta={`${pageData ? fmtNumber(stats.total) : "—"} ticket${
+          stats.total === 1 ? "" : "s"
+        } in your queue`}
+        actions={
+          <div className={styles.actions}>
+            <Button
+              type="button"
+              onClick={() => {
+                setScanPrefill(null);
+                setDialogOpen(true);
+              }}
+              className={ACTION_BTN}
+            >
+              <Plus size={13} aria-hidden="true" />
+              New repair
+            </Button>
+          </div>
+        }
+      />
 
       {actionError ? (
         <p className={air.syncMsg} role="alert">
@@ -388,99 +564,178 @@ function PersonnelRepairsContent() {
         </p>
       ) : null}
 
-      <div className={air.stats}>
-        <div className={air.stat}>
-          <p className={air.statValue}>{stats.total}</p>
-          <p className={air.statLabel}>Total tickets</p>
+      <div className={rep.summary}>
+        <div className={stockStyles.summaryCard}>
+          <span className={stockStyles.summaryIcon}>
+            <Wrench size={16} aria-hidden="true" />
+          </span>
+          <div className={stockStyles.summaryBody}>
+            <p className={stockStyles.summaryLabel}>Total tickets</p>
+            <p className={stockStyles.summaryValue}>
+              {pageData ? fmtNumber(stats.total) : "—"}
+            </p>
+            <p className={stockStyles.summaryMeta}>
+              Repair tickets you logged
+            </p>
+          </div>
         </div>
-        <div className={air.stat}>
-          <p className={air.statValue}>{stats.pending}</p>
-          <p className={air.statLabel}>Pending</p>
+
+        <div
+          className={stockStyles.summaryCard}
+          data-tone={stats.pending > 0 ? "warn" : undefined}
+        >
+          <span className={stockStyles.summaryIcon}>
+            <Clock3 size={16} aria-hidden="true" />
+          </span>
+          <div className={stockStyles.summaryBody}>
+            <p className={stockStyles.summaryLabel}>Pending</p>
+            <p className={stockStyles.summaryValue}>
+              {pageData ? fmtNumber(stats.pending) : "—"}
+            </p>
+            <p className={stockStyles.summaryMeta}>
+              {stats.pending > 0
+                ? "Waiting to be started"
+                : "Nothing waiting to start"}
+            </p>
+          </div>
         </div>
-        <div className={air.stat}>
-          <p className={air.statValue}>{stats.inProgress}</p>
-          <p className={air.statLabel}>In progress</p>
+
+        <div
+          className={stockStyles.summaryCard}
+          data-tone={stats.inProgress > 0 ? "info" : undefined}
+        >
+          <span className={stockStyles.summaryIcon}>
+            <LoaderCircle size={16} aria-hidden="true" />
+          </span>
+          <div className={stockStyles.summaryBody}>
+            <p className={stockStyles.summaryLabel}>In progress</p>
+            <p className={stockStyles.summaryValue}>
+              {pageData ? fmtNumber(stats.inProgress) : "—"}
+            </p>
+            <p className={stockStyles.summaryMeta}>
+              Currently being repaired
+            </p>
+          </div>
         </div>
-        <div className={air.stat}>
-          <p className={air.statValue}>{stats.completed}</p>
-          <p className={air.statLabel}>Completed</p>
+
+        <div className={stockStyles.summaryCard}>
+          <span className={stockStyles.summaryIcon}>
+            <CircleCheck size={16} aria-hidden="true" />
+          </span>
+          <div className={stockStyles.summaryBody}>
+            <p className={stockStyles.summaryLabel}>Completed</p>
+            <p className={stockStyles.summaryValue}>
+              {pageData ? fmtNumber(stats.completed) : "—"}
+            </p>
+            <p className={stockStyles.summaryMeta}>
+              Closed with a receipt
+            </p>
+          </div>
         </div>
       </div>
 
-      <Card className={styles.panel}>
-        <div className={air.controls}>
-          <div className={air.tabs} role="tablist" aria-label="Filter by status">
-            {STATUS_TABS.map((t) => (
-              <button
-                key={t.value}
-                type="button"
-                role="tab"
-                aria-selected={statusTab === t.value}
-                className={air.tab}
-                data-active={statusTab === t.value}
-                onClick={() => {
-                  setStatusTab(t.value);
-                  setPage(1);
-                }}
-              >
-                {t.label}
-              </button>
-            ))}
+      <div className={rep.tabsRow}>
+        <div className={air.tabs} role="tablist" aria-label="Filter by status">
+          {STATUS_TABS.map((t) => (
+            <button
+              key={t.value}
+              type="button"
+              role="tab"
+              aria-selected={statusTab === t.value}
+              className={air.tab}
+              data-active={statusTab === t.value}
+              onClick={() => {
+                setStatusTab(t.value);
+                setPage(1);
+              }}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <Card className={stockStyles.panel}>
+        <div className={stockStyles.toolbar}>
+          <p className={stockStyles.toolbarInfo} aria-live="polite">
+            {!pageData ? (
+              "Loading repair tickets…"
+            ) : hasFilters ? (
+              <>
+                Showing <strong>{fmtNumber(total)}</strong> of{" "}
+                {fmtNumber(rows.length)} ticket
+                {rows.length !== 1 ? "s" : ""}
+              </>
+            ) : (
+              <>
+                <strong>{fmtNumber(rows.length)}</strong> ticket
+                {rows.length !== 1 ? "s" : ""} in repairs
+              </>
+            )}
+            {pageData && pageData.total > rows.length
+              ? ` · first ${fmtNumber(rows.length)} loaded`
+              : ""}
+          </p>
+
+          <div className={stockStyles.filters}>
+            <Input
+              type="search"
+              value={query}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                setPage(1);
+              }}
+              placeholder="Search asset, reporter, technician, issue…"
+              className={stockStyles.search}
+              aria-label="Search repairs"
+            />
           </div>
-          <Input
-            type="search"
-            value={query}
-            onChange={(e) => {
-              setQuery(e.target.value);
-              setPage(1);
-            }}
-            placeholder="Search asset, reporter, technician, issue…"
-            className={air.search}
-            aria-label="Search repairs"
-          />
         </div>
 
-        <div className={rep.legend} aria-label="Row actions legend">
-          <span className={rep.legendItem}>
-            <span className={rep.legendIcon} aria-hidden="true">
-              <Play size={14} />
+        {pageError && rows.length === 0 && !loading ? (
+          <div className={stockStyles.empty} role="alert">
+            <span className={stockStyles.emptyIcon}>
+              <PackageSearch size={20} aria-hidden="true" />
             </span>
-            Start repair
-          </span>
-          <span className={rep.legendItem}>
-            <span className={rep.legendIcon} aria-hidden="true">
-              <Check size={14} />
-            </span>
-            Complete repair
-          </span>
-          <span className={rep.legendItem}>
-            <span className={rep.legendIcon} aria-hidden="true">
-              <RotateCcw size={14} />
-            </span>
-            Reopen repair
-          </span>
-          <span className={rep.legendItem}>
-            <span className={rep.legendIcon} aria-hidden="true">
-              <Pencil size={14} />
-            </span>
-            Edit ticket
-          </span>
-          <span className={rep.legendItem}>
-            <span className={rep.legendIcon} aria-hidden="true">
-              <Receipt size={14} />
-            </span>
-            View receipt
-          </span>
-        </div>
-
-        {visible.length === 0 ? (
-          <div className={styles.emptyState}>
-            <p className={styles.panelSub}>
-              {total === 0
-                ? "No repair tickets recorded yet — log the first one above. Approved repair requests also create tickets here automatically."
-                : "No repairs match your search or filters."}
+            <p className={stockStyles.emptyTitle}>
+              Could not load repair tickets
+            </p>
+            <p className={stockStyles.emptyText}>
+              The repairs service did not respond. Refresh the page to try
+              again.
             </p>
           </div>
+        ) : visible.length === 0 ? (
+          hasFilters ? (
+            <EmptySearchState
+              description="Try a different search term, asset, reporter, technician, or status."
+              onClear={clearFilters}
+            />
+          ) : (
+            <div className={stockStyles.empty}>
+              <span className={stockStyles.emptyIcon}>
+                <PackageSearch size={20} aria-hidden="true" />
+              </span>
+              <p className={stockStyles.emptyTitle}>No repair tickets yet</p>
+              <p className={stockStyles.emptyText}>
+                Log the first ticket to start tracking repairs. Approved repair
+                requests also create tickets here automatically.
+              </p>
+              <div className={stockStyles.emptyActions}>
+                <button
+                  type="button"
+                  className={ACTION_BTN}
+                  onClick={() => {
+                    setScanPrefill(null);
+                    setDialogOpen(true);
+                  }}
+                >
+                  <Plus size={13} aria-hidden="true" />
+                  Log the first repair
+                </button>
+              </div>
+            </div>
+          )
         ) : (
           <div className={styles.tableWrap}>
             <table className={styles.table}>
@@ -489,128 +744,84 @@ function PersonnelRepairsContent() {
                   <th>Asset</th>
                   <th>Reported by</th>
                   <th>Issue</th>
-                  <th>Technician</th>
-                  <th>Repair date</th>
                   <th>Cost</th>
                   <th>Progress</th>
-                  <th>Logged</th>
-                  <th>Receipt</th>
-                  <th>Action</th>
+                  <th>Details</th>
+                  <th className={rep.actionHeader}>Action</th>
                 </tr>
               </thead>
               <tbody>
                 {visible.map((r) => {
                   const status = r.status ?? "pending";
-                  const busy = actingId === r.id;
+                  const isOptimistic = r.id.startsWith("temp-");
+                  const busy = actingId === r.id || isOptimistic;
+                  const actionLabel =
+                    status === "pending"
+                      ? "Start repair"
+                      : status === "in_progress"
+                        ? "Complete repair"
+                        : "Reopen repair";
                   return (
                     <tr key={r.id}>
-                      <td>{r.asset_label ?? r.asset_id.slice(0, 8)}</td>
-                      <td>{r.reporter_name}</td>
-                      <td className="whitespace-pre-wrap">{r.description}</td>
-                      <td>{r.technician ?? "Unassigned"}</td>
-                      <td>{fmt(r.repair_date)}</td>
-                      <td>{fmtCost(r.cost)}</td>
-                      <td>
-                        <span
-                          className={styles.status}
-                          data-tone={tone(r.status)}
-                        >
-                          {statusLabel(r.status)}
+                      <td
+                        className={rep.assetCell}
+                        title={r.asset_label ?? undefined}
+                      >
+                        <span className={rep.assetTitle}>
+                          {r.asset_label ?? r.asset_id.slice(0, 8)}
                         </span>
                       </td>
-                      <td>{fmt(r.created_at)}</td>
+                      <td>{r.reporter_name}</td>
+                      <td className={rep.issueCell}>
+                        <span
+                          className={rep.issueText}
+                          title={r.description ?? undefined}
+                        >
+                          {r.description}
+                        </span>
+                      </td>
+                      <td className={rep.costCell}>{fmtCost(r.cost)}</td>
                       <td>
-                        {status === "completed" ? (
-                          <button
-                            type="button"
-                            className={rep.iconBtn}
-                            title="View receipt"
-                            aria-label={`View receipt for repair ${r.id.slice(0, 8).toUpperCase()}`}
-                            onClick={() =>
-                              receipt.open(r.id, `repair:${r.id}`, () =>
-                                getRepair(r.id)
-                              )
-                            }
+                        {isOptimistic ? (
+                          <span
+                            className={rep.statusBadge}
+                            data-tone="none"
+                            aria-live="polite"
                           >
-                            <Receipt size={16} />
-                          </button>
+                            Saving…
+                          </span>
                         ) : (
-                          <span className={styles.pagerInfo}>—</span>
+                          <span
+                            className={rep.statusBadge}
+                            data-tone={tone(r.status)}
+                          >
+                            {statusLabel(r.status)}
+                          </span>
                         )}
                       </td>
                       <td>
-                        <div className="flex items-center gap-1.5">
-                          {status === "pending" ? (
-                            <button
-                              type="button"
-                              disabled={busy}
-                              className={rep.iconBtn}
-                              title="Start repair"
-                              aria-label={`Start repair ${r.id.slice(0, 8).toUpperCase()}`}
-                              onClick={() => openStart(r)}
-                            >
-                              {busy ? (
-                                <Loader2
-                                  size={16}
-                                  className="animate-spin"
-                                  aria-hidden="true"
-                                />
-                              ) : (
-                                <Play size={16} />
-                              )}
-                            </button>
-                          ) : status === "in_progress" ? (
-                            <button
-                              type="button"
-                              disabled={busy}
-                              className={rep.iconBtn}
-                              title="Complete repair"
-                              aria-label={`Complete repair ${r.id.slice(0, 8).toUpperCase()}`}
-                              onClick={() => openComplete(r)}
-                            >
-                              {busy ? (
-                                <Loader2
-                                  size={16}
-                                  className="animate-spin"
-                                  aria-hidden="true"
-                                />
-                              ) : (
-                                <Check size={16} />
-                              )}
-                            </button>
-                          ) : (
-                            <button
-                              type="button"
-                              disabled={busy}
-                              className={rep.iconBtn}
-                              title="Reopen repair"
-                              aria-label={`Reopen repair ${r.id.slice(0, 8).toUpperCase()}`}
-                              onClick={() =>
-                                void onProgress(r.id, "in_progress")
-                              }
-                            >
-                              {busy ? (
-                                <Loader2
-                                  size={16}
-                                  className="animate-spin"
-                                  aria-hidden="true"
-                                />
-                              ) : (
-                                <RotateCcw size={16} />
-                              )}
-                            </button>
-                          )}
-                          <button
-                            type="button"
-                            disabled={busy}
-                            className={rep.iconBtn}
-                            title="Edit ticket"
-                            aria-label={`Edit repair ${r.id.slice(0, 8).toUpperCase()}`}
-                            onClick={() => openEdit(r)}
-                          >
-                            <Pencil size={16} />
-                          </button>
-                        </div>
+                        <button
+                          type="button"
+                          className={DETAIL_BTN}
+                          disabled={isOptimistic}
+                          onClick={() => openDetails(r)}
+                        >
+                          View details
+                        </button>
+                      </td>
+                      <td className={rep.actionCell}>
+                        <button
+                          type="button"
+                          className={ACTION_BTN}
+                          disabled={busy}
+                          onClick={() => {
+                            if (status === "pending") openStart(r);
+                            else if (status === "in_progress") openComplete(r);
+                            else void onProgress(r.id, "in_progress");
+                          }}
+                        >
+                          {busy ? "Saving…" : actionLabel}
+                        </button>
                       </td>
                     </tr>
                   );
@@ -620,12 +831,22 @@ function PersonnelRepairsContent() {
           </div>
         )}
         {total > 0 ? (
-          <TablePager
-            id="repairs"
-            total={total}
-            page={safePage}
-            onPageChange={setPage}
-          />
+          <div className={stockStyles.footer}>
+            {total > pageSize ? (
+              <TablePager
+                id="repairs"
+                total={total}
+                page={safePage}
+                pageSize={pageSize}
+                onPageChange={setPage}
+              />
+            ) : (
+              <span className={stockStyles.footerInfo}>
+                Showing all {fmtNumber(total)} ticket
+                {total !== 1 ? "s" : ""}
+              </span>
+            )}
+          </div>
         ) : null}
       </Card>
 
@@ -637,7 +858,111 @@ function PersonnelRepairsContent() {
         }}
         prefill={scanPrefill}
         onCreated={reload}
+        onOptimisticCreate={handleOptimisticCreate}
+        onOptimisticRemove={handleOptimisticRemove}
       />
+
+      <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Repair details</DialogTitle>
+            <DialogDescription>
+              {detailRow?.asset_label ?? "Repair ticket"}
+            </DialogDescription>
+          </DialogHeader>
+
+          {detailRow ? (
+            <div className={rep.detailBody}>
+              <div className={rep.detailHead}>
+                <span
+                  className={rep.statusBadge}
+                  data-tone={tone(detailRow.status)}
+                >
+                  {statusLabel(detailRow.status)}
+                </span>
+                <span className={rep.detailCost}>
+                  {fmtCost(detailRow.cost)}
+                </span>
+              </div>
+
+              <dl className={rep.detailGrid}>
+                <div>
+                  <dt>Asset</dt>
+                  <dd>{detailRow.asset_label ?? "Repair ticket"}</dd>
+                </div>
+                <div>
+                  <dt>Reported by</dt>
+                  <dd>{detailRow.reporter_name}</dd>
+                </div>
+                <div>
+                  <dt>Account code</dt>
+                  <dd>{detailRow.account_code ?? "Not set"}</dd>
+                </div>
+                <div>
+                  <dt>Account title</dt>
+                  <dd>{detailRow.account_title ?? "Not set"}</dd>
+                </div>
+                <div>
+                  <dt>Asset type</dt>
+                  <dd>{detailRow.asset_type ?? "Not set"}</dd>
+                </div>
+                <div>
+                  <dt>Repair date</dt>
+                  <dd>{fmt(detailRow.repair_date)}</dd>
+                </div>
+                <div>
+                  <dt>Technician</dt>
+                  <dd>{detailRow.technician ?? "Unassigned"}</dd>
+                </div>
+                <div>
+                  <dt>Logged</dt>
+                  <dd>{fmt(detailRow.created_at)}</dd>
+                </div>
+              </dl>
+
+              <div>
+                <p className={rep.detailLabel}>Issue</p>
+                <p className={rep.detailIssue}>{detailRow.description}</p>
+              </div>
+            </div>
+          ) : null}
+
+          <DialogFooter className="items-center justify-end gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setDetailOpen(false)}
+              className={`${DETAIL_BTN} bg-white`}
+            >
+              Close
+            </Button>
+            {detailRow?.status === "completed" ? (
+              <Button
+                type="button"
+                variant="outline"
+                className={`${DETAIL_BTN} bg-white`}
+                onClick={() => {
+                  const row = detailRow;
+                  setDetailOpen(false);
+                  receipt.open(row.id, `repair:${row.id}`, () =>
+                    getRepair(row.id)
+                  );
+                }}
+              >
+                View receipt
+              </Button>
+            ) : null}
+            <Button
+              type="button"
+              variant="warning"
+              className={`${ACTION_BTN} bg-yellow-500`}
+              onClick={() => detailRow && openEdit(detailRow)}
+            >
+              Edit ticket
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
         <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
@@ -778,12 +1103,13 @@ function PersonnelRepairsContent() {
               variant="outline"
               onClick={() => setEditOpen(false)}
               disabled={editSaving}
-              className="h-8 rounded-[4px] px-3.5 text-xs font-semibold"
+              className="h-6 rounded-[4px] px-3 text-xs font-semibold"
             >
               Cancel
             </Button>
             <ActionButton
               type="button"
+              variant="warning"
               disabled={!canEditSave || editSaving}
               onClick={() => onEditSave()}
               loadingLabel={
@@ -794,7 +1120,7 @@ function PersonnelRepairsContent() {
                     ? "Starting…"
                     : "Saving…"
               }
-              className="h-8 gap-2 rounded-[4px] px-3.5 text-xs font-semibold"
+              className="h-6 gap-2 rounded-[4px] border border-yellow-500 bg-yellow-500 px-3 text-xs font-semibold text-navy-900 hover:bg-yellow-400"
             >
               {editStatus === "completed" && editing?.status !== "completed"
                 ? "Complete repair"

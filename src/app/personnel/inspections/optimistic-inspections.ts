@@ -5,14 +5,14 @@
  *
  * Recording an inspection navigates back to the list immediately while the
  * server action keeps running. This store lets the list paint the new result
- * (Passed / Partial / Returned to supplier) before the write lands, so the
+ * (Passed / Returned to supplier) before the write lands, so the
  * row never flickers back to "Pending". The overlay is dropped once the
  * revalidated rows carry the same result (or after a short safety timeout).
  */
 
 export interface PendingInspectionResult {
   deliveryId: string;
-  result: "passed" | "partial" | "failed";
+  result: "passed" | "failed";
   inspectorName: string;
   /** YYYY-MM-DD */
   inspectionDate: string;

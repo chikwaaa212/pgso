@@ -20,3 +20,29 @@
   width: 100%;
   min-width: 0;
 }
+
+/* Print: drop the portal chrome so document pages print as paper only. */
+@media print {
+  .shell {
+    display: block;
+    min-height: 0;
+  }
+
+  .shell > header {
+    display: none !important;
+  }
+
+  .body {
+    display: block;
+  }
+
+  .body > aside {
+    display: none !important;
+  }
+
+  .main {
+    padding: 0;
+    width: 100%;
+    max-width: none;
+  }
+}

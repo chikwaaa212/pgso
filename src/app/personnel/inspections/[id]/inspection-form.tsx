@@ -73,7 +73,7 @@ interface SupplierChecks {
   sealedOrSecured: YesNo;
 }
 
-type Verdict = "passed" | "partial" | "failed" | "";
+type Verdict = "passed" | "failed" | "";
 
 const ITEM_STATUS_OPTIONS: {
   value: Exclude<ItemCheckStatus, "">;
@@ -174,8 +174,9 @@ export function InspectionForm({
   const { toast } = useToast();
 
   const alreadyInspected = delivery.inspection_status !== 'pending'
-  // Updates stay open for partial inspections and returned deliveries
-  // (failed) so they can be re-inspected or confirmed as sent back.
+  // Updates stay open for legacy partial inspections and returned deliveries
+  // (failed) so old rows can still be completed or confirmed as sent back.
+  // New inspections are Passed or Return to Supplier only.
   // Mirror the list predicate (`canEditInspection` in inspections/page.tsx):
   // either the delivery-level status OR the latest inspection result being
   // Partial/Failed keeps the form editable, so the two can never disagree.
@@ -265,7 +266,6 @@ export function InspectionForm({
           if (typeof draft.overallRemarks === 'string') setOverallRemarks(draft.overallRemarks)
           if (
             draft.verdict === 'passed' ||
-            draft.verdict === 'partial' ||
             draft.verdict === 'failed' ||
             draft.verdict === ''
           ) {
@@ -286,17 +286,15 @@ export function InspectionForm({
         // ignore corrupt drafts
       }
 
-      // Initialize form with existing inspection data for partial updates
-      // (a legacy failed inspection stays "Return to Supplier" so it can be
-      // re-inspected or the return confirmed).
+      // Initialize the form from the latest inspection. Legacy Partial rows
+      // start with no verdict selected — Partial is no longer offered, and
+      // the delivery must pass in full or be returned to the supplier.
       if (existing) {
         setInspectorName(existing.inspector_name || '')
         setInspectionDate(existing.inspection_date)
         setOverallRemarks(existing.remarks || '')
         setVerdict(
-          existing.result === 'passed' ||
-            existing.result === 'partial' ||
-            existing.result === 'failed'
+          existing.result === 'passed' || existing.result === 'failed'
             ? (existing.result as Verdict)
             : ''
         )
@@ -371,12 +369,10 @@ export function InspectionForm({
   // Verdict gates:
   //  • Passed / Complete — only when every item is OK and fully received.
   //  • Return to Supplier — only when at least one item is missing/damaged.
-  //  • Partial — always available (short, or anything not fully resolved).
   const canComplete = allItemsOk && canPass;
   const canReturn = hasMissingOrDamaged;
   // A verdict is only submittable when its item-status gate allows it.
   const verdictAllowed =
-    verdict === "partial" ||
     (verdict === "passed" && canComplete) ||
     (verdict === "failed" && canReturn);
   const canSubmit =
@@ -433,7 +429,7 @@ export function InspectionForm({
     submittingRef.current = true;
     const formData = new FormData(e.currentTarget);
     const ref = delivery.id.slice(0, 8).toUpperCase();
-    const result = verdict as "passed" | "partial" | "failed";
+    const result = verdict as "passed" | "failed";
 
     // Instant UI — paint the row, close the form, navigate now.
     upsertPendingInspectionResult({
@@ -532,7 +528,6 @@ export function InspectionForm({
     // Drop a verdict the new item data no longer supports:
     //  • Passed needs every item OK and every PO quantity covered.
     //  • Return to Supplier needs at least one missing/damaged item.
-    //  • Partial is never invalidated.
     if (verdict === "passed") {
       const nextAllOk =
         next.length > 0 && next.every((c) => c.status === "ok");
@@ -623,6 +618,32 @@ export function InspectionForm({
   }
 
 const deliveryRef = delivery.id.slice(0, 8).toUpperCase();
+
+  // Outstanding balance still to be delivered. Received is the larger of what
+  // is stocked and what the latest inspection counted — both are cumulative,
+  // so the balance can never understate what already arrived.
+  const checkedQty = new Map(
+    (delivery.inspection_data?.item_checks ?? []).map((check) => [
+      check.itemId,
+      Number(check.actualQty) || 0,
+    ])
+  );
+  const totalQty = delivery.items.reduce((sum, item) => sum + item.quantity, 0);
+  const receivedQty = delivery.items.reduce((sum, item) => {
+    const received = Math.max(
+      item.stocked_qty ?? 0,
+      checkedQty.get(item.id) ?? 0
+    );
+    return sum + Math.min(Math.max(received, 0), item.quantity);
+  }, 0);
+  const remainingQty = Math.max(0, totalQty - receivedQty);
+  const hasAir = Boolean(
+    delivery.inspection_data?.iar_no || delivery.inspection_data?.iar_image_url
+  );
+  const showBalance =
+    remainingQty > 0 &&
+    (delivery.inspection_status === "partial" ||
+      delivery.inspection_data?.result === "partial");
 
   // Same record the deliveries list shows in its View Details modal — rendered
   // inline here so the inspector sees the full delivery without opening one.
@@ -719,6 +740,23 @@ const deliveryRef = delivery.id.slice(0, 8).toUpperCase();
           </p>
         </div>
       </div>
+
+      {showBalance ? (
+        <div className="mb-3 flex items-start gap-3 rounded-[8px] border border-yellow-500/50 bg-yellow-500/10 px-3.5 py-3">
+          <PackageCheck className="mt-0.5 h-4 w-4 shrink-0 text-navy-700" />
+          <div className="min-w-0">
+            <p className="text-[0.8125rem] font-semibold text-navy-900">
+              Partial delivery — {receivedQty} of {totalQty} units received,{" "}
+              {remainingQty} still to be delivered
+            </p>
+            <p className="mt-0.5 text-xs leading-snug text-navy-500">
+              {hasAir
+                ? "Only received quantities are in stocks. Log the next batch on a new inspection to collect the balance — Passed unlocks once every unit is received."
+                : "These received units move to stocks once the delivery is fully received and the inspection passes. Log the next batch on a new inspection to collect the balance."}
+            </p>
+          </div>
+        </div>
+      ) : null}
 
       {/* Progress bar */}
       <div className={styles.progressWrap} aria-label="Inspection progress">
@@ -976,7 +1014,7 @@ const deliveryRef = delivery.id.slice(0, 8).toUpperCase();
                 {allItemsOk
                   ? "All items are OK — Passed becomes available once the remaining quantities are fully received."
                   : hasMissingOrDamaged
-                  ? "A missing or damaged item allows Partial or Return to Supplier only."
+                  ? "A missing or damaged item allows Return to Supplier only."
                   : "Mark each item to see which verdicts become available."}
               </p>
               <Button
@@ -1180,14 +1218,6 @@ const deliveryRef = delivery.id.slice(0, 8).toUpperCase();
                       disabled: !canComplete,
                       disabledReason:
                         "Passed requires every item status to be OK and the remaining quantity to be fully received.",
-                    },
-                    {
-                      value: "partial",
-                      label: "Partial",
-                      desc: "Some items are short or still outstanding; only received items move to stocks.",
-                      tone: "warn",
-                      disabled: false,
-                      disabledReason: undefined,
                     },
                     {
                       value: "failed",

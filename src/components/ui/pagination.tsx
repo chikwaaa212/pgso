@@ -18,7 +18,7 @@ interface PaginationProps {
   total: number;
   /** Current page, 1-indexed. Clamped internally. */
   page: number;
-  /** Rows per page — always PAGE_SIZE (15). Kept for compat, ignored if different. */
+  /** Rows per page — defaults to PAGE_SIZE (10). */
   pageSize?: number;
   onPageChange: (page: number) => void;
   /** Optional prefix for aria-labels / testing. */
@@ -27,10 +27,17 @@ interface PaginationProps {
 
 /**
  * Single shared pagination for Record Keeper + Registrar (and all lists).
- * Renders NOTHING when total <= PAGE_SIZE (15).
+ * Renders NOTHING when total <= the resolved page size.
  */
-export function Pagination({ total, page, onPageChange, id }: PaginationProps) {
-  const pageSize = PAGE_SIZE;
+export function Pagination({
+  total,
+  page,
+  pageSize: pageSizeProp,
+  onPageChange,
+  id,
+}: PaginationProps) {
+  const pageSize =
+    pageSizeProp && pageSizeProp > 0 ? Math.floor(pageSizeProp) : PAGE_SIZE;
   if (total <= pageSize) return null;
 
   const pageCount = Math.max(1, Math.ceil(total / pageSize));

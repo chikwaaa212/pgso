@@ -2,23 +2,18 @@
 
 import { useEffect, useMemo, useState } from "react";
 import {
-  Calendar,
   Check,
   Copy,
   Download,
-  FileText,
-  Hash,
-  Layers,
-  Package,
+  PackageSearch,
   Printer,
+  QrCode,
   ScanLine,
+  Search,
   ShieldCheck,
-  Tag,
-  User,
+  X,
 } from "lucide-react";
-import { Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
 import {
   Select,
   SelectContent,
@@ -27,11 +22,16 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { Pagination } from "@/components/ui/pagination";
+import { EmptySearchState } from "@/components/personnel/EmptySearchState";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
+import { PAGE_SIZE } from "@/lib/constants";
+import { cn } from "@/lib/utils";
 import type { PublicIssueLine } from "./actions";
 import styles from "../dashboard/page.module.css";
-import airStyles from "../inspections/air-section.module.css";
+import stockStyles from "../stocks/page.module.css";
 import assetStyles from "../assets/page.module.css";
+import docs from "./page.module.css";
 import qr from "./qr-record.module.css";
 
 function fmtDate(value: string | null | undefined) {
@@ -55,18 +55,13 @@ function text(v: string | null) {
   return v?.trim() ? v.trim() : "—";
 }
 
-function initials(name: string) {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return "—";
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-}
-
 export function IssuesTable({
   rows,
   showLoggedBy = false,
   serverTypeOptions,
   onFiltersChange,
+  paginate = false,
+  totalDocuments,
 }: {
   rows: PublicIssueLine[];
   /** Shows the "Logged By" (issuing user) column — used by Super Admin oversight. */
@@ -75,13 +70,21 @@ export function IssuesTable({
   serverTypeOptions?: string[];
   /** Reports debounced filter state up for server-paged fetching. */
   onFiltersChange?: (filters: { q: string; docType: string; assetType: string }) => void;
+  /**
+   * Local mode: the whole window is in `rows` and search/filter/paging run in
+   * memory, so typing filters on the same keystroke with no fetch.
+   */
+  paginate?: boolean;
+  /** Server total of issued documents (local mode) — flags a truncated window. */
+  totalDocuments?: number;
 }) {
   const [query, setQuery] = useState("");
   const [docFilter, setDocFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
   const [active, setActive] = useState<PublicIssueLine | null>(null);
   const [copied, setCopied] = useState(false);
-  // Debounced search — large registries no longer re-filter per keystroke.
+  const [page, setPage] = useState(1);
+  // Debounced search — only reported upstream for server-driven windows.
   const debouncedQuery = useDebouncedValue(query, 250);
   const serverDriven = onFiltersChange !== undefined;
   useEffect(() => {
@@ -105,7 +108,8 @@ export function IssuesTable({
   const filtered = useMemo(() => {
     // Server-driven: the DB already applied q/doc/type — render the window.
     if (serverDriven) return rows;
-    const q = debouncedQuery.trim().toLowerCase();
+    // Local window: filter on the live query so results never lag a keystroke.
+    const q = query.trim().toLowerCase();
     return rows.filter((r) => {
       if (docFilter !== "all" && r.doc_type !== docFilter) return false;
       if (typeFilter !== "all" && (r.asset_type ?? "").trim().toLowerCase() !== typeFilter)
@@ -113,12 +117,15 @@ export function IssuesTable({
       if (q) {
         const hay = [
           r.doc_no,
+          r.doc_type,
           r.employee_name,
           r.logged_by,
           r.account_code,
           r.article,
           r.account_title,
           r.asset_type,
+          r.quantity,
+          fmtDate(r.doc_date),
         ]
           .filter(Boolean)
           .join(" ")
@@ -127,8 +134,10 @@ export function IssuesTable({
       }
       return true;
     });
-  }, [rows, query, docFilter, typeFilter]);
+  }, [rows, query, docFilter, typeFilter, serverDriven]);
 
+  // Local paging is reset directly in the filter handlers below (no effect),
+  // and the rendered page is clamped so a shrinking list can never go blank.
   const hasFilters = query.trim() !== "" || docFilter !== "all" || typeFilter !== "all";
 
   const openRecord = (r: PublicIssueLine) => {
@@ -160,83 +169,144 @@ export function IssuesTable({
     window.setTimeout(() => setCopied(false), 2000);
   };
 
+  const stats = useMemo(() => {
+    const documents = new Set<string>();
+    let par = 0;
+    let ics = 0;
+    for (const r of filtered) {
+      documents.add(r.issuance_id);
+      if (r.doc_type === "PAR") par += 1;
+      else if (r.doc_type === "ICS") ics += 1;
+    }
+    return { documents: documents.size, par, ics };
+  }, [filtered]);
+
+  const clearFilters = () => {
+    setQuery("");
+    setDocFilter("all");
+    setTypeFilter("all");
+    setPage(1);
+  };
+
+  // Only the local (windowed) mode pages in memory; server mode's rows already
+  // are one page.
+  const localPageSize = PAGE_SIZE;
+  const pageCount = Math.max(1, Math.ceil(filtered.length / localPageSize));
+  const safePage = Math.min(Math.max(1, page), pageCount);
+  const visible = paginate
+    ? filtered.slice((safePage - 1) * localPageSize, safePage * localPageSize)
+    : filtered;
+
   return (
     <div>
-      <div className={airStyles.controls}>
-        <div className={assetStyles.topRow} style={{ justifyContent: "flex-end" }}>
-          <div className={assetStyles.searchWrap} style={{ flex: "0 1 22rem" }}>
-            <Search className={assetStyles.searchIcon} size={16} />
+      <div className={stockStyles.toolbar}>
+        <div className={docs.chips} aria-live="polite">
+          <span className={docs.chip}>
+            <strong>{filtered.length}</strong> line{filtered.length === 1 ? "" : "s"}
+          </span>
+          <span className={docs.chip}>
+            <strong>{stats.documents}</strong> document
+            {stats.documents === 1 ? "" : "s"}
+          </span>
+          {stats.par > 0 ? (
+            <span className={docs.chip} data-tone="ok">
+              PAR <strong>{stats.par}</strong>
+            </span>
+          ) : null}
+          {stats.ics > 0 ? (
+            <span className={docs.chip} data-tone="info">
+              ICS <strong>{stats.ics}</strong>
+            </span>
+          ) : null}
+        </div>
+
+        <div className={stockStyles.filters}>
+          <div className={docs.searchWrap}>
+            <Search size={15} aria-hidden="true" className={docs.searchIcon} />
             <Input
               type="search"
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                setPage(1);
+              }}
               placeholder="Search employee, account code, article…"
-              className={assetStyles.search}
+              className={cn(stockStyles.search, docs.search)}
               aria-label="Search issued items"
             />
           </div>
-          <div className={assetStyles.filterGroup} style={{ flex: "0 0 10rem" }}>
-            <label className={assetStyles.filterLabel} htmlFor="issues-filter-doc">
-              Doc
-            </label>
-            <Select value={docFilter} onValueChange={setDocFilter}>
-              <SelectTrigger id="issues-filter-doc" size="sm" className={assetStyles.filterSelect}>
-                <SelectValue placeholder="All docs" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All docs</SelectItem>
-                <SelectItem value="PAR">PAR</SelectItem>
-                <SelectItem value="ICS">ICS</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <div className={assetStyles.filterGroup} style={{ flex: "0 0 10rem" }}>
-            <label className={assetStyles.filterLabel} htmlFor="issues-filter-type">
-              Asset type
-            </label>
-            <Select value={typeFilter} onValueChange={setTypeFilter}>
-              <SelectTrigger id="issues-filter-type" size="sm" className={assetStyles.filterSelect}>
-                <SelectValue placeholder="All types" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All types</SelectItem>
-                {typeOptions.map(([key, display]) => (
-                  <SelectItem key={key} value={key}>
-                    {label(display)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+          <Select
+            value={docFilter}
+            onValueChange={(v) => {
+              setDocFilter(v);
+              setPage(1);
+            }}
+          >
+            <SelectTrigger
+              id="issues-filter-doc"
+              className={stockStyles.accountSelect}
+              aria-label="Filter by document type"
+            >
+              <SelectValue placeholder="All docs" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All docs</SelectItem>
+              <SelectItem value="PAR">PAR</SelectItem>
+              <SelectItem value="ICS">ICS</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select
+            value={typeFilter}
+            onValueChange={(v) => {
+              setTypeFilter(v);
+              setPage(1);
+            }}
+          >
+            <SelectTrigger
+              id="issues-filter-type"
+              className={stockStyles.accountSelect}
+              aria-label="Filter by asset type"
+            >
+              <SelectValue placeholder="All types" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All types</SelectItem>
+              {typeOptions.map(([key, display]) => (
+                <SelectItem key={key} value={key}>
+                  {label(display)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           {hasFilters && (
-            <Button
+            <button
               type="button"
-              variant="ghost"
-              size="sm"
-              className={`${assetStyles.filterBtn} h-8 rounded-[4px] px-3.5 text-xs font-semibold`}
-              onClick={() => {
-                setQuery("");
-                setDocFilter("all");
-                setTypeFilter("all");
-              }}
+              className={assetStyles.rowActionMuted}
+              onClick={clearFilters}
             >
               Clear all
-            </Button>
+            </button>
           )}
         </div>
       </div>
 
       {rows.length === 0 ? (
-        <div className={styles.emptyState}>
-          <p className={styles.panelSub}>
-            No assets or stock have been issued yet — issue an item from Assets
-            or approve a new-assignment request.
+        <div className={stockStyles.empty}>
+          <span className={stockStyles.emptyIcon}>
+            <PackageSearch size={20} aria-hidden="true" />
+          </span>
+          <p className={stockStyles.emptyTitle}>No issued items yet</p>
+          <p className={stockStyles.emptyText}>
+            Issue an item from Assets or approve a new-assignment request — each
+            issued line appears here with its own QR record.
           </p>
         </div>
       ) : filtered.length === 0 ? (
-        <div className={styles.emptyState}>
-          <p className={styles.panelSub}>No issued items match your search or filters.</p>
-        </div>
+        <EmptySearchState
+          title="No issued items match these filters"
+          description="Try a different employee, account code, article, or document type."
+          onClear={clearFilters}
+        />
       ) : (
         <div className={styles.tableWrap}>
           <table className={styles.table}>
@@ -250,19 +320,19 @@ export function IssuesTable({
                 <th>Article</th>
                 <th>Account Title</th>
                 <th>Asset Type</th>
-                <th>Qty</th>
+                <th className={docs.num}>Qty</th>
                 <th>Date</th>
-                <th>QR record</th>
+                <th style={{ textAlign: "right" }}>QR record</th>
               </tr>
             </thead>
             <tbody>
-              {filtered.map((r) => {
+              {visible.map((r) => {
                 const key = `${r.issuance_id}:${r.line_index}`;
                 return (
-                  <tr key={key}>
+                  <tr key={key} className={docs.bodyRow}>
                     <td>
                       <span
-                        className={styles.status}
+                        className={stockStyles.badge}
                         data-tone={r.doc_type === "PAR" ? "ok" : "info"}
                       >
                         {r.doc_type}
@@ -275,23 +345,18 @@ export function IssuesTable({
                     <td>{text(r.article)}</td>
                     <td>{label(r.account_title)}</td>
                     <td>{label(r.asset_type)}</td>
-                    <td>{r.quantity}</td>
+                    <td className={docs.num}>{r.quantity}</td>
                     <td>{fmtDate(r.doc_date)}</td>
-                    <td>
-                      <span
-                        className="inline-flex items-center gap-2"
-                        style={{ whiteSpace: "nowrap", flexWrap: "nowrap" }}
+                    <td className={docs.actionCell}>
+                      <button
+                        type="button"
+                        onClick={() => openRecord(r)}
+                        className={assetStyles.rowAction}
+                        title={`View the QR record for ${r.article ?? "this issued line"}`}
                       >
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={() => openRecord(r)}
-                          className="h-8 rounded-[4px] px-3.5 text-xs font-semibold"
-                        >
-                          View QR
-                        </Button>
-                      </span>
+                        <QrCode size={14} aria-hidden="true" />
+                        View QR
+                      </button>
                     </td>
                   </tr>
                 );
@@ -301,66 +366,77 @@ export function IssuesTable({
         </div>
       )}
 
+      {paginate && filtered.length > 0 ? (
+        <div className={stockStyles.footer}>
+          {filtered.length > localPageSize ? (
+            <Pagination
+              total={filtered.length}
+              page={safePage}
+              onPageChange={setPage}
+              id="issues-lines"
+            />
+          ) : (
+            <span className={stockStyles.footerInfo}>
+              Showing all {filtered.length} line{filtered.length === 1 ? "" : "s"}
+            </span>
+          )}
+          {paginate && totalDocuments !== undefined && totalDocuments > stats.documents ? (
+            <span className={stockStyles.footerInfo}>
+              Newest {stats.documents} of {totalDocuments} documents loaded
+            </span>
+          ) : null}
+        </div>
+      ) : null}
+
       <Dialog open={active !== null} onOpenChange={(v) => !v && setActive(null)}>
         <DialogContent className={`${qr.dialogWide} sm:max-w-2xl`} showCloseButton={false}>
-          {/* Accessible name — the visual masthead below carries the design. */}
+          {/* Accessible name — the visual header below carries the design. */}
           <DialogTitle className="sr-only">
             {active
-              ? `Issue QR record — ${active.doc_type} ${active.doc_no ?? ""} issued to ${active.employee_name}`
+              ? `${active.doc_type === "ICS" ? "Inventory Custodian Slip" : "Property Acknowledgement Receipt"} — ${
+                  active.doc_no ?? "no document number"
+                } issued to ${active.employee_name}`
               : "Issue QR record"}
           </DialogTitle>
           {active ? (
             <article className={`${qr.record} ${qr.printArea}`} aria-label="Issue QR record">
-              {/* ── Masthead ─────────────────────────────────────────── */}
-              <header className={qr.masthead}>
-                <div className={qr.mastheadPattern} aria-hidden="true" />
-                <p className={qr.kicker}>
-                  <span className={qr.kickerDot} aria-hidden="true" />
-                  PGSO · Property &amp; Supply Management
-                </p>
-                <div className={qr.mastheadRow}>
-                  <div>
-                    <h2 className={qr.mastheadTitle}>Issue QR Record</h2>
-                    <p className={qr.mastheadSub}>
-                      {fmtDate(active.doc_date)}
-                      {active.line_count > 1
-                        ? ` · Line ${active.line_index + 1} of ${active.line_count}`
-                        : ""}
-                    </p>
-                  </div>
-                  <div className={qr.docBadge} aria-label={`Document ${active.doc_type} ${active.doc_no ?? ""}`}>
-                    <span className={qr.docBadgeKind}>{active.doc_type}</span>
-                    <span className={qr.docBadgeNo}>{active.doc_no ?? "—"}</span>
-                  </div>
+              {/* ── Header ───────────────────────────────────────────── */}
+              <header className={qr.header}>
+                <div className={qr.headerBar}>
+                  <span className={qr.docTag} data-kind={active.doc_type}>
+                    {active.doc_type}
+                  </span>
+                  <span className={qr.docNo}>
+                    {active.doc_no ? `No. ${active.doc_no}` : "No document number"}
+                  </span>
+                  <button
+                    type="button"
+                    className={qr.closeBtn}
+                    onClick={() => setActive(null)}
+                    aria-label="Close"
+                    title="Close"
+                  >
+                    <X size={16} aria-hidden="true" />
+                  </button>
                 </div>
+                <h2 className={qr.headerTitle}>
+                  {active.doc_type === "ICS"
+                    ? "Inventory Custodian Slip"
+                    : "Property Acknowledgement Receipt"}
+                </h2>
+                <p className={qr.headerSub}>
+                  Issued to <strong>{active.employee_name}</strong> on{" "}
+                  {fmtDate(active.doc_date)}
+                  {active.line_count > 1
+                    ? ` · line ${active.line_index + 1} of ${active.line_count}`
+                    : ""}
+                </p>
               </header>
 
-              {/* ── Receiver strip ───────────────────────────────────── */}
-              <div className={qr.receiver}>
-                <span className={qr.avatar} aria-hidden="true">
-                  {initials(active.employee_name)}
-                </span>
-                <div className={qr.receiverMeta}>
-                  <p className={qr.receiverLabel}>
-                    <User size={11} aria-hidden="true" /> Received by
-                  </p>
-                  <p className={qr.receiverName}>{active.employee_name}</p>
-                  <p className={qr.receiverCap}>End user · accountable person</p>
-                </div>
-                <div className={qr.qtyPill} aria-label={`Quantity ${active.quantity}`}>
-                  <div className={qr.qtyValue}>{active.quantity}</div>
-                  <div className={qr.qtyLabel}>Qty issued</div>
-                </div>
-              </div>
-
-              {/* ── Body: QR + details ───────────────────────────────── */}
+              {/* ── Body: QR + facts ─────────────────────────────────── */}
               <div className={qr.body}>
                 <div className={qr.qrPanel}>
                   <div className={qr.qrFrame}>
-                    <span className={`${qr.tick} ${qr.tickTL}`} aria-hidden="true" />
-                    <span className={`${qr.tick} ${qr.tickTR}`} aria-hidden="true" />
-                    <span className={`${qr.tick} ${qr.tickBL}`} aria-hidden="true" />
-                    <span className={`${qr.tick} ${qr.tickBR}`} aria-hidden="true" />
                     {active.qr_data_url ? (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img
@@ -376,86 +452,76 @@ export function IssuesTable({
                     )}
                   </div>
                   <p className={qr.scanHint}>
-                    <ScanLine size={13} aria-hidden="true" /> Scan to verify
+                    <ScanLine size={14} aria-hidden="true" /> Scan to verify
                   </p>
                   <p className={qr.refCode} title={active.qr_payload}>
-                    REF {active.issuance_id.slice(0, 8).toUpperCase()}·L{active.line_index + 1}
+                    Ref {active.issuance_id.slice(0, 8).toUpperCase()} · line{" "}
+                    {active.line_index + 1}
                   </p>
                 </div>
 
-                <div className={qr.details}>
-                  <p className={qr.detailsTitle}>Issued item</p>
+                <dl className={qr.details}>
                   {(
                     [
-                      { icon: Hash, key: "Account code", value: text(active.account_code) },
-                      { icon: Package, key: "Article", value: text(active.article) },
-                      { icon: FileText, key: "Account title", value: label(active.account_title) },
-                      { icon: Layers, key: "Asset type", value: label(active.asset_type) },
-                      {
-                        icon: Tag,
-                        key: "Document",
-                        value: `${active.doc_type} ${active.doc_no ?? "—"}`,
-                      },
-                      { icon: Calendar, key: "Issue date", value: fmtDate(active.doc_date) },
+                      { key: "Quantity", value: String(active.quantity) },
+                      { key: "Account code", value: text(active.account_code) },
+                      { key: "Article", value: text(active.article) },
+                      { key: "Account title", value: label(active.account_title) },
+                      { key: "Asset type", value: label(active.asset_type) },
+                      { key: "Issue date", value: fmtDate(active.doc_date) },
                     ] as const
-                  ).map(({ icon: Icon, key, value }) => (
+                  ).map(({ key, value }) => (
                     <div key={key} className={qr.detailRow}>
-                      <span className={qr.detailIcon} aria-hidden="true">
-                        <Icon size={15} />
-                      </span>
-                      <div className={qr.detailText}>
-                        <p className={qr.detailKey}>{key}</p>
-                        <p className={qr.detailValue}>{value}</p>
-                      </div>
+                      <dt className={qr.detailKey}>{key}</dt>
+                      <dd
+                        className={cn(
+                          qr.detailValue,
+                          value === "—" && qr.detailValueMuted
+                        )}
+                      >
+                        {value}
+                      </dd>
                     </div>
                   ))}
-                </div>
+                </dl>
               </div>
 
-              {/* ── Trust footer ─────────────────────────────────────── */}
-              <div className={qr.trust}>
-                <ShieldCheck size={16} aria-hidden="true" style={{ flexShrink: 0, marginTop: 1 }} />
-                <p>
-                  <strong>Verified issuance record.</strong> This QR encodes the
-                  receiving employee, item identity, and quantity only — no
-                  cost, supplier, or account-number data is shown or encoded.
+              {/* ── Footer ───────────────────────────────────────────── */}
+              <footer className={qr.footer}>
+                <p className={qr.note}>
+                  <ShieldCheck size={15} aria-hidden="true" />
+                  <span>
+                    <strong>Verified record.</strong> The QR contains the
+                    employee, item, and quantity only — no cost or supplier data.
+                  </span>
                 </p>
-              </div>
-
-              {/* ── Actions ──────────────────────────────────────────── */}
-              <div className={`${qr.actions} ${qr.noPrint}`}>
-                {active.qr_data_url ? (
-                  <a
-                    href={active.qr_data_url}
-                    download={`issue-${active.doc_type}-${active.doc_no ?? active.issuance_id.slice(0, 8)}-line${active.line_index + 1}.svg`}
-                    className={qr.btnPrimary}
+                <div className={`${qr.actions} ${qr.noPrint}`}>
+                  <button
+                    type="button"
+                    onClick={() => window.print()}
+                    className={qr.btnOutline}
                   >
-                    <Download size={15} aria-hidden="true" /> Download QR
-                  </a>
-                ) : null}
-                <button type="button" onClick={copyPayload} className={qr.btnOutline}>
-                  {copied ? (
-                    <Check size={15} aria-hidden="true" />
-                  ) : (
-                    <Copy size={15} aria-hidden="true" />
-                  )}
-                  {copied ? "Copied!" : "Copy QR data"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => window.print()}
-                  className={qr.btnOutline}
-                >
-                  <Printer size={15} aria-hidden="true" /> Print
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setActive(null)}
-                  className={qr.btnGhost}
-                >
-                  Close
-                </button>
-              </div>
+                    <Printer size={14} aria-hidden="true" /> Print
+                  </button>
+                  <button type="button" onClick={copyPayload} className={qr.btnOutline}>
+                    {copied ? (
+                      <Check size={14} aria-hidden="true" />
+                    ) : (
+                      <Copy size={14} aria-hidden="true" />
+                    )}
+                    {copied ? "Copied" : "Copy data"}
+                  </button>
+                  {active.qr_data_url ? (
+                    <a
+                      href={active.qr_data_url}
+                      download={`issue-${active.doc_type}-${active.doc_no ?? active.issuance_id.slice(0, 8)}-line${active.line_index + 1}.svg`}
+                      className={qr.btnPrimary}
+                    >
+                      <Download size={14} aria-hidden="true" /> Download QR
+                    </a>
+                  ) : null}
+                </div>
+              </footer>
             </article>
           ) : null}
         </DialogContent>

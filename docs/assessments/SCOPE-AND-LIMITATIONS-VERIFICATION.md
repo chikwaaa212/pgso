@@ -228,8 +228,8 @@ What exists:
 3. **Quarterly planning.** The PPMP planning view ranks items by planned total for budget attention and supports quarterly schedules.
 
 Evidence:
-- `src/app/super-admin/inventory/page.tsx` lines 51–95: `recommendationFor` with the five outcomes above.
-- `src/app/super-admin/inventory/actions.ts` lines 12–71: Super Admin sets the reorder threshold that drives the advice.
+- `src/app/super-admin/stocks/page.tsx` lines 51–95: `recommendationFor` with the five outcomes above.
+- `src/app/super-admin/stocks/actions.ts` lines 12–71: Super Admin sets the reorder threshold that drives the advice.
 - `src/lib/ppmp/analytics/rules.ts` lines 12–92: the full deterministic recommendation engine.
 - `src/lib/ppmp/analytics/index.ts` lines 24–124: pipeline wiring, including the inventory snapshot passed into `buildRecommendations`.
 - `src/app/personnel/ppmp/planning/planning-view.tsx` lines 70–177: "Most recommended for budget planning" ranking.
@@ -344,7 +344,7 @@ This version keeps every strength and removes the three claims that the code doe
 | Deliveries | `src/app/personnel/deliveries/*` |
 | Inspections / AIR | `src/app/personnel/inspections/*`, `src/lib/inspection-rules.ts`, `src/lib/air-excel.ts` |
 | Stocking | `src/lib/stock.ts` |
-| Inventory / thresholds | `src/app/personnel/inventory/*`, `src/app/super-admin/inventory/*` |
+| Inventory / thresholds | `src/app/personnel/stocks/*`, `src/app/super-admin/stocks/*` |
 | Assets / encoding / import | `src/app/personnel/assets/*`, `src/app/personnel/assets/actions.ts` |
 | Issuance / PAR / ICS | `src/app/personnel/issuances/*`, `src/lib/issuance-rules.ts`, `src/lib/par-excel.ts`, `src/lib/ics-excel.ts` |
 | Requests / workflow | `src/app/personnel/requests/*`, `src/app/employee/requests/*` |

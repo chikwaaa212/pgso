@@ -225,3 +225,76 @@ export function percentage(part: number, total: number): number {
   if (!Number.isFinite(part) || !Number.isFinite(total) || total <= 0) return 0
   return Math.round((part / total) * 100)
 }
+
+// ─── Asset availability & status ───────────────────────────────────────────
+
+export const UNSPECIFIED_STATUS = 'unspecified'
+
+/**
+ * Trim + lowercase the stored asset status so `Available`, ` available ` and
+ * `AVAILABLE` share one bucket. Blank/null → `unspecified`.
+ */
+export function normalizeAssetStatus(value: string | null | undefined): string {
+  const text = String(value ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+  return text || UNSPECIFIED_STATUS
+}
+
+/** Display label for a normalized asset-status key. */
+export function assetStatusLabel(value: string | null | undefined): string {
+  const key = normalizeAssetStatus(value)
+  if (key === UNSPECIFIED_STATUS) return 'Unspecified'
+  return key.replace(/\b[a-z]/g, (c) => c.toUpperCase())
+}
+
+/** Availability bucket a stored status maps to. */
+export type AvailabilityClass =
+  | 'available'
+  | 'in-use'
+  | 'unavailable'
+  | 'unspecified'
+
+const IN_USE_STATUS_HINTS = ['assigned', 'in use', 'in-use', 'issued', 'deployed']
+
+const UNAVAILABLE_STATUS_HINTS = [
+  'maintenance',
+  'repair',
+  'unavailable',
+  'out of stock',
+  'damaged',
+  'broken',
+  'defective',
+  'lost',
+  'disposed',
+  'condemned',
+  'retired',
+  'inactive',
+]
+
+/**
+ * Map a stored status to an availability bucket. Only `available` counts as
+ * issuable; blank values stay `unspecified`, and any unknown non-blank value
+ * is treated as `unavailable` so it is never reported as ready to issue.
+ */
+export function classifyAvailability(
+  value: string | null | undefined
+): AvailabilityClass {
+  const key = normalizeAssetStatus(value)
+  if (key === UNSPECIFIED_STATUS) return 'unspecified'
+  if (key === 'available') return 'available'
+  if (IN_USE_STATUS_HINTS.some((hint) => key.includes(hint))) return 'in-use'
+  if (UNAVAILABLE_STATUS_HINTS.some((hint) => key.includes(hint))) {
+    return 'unavailable'
+  }
+  return 'unavailable'
+}
+
+/** Display label for an availability bucket. */
+export function availabilityLabel(value: AvailabilityClass | string): string {
+  if (value === 'available') return 'Available'
+  if (value === 'in-use') return 'In use'
+  if (value === 'unavailable') return 'Unavailable'
+  return 'Unspecified'
+}

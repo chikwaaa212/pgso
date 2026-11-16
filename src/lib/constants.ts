@@ -6,7 +6,7 @@ export const APP_ROUTES = {
 } as const;
 
 /** Single source of truth for list page size (Record Keeper + Registrar). */
-export const PAGE_SIZE = 15;
+export const PAGE_SIZE = 10;
 
 /** Search debounce budget (ms) — matches latency spec. */
 export const SEARCH_DEBOUNCE_MS = 300;

@@ -7,11 +7,15 @@ import {
   ageInDays,
   agingBucket,
   agingBucketLabel,
+  assetStatusLabel,
+  availabilityLabel,
+  classifyAvailability,
   classifyCondition,
   conditionLabel,
   isAgingBucket,
   isDelayed,
   lastQuarters,
+  normalizeAssetStatus,
   normalizeCondition,
   parseAgingBucket,
   parseReportModule,
@@ -152,5 +156,36 @@ describe('asset conditions', () => {
     assert.equal(percentage(3, 3), 100)
     assert.equal(percentage(1, 0), 0)
     assert.equal(percentage(Number.NaN, 10), 0)
+  })
+})
+
+describe('asset availability & status', () => {
+  it('normalizes case, whitespace and blanks', () => {
+    assert.equal(normalizeAssetStatus(' Available '), 'available')
+    assert.equal(normalizeAssetStatus('IN   USE'), 'in use')
+    assert.equal(normalizeAssetStatus(''), 'unspecified')
+    assert.equal(normalizeAssetStatus(null), 'unspecified')
+    assert.equal(assetStatusLabel('in use'), 'In Use')
+    assert.equal(assetStatusLabel(null), 'Unspecified')
+  })
+
+  it('maps statuses to an availability bucket', () => {
+    assert.equal(classifyAvailability('available'), 'available')
+    assert.equal(classifyAvailability('Available'), 'available')
+    assert.equal(classifyAvailability('assigned'), 'in-use')
+    assert.equal(classifyAvailability('in use'), 'in-use')
+    assert.equal(classifyAvailability('maintenance'), 'unavailable')
+    assert.equal(classifyAvailability('retired'), 'unavailable')
+    assert.equal(classifyAvailability('out of stock'), 'unavailable')
+    assert.equal(classifyAvailability(''), 'unspecified')
+    // Unknown non-blank statuses are never reported as issuable.
+    assert.equal(classifyAvailability('weird-value'), 'unavailable')
+  })
+
+  it('labels each availability bucket', () => {
+    assert.equal(availabilityLabel('available'), 'Available')
+    assert.equal(availabilityLabel('in-use'), 'In use')
+    assert.equal(availabilityLabel('unavailable'), 'Unavailable')
+    assert.equal(availabilityLabel('unspecified'), 'Unspecified')
   })
 })

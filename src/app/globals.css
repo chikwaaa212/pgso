@@ -80,3 +80,11 @@ body {
   width: min(90% + (100% - 64rem) / 2, 64rem);
   margin-inline: auto;
 }
+
+/* Shared print helper: `data-print-hide` marks on-screen-only chrome (toolbars,
+   back/print buttons) that must never appear on the printed sheet. */
+@media print {
+  [data-print-hide] {
+    display: none !important;
+  }
+}

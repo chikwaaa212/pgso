@@ -18,7 +18,7 @@ interface TablePagerProps {
   id: string;
   /** Number of rows after filtering. */
   total: number;
-  /** Rows per page — always FIXED_PAGE_SIZE (20); prop kept for compat. */
+  /** Rows per page — defaults to FIXED_PAGE_SIZE (10) when omitted. */
   pageSize?: number;
   /** Current page (1-indexed); clamped internally. */
   page: number;
@@ -27,14 +27,21 @@ interface TablePagerProps {
   onPageChange: (page: number) => void;
 }
 
-/** Shared pager — delegates to single <Pagination /> (PAGE_SIZE = 15). */
+/** Shared pager — delegates to single <Pagination /> (PAGE_SIZE = 10). */
 export function TablePager({
   id,
   total,
   page,
+  pageSize,
   onPageChange,
 }: TablePagerProps) {
   return (
-    <Pagination total={total} page={page} onPageChange={onPageChange} id={id} />
+    <Pagination
+      total={total}
+      page={page}
+      pageSize={pageSize}
+      onPageChange={onPageChange}
+      id={id}
+    />
   );
 }

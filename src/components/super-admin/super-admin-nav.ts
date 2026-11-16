@@ -86,11 +86,11 @@ export function buildSuperAdminNav({
       ],
     },
     {
-      title: "Inventory",
+      title: "Stocks",
       links: [
         {
           label: "Stock",
-          href: "/super-admin/inventory",
+          href: "/super-admin/stocks",
           description: "Monitor stock levels",
           icon: Boxes,
         },
@@ -153,7 +153,7 @@ export function buildSuperAdminNav({
         {
           label: "Reports",
           href: "/super-admin/reports",
-          description: "Aging, issuance and conditions",
+          description: "Aging, issuance and availability",
           icon: BarChart3,
         },
         {

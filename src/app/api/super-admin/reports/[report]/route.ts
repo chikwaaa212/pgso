@@ -8,7 +8,7 @@ export const runtime = 'nodejs'
  * GET /api/super-admin/reports/:report
  *
  * System-wide XLSX reports. Only active super admins may download them.
- * Supported ids: `aging`, `quarterly-issuance`, `asset-conditions`.
+ * Supported ids: `aging`, `quarterly-issuance`, `asset-availability`.
  */
 export async function GET(
   req: Request,

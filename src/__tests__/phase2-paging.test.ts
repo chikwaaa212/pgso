@@ -23,9 +23,9 @@ function fnBody(file: string, name: string): string {
   return chunk;
 }
 
-describe("paged envelope edges (PAGE_SIZE = 15)", () => {
-  it("PAGE_SIZE is 15", () => {
-    assert.strictEqual(PAGE_SIZE, 15);
+describe("paged envelope edges (PAGE_SIZE = 10)", () => {
+  it("PAGE_SIZE is 10", () => {
+    assert.strictEqual(PAGE_SIZE, 10);
   });
   it("0 rows: 1 empty page, page clamps to 1", () => {
     assert.strictEqual(totalPagesFor(0), 1);
@@ -34,26 +34,26 @@ describe("paged envelope edges (PAGE_SIZE = 15)", () => {
     const e = pageResponse([], 0, 1);
     assert.deepStrictEqual([e.rows, e.data, e.total, e.page, e.totalPages], [[], [], 0, 1, 1]);
   });
-  it("exactly 15 rows: single page", () => {
-    const rows = Array.from({ length: 15 }, (_, i) => i);
-    assert.strictEqual(totalPagesFor(15), 1);
-    const e = pageResponse(rows, 15, 1);
-    assert.strictEqual(e.rows.length, 15);
+  it("exactly 10 rows: single page", () => {
+    const rows = Array.from({ length: 10 }, (_, i) => i);
+    assert.strictEqual(totalPagesFor(10), 1);
+    const e = pageResponse(rows, 10, 1);
+    assert.strictEqual(e.rows.length, 10);
     assert.strictEqual(e.totalPages, 1);
   });
-  it("16 rows: last page holds exactly 1 row", () => {
-    assert.strictEqual(totalPagesFor(16), 2);
-    const full = Array.from({ length: 16 }, (_, i) => i);
-    const p2 = pageResponse(full.slice(15), 16, 2);
-    assert.deepStrictEqual(p2.rows, [15]);
+  it("11 rows: last page holds exactly 1 row", () => {
+    assert.strictEqual(totalPagesFor(11), 2);
+    const full = Array.from({ length: 11 }, (_, i) => i);
+    const p2 = pageResponse(full.slice(10), 11, 2);
+    assert.deepStrictEqual(p2.rows, [10]);
     assert.strictEqual(p2.page, 2);
     assert.strictEqual(p2.totalPages, 2);
   });
   it("out-of-range page clamps (never empty-blind)", () => {
-    assert.strictEqual(clampPage(999, 30), 2);
+    assert.strictEqual(clampPage(999, 30), 3);
     assert.strictEqual(clampPage(0, 30), 1);
     assert.strictEqual(clampPage(-4, 30), 1);
-    assert.strictEqual(pageResponse([], 30, 999).page, 2);
+    assert.strictEqual(pageResponse([], 30, 999).page, 3);
     assert.strictEqual(pageResponse([], 30, 0).page, 1);
   });
   it("parsePage pins into 1..1000", () => {
@@ -81,12 +81,12 @@ describe("super-admin Page readers: windowed, counted, keyed per filter set", ()
       assert.match(body, /const pageSize = PAGE_SIZE/);
       assert.match(body, /pageResponse\(rows, r\.total, page, pageSize\)/);
       // No bulk ROW takes: the only take above the window is the bounded
-      // audit-log enrichment scan (indexed, mapped onto the 15-row window).
+      // audit-log enrichment scan (indexed, mapped onto the 10-row window).
       for (const m of body.matchAll(/take:\s*(\d+)/g)) {
         const n = Number(m[1]);
         const line = body.slice(Math.max(0, (m.index ?? 0) - 200), (m.index ?? 0) + 20);
         assert.ok(
-          n <= 15 || /auditLog/.test(line),
+          n <= PAGE_SIZE || /auditLog/.test(line),
           `bulk take ${n} must only be the audit enrichment`
         );
       }
@@ -125,9 +125,9 @@ describe("users + logs Page readers", () => {
     assert.match(file, /export async function getAdminLogModules/);
   });
   it("inventory stats carry the no-threshold count (additive)", () => {
-    const body = src("../app/personnel/inventory/actions.ts");
+    const body = src("../app/personnel/stocks/actions.ts");
     assert.match(body, /none: number/);
-    assert.match(body, /reorder_threshold: null/);
+    assert.match(body, /reorder_threshold IS NULL/);
   });
 });
 
@@ -138,7 +138,7 @@ describe("converted pages fetch windows, not snapshots", () => {
     ["../app/super-admin/repairs/page.tsx", "getRepairsPage"],
     ["../app/super-admin/users/page.tsx", "getUsersPage"],
     ["../app/super-admin/logs/page.tsx", "getLogsPage"],
-    ["../app/super-admin/inventory/page.tsx", "getInventoryPage"],
+    ["../app/super-admin/stocks/page.tsx", "getInventoryPage"],
     ["../app/super-admin/issues/page.tsx", "getPublicIssuesPage"],
   ] as const) {
     it(`${file}: server window + server total + pager`, () => {
@@ -194,7 +194,7 @@ describe("converted pages fetch windows, not snapshots", () => {
   });
   it("repairs/inventory/issues reuse the shared (global-scope) readers", () => {
     assert.match(src("../app/super-admin/repairs/page.tsx"), /pageSize: PAGE_SIZE/);
-    assert.match(src("../app/super-admin/inventory/page.tsx"), /pageSize: PAGE_SIZE/);
+    assert.match(src("../app/super-admin/stocks/page.tsx"), /pageSize: PAGE_SIZE/);
     assert.match(src("../app/super-admin/issues/page.tsx"), /FIXED_PAGE_SIZE/);
   });
 });

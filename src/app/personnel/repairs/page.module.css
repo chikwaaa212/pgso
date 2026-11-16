@@ -1,3 +1,68 @@
+/* Four summary tiles in one row on desktop — same tile treatment as
+   Stocks / Assets. Two-up on tablets, stacked on phones. */
+.summary {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.75rem;
+}
+
+@media (min-width: 640px) {
+  .summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1024px) {
+  .summary {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+/* Status tabs sit above the panel, matching the Assets origin tabs. */
+.tabsRow {
+  display: flex;
+  align-items: center;
+}
+
+/* Asset cell: title + account/category subtext, like the registry table. */
+.assetCell {
+  min-width: 12rem;
+  max-width: 20rem;
+}
+
+.assetTitle {
+  display: block;
+  font-weight: 600;
+  color: var(--color-navy-900);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Issue text stays on one line — long text is clipped with an ellipsis and
+   revealed in full via the cell's title tooltip. */
+.issueCell {
+  max-width: 20rem;
+  min-width: 12rem;
+}
+
+.issueText {
+  display: block;
+  max-width: 20rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nowrap {
+  white-space: nowrap;
+}
+
+.costCell {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
 /* Compact icon actions in the Receipt / Action columns
    (receipt / start / complete / reopen / edit). Same pattern as assets. */
 .iconBtn {
@@ -70,8 +135,7 @@
    every label + control pair starts on the same horizontal line. */
 .formGrid {
   display: grid;
-  gap: 1rem;
-  padding-block: 0.25rem;
+  gap: 0.75rem;
   align-items: start;
 }
 
@@ -101,4 +165,502 @@
   .span2 {
     grid-column: auto;
   }
+}
+
+/* ─── Create-repair dialog ─────────────────────────────────────────── */
+/* Sectioned, form-like layout: numbered group headers keep the longer form
+   scannable instead of one undifferentiated grid. */
+.dialogBody {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding-block: 0.25rem;
+}
+
+.dialogSection {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.dialogSection + .dialogSection {
+  padding-top: 1rem;
+  border-top: 1px solid var(--color-navy-100);
+}
+
+.dialogSectionHead {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.625rem;
+}
+
+.dialogStep {
+  display: grid;
+  place-items: center;
+  width: 1.375rem;
+  height: 1.375rem;
+  margin-top: 0.0625rem;
+  flex-shrink: 0;
+  border-radius: 9999px;
+  background-color: var(--color-yellow-500);
+  color: var(--color-navy-900);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.dialogSectionTitle {
+  margin: 0;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  color: var(--color-navy-900);
+}
+
+.dialogSectionHint {
+  margin: 0.125rem 0 0;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  color: var(--color-navy-500);
+}
+
+.dialogTitleIcon {
+  display: grid;
+  place-items: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: 0.375rem;
+  background-color: var(--color-yellow-100);
+  color: var(--color-navy-900);
+}
+
+.dialogFooterNote {
+  margin: 0;
+  font-size: 0.6875rem;
+  color: var(--color-navy-500);
+}
+
+/* Search field with an inset icon. */
+.searchWrap {
+  position: relative;
+}
+
+.searchIcon {
+  position: absolute;
+  top: 50%;
+  left: 0.625rem;
+  transform: translateY(-50%);
+  color: var(--color-navy-400);
+  pointer-events: none;
+}
+
+.searchInput {
+  padding-left: 2rem;
+}
+
+/* ─── Item picker (same visual language as the request form) ────────── */
+.itemSelectContent {
+  padding: 0.25rem;
+}
+
+.itemGroupLabel {
+  padding: 0.375rem 0.5rem 0.25rem;
+  font-size: 0.625rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-navy-400);
+}
+
+.itemEmpty {
+  padding: 0.625rem 0.5rem;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  color: var(--color-navy-500);
+}
+
+.itemSelectItem {
+  gap: 0.5rem;
+  padding: 0.4rem 0.5rem;
+  border-radius: 4px;
+}
+
+.itemSelectItem > span:last-child {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.itemOption {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  width: 100%;
+  min-width: 0;
+}
+
+.itemOptionIcon {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 1.75rem;
+  height: 1.75rem;
+  border: 1px solid var(--color-navy-200);
+  border-radius: 5px;
+  background-color: var(--color-navy-50, #f8fafc);
+  color: var(--color-navy-600);
+}
+
+.itemOptionIcon[data-kind="stock"] {
+  border-color: #bae6fd;
+  background-color: #f0f9ff;
+  color: #0369a1;
+}
+
+.itemOptionBody {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 0.0625rem;
+  min-width: 0;
+}
+
+.itemOptionTitle {
+  overflow: hidden;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--color-navy-900);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.itemOptionMeta {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  min-width: 0;
+}
+
+.itemOptionCode {
+  overflow: hidden;
+  font-size: 0.6875rem;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+  color: var(--color-navy-500);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.itemOptionMetaText {
+  overflow: hidden;
+  font-size: 0.6875rem;
+  color: var(--color-navy-400);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.itemOptionMetaText::before {
+  content: "·";
+  margin-right: 0.375rem;
+  color: var(--color-navy-300);
+}
+
+.itemOptionBadge {
+  flex-shrink: 0;
+  margin-left: auto;
+  padding: 0.125rem 0.4375rem;
+  border-radius: 9999px;
+  background-color: var(--color-navy-100);
+  font-size: 0.625rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  color: var(--color-navy-600);
+}
+
+.itemKind {
+  flex-shrink: 0;
+  padding: 0.1875rem 0.5rem;
+  border-radius: 9999px;
+  background-color: #e0e7ff;
+  font-size: 0.625rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: #4338ca;
+}
+
+.itemKind[data-kind="stock"] {
+  background-color: #cffafe;
+  color: #0e7490;
+}
+
+/* Selected-item banner — name first, catalog facts underneath. */
+.selectedCard {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0.875rem 1rem;
+  border: 1px solid var(--color-navy-200);
+  border-left: 3px solid var(--color-yellow-500);
+  border-radius: 6px;
+  background-color: var(--color-navy-50, #f8fafc);
+}
+
+.selectedHead {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.selectedIcon {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 2rem;
+  height: 2rem;
+  border: 1px solid var(--color-navy-200);
+  border-radius: 6px;
+  background-color: #fff;
+  color: var(--color-navy-700);
+}
+
+.selectedText {
+  flex: 1;
+  min-width: 0;
+}
+
+.selectedTitle {
+  margin: 0;
+  overflow: hidden;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  color: var(--color-navy-900);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.selectedSub {
+  margin: 0.125rem 0 0;
+  font-size: 0.6875rem;
+  color: var(--color-navy-500);
+}
+
+.selectedBadge {
+  flex-shrink: 0;
+  border-radius: 9999px;
+  padding: 0.125rem 0.4375rem;
+  font-size: 0.625rem;
+  font-weight: 700;
+  white-space: nowrap;
+  background-color: var(--color-navy-100);
+  color: var(--color-navy-600);
+}
+
+.selectedGrid {
+  display: grid;
+  gap: 0.625rem 1rem;
+  margin: 0;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--color-navy-200);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+@media (min-width: 640px) {
+  .selectedGrid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+.selectedGrid dt {
+  margin: 0;
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-navy-500);
+}
+
+.selectedGrid dd {
+  margin: 0.125rem 0 0;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--color-navy-900);
+  word-break: break-word;
+}
+
+.selectedGrid dd[data-empty="true"] {
+  font-weight: 500;
+  font-style: italic;
+  color: var(--color-navy-400);
+}
+
+.textarea {
+  display: flex;
+  width: 100%;
+  border: 1px solid var(--color-navy-200, #e2e8f0);
+  border-radius: 0.375rem;
+  background-color: transparent;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
+  line-height: 1.45;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.04);
+  outline: none;
+  resize: vertical;
+}
+
+.textarea:focus-visible {
+  border-color: var(--color-navy-500);
+  box-shadow: 0 0 0 3px rgb(148 163 184 / 0.25);
+}
+
+.helperText {
+  margin: 0;
+  font-size: 0.6875rem;
+  color: var(--color-navy-500);
+}
+
+/* Availability pills — colour follows the label, never a single neutral. */
+.itemOptionBadge[data-tone="ok"],
+.selectedBadge[data-tone="ok"] {
+  background-color: #dcfce7;
+  color: #166534;
+}
+
+.itemOptionBadge[data-tone="warn"],
+.selectedBadge[data-tone="warn"] {
+  background-color: #fef3c7;
+  color: #92400e;
+}
+
+.itemOptionBadge[data-tone="bad"],
+.selectedBadge[data-tone="bad"] {
+  background-color: #fee2e2;
+  color: #991b1b;
+}
+
+.itemOptionBadge[data-tone="none"],
+.selectedBadge[data-tone="none"] {
+  background-color: var(--color-navy-100);
+  color: var(--color-navy-600);
+}
+
+/* Status badge — pending amber, in progress blue, completed green. */
+.statusBadge {
+  display: inline-block;
+  padding: 0.1875rem 0.625rem;
+  border-radius: 9999px;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  white-space: nowrap;
+  background-color: var(--color-navy-100);
+  color: var(--color-navy-700);
+}
+
+.statusBadge[data-tone="warn"] {
+  background-color: #fef3c7;
+  color: #92400e;
+}
+
+.statusBadge[data-tone="info"] {
+  background-color: #e0f2fe;
+  color: #0369a1;
+}
+
+.statusBadge[data-tone="ok"] {
+  background-color: #dcfce7;
+  color: #166534;
+}
+
+.statusBadge[data-tone="bad"] {
+  background-color: #fee2e2;
+  color: #991b1b;
+}
+
+/* `.table th` sets text-align: left, so double the class to win specificity. */
+.actionHeader.actionHeader {
+  text-align: right;
+}
+
+.actionCell {
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* Details overlay. */
+.detailBody {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.detailHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.detailCost {
+  font-size: 0.9375rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-navy-900);
+}
+
+.detailGrid {
+  display: grid;
+  gap: 0.75rem 1rem;
+  margin: 0;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.detailGrid dt {
+  margin: 0;
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-navy-500);
+}
+
+.detailGrid dd {
+  margin: 0.125rem 0 0;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--color-navy-900);
+  word-break: break-word;
+}
+
+.detailLabel {
+  margin: 0 0 0.25rem;
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-navy-500);
+}
+
+.detailIssue {
+  margin: 0;
+  border: 1px solid var(--color-navy-200);
+  border-radius: 6px;
+  background-color: var(--color-navy-50, #f8fafc);
+  padding: 0.625rem 0.75rem;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  color: var(--color-navy-800);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Dialog scrollbar hidden until hover — matches the request form. */
+.dialogScroll {
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+.dialogScroll:hover {
+  scrollbar-color: var(--color-navy-300) transparent;
 }

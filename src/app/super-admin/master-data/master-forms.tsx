@@ -323,8 +323,8 @@ export function AddStockTypeForm({ triggerClassName, onAdd, onRollback }: Optimi
           <DialogHeader>
             <DialogTitle>Add stock header</DialogTitle>
             <DialogDescription>
-              Stock headers group consumable supplies and carry the same
-              identifying fields as asset headers.
+              Stock headers group consumable supplies, like office or cleaning
+              materials, under one account code.
             </DialogDescription>
           </DialogHeader>
           <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
@@ -334,7 +334,7 @@ export function AddStockTypeForm({ triggerClassName, onAdd, onRollback }: Optimi
                 <input name="account_code" required placeholder="e.g. 1-07-05-010" style={inputStyle} />
               </label>
               <label style={{ fontSize: "0.75rem", fontWeight: 600 }}>
-                Asset type *
+                Stock type *
                 <input name="asset_type" required placeholder="e.g. Office Supplies" style={inputStyle} />
               </label>
               <label style={{ fontSize: "0.75rem", fontWeight: 600 }}>

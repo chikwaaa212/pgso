@@ -1,5 +1,7 @@
 import type { UnifiedAssetRow } from "./actions";
-import styles from "../inspections/components/receipt.module.css";
+import styles from "../deliveries/delivery-receipt.module.css";
+
+type Tone = "ok" | "warn" | "info" | "bad";
 
 function label(value: string | null) {
   if (!value) return "—";
@@ -27,25 +29,35 @@ function fmtCurrency(value: number | null) {
   }).format(value);
 }
 
-function statusTone(status: string | null) {
-  if (status === "available") return "ok" as const;
-  if (status === "retired") return "warn" as const;
-  return "info" as const;
+function statusMeta(status: string | null): { label: string; tone: Tone } {
+  if (!status) return { label: "—", tone: "info" };
+  if (status === "available") return { label: label(status), tone: "ok" };
+  if (status === "retired") return { label: label(status), tone: "warn" };
+  return { label: label(status), tone: "info" };
 }
 
-function pair(labelText: string, value: string) {
+function Pill({ label: text, tone }: { label: string; tone: Tone }) {
   return (
-    <div key={labelText} className={styles.row}>
-      <dt>{labelText}</dt>
-      <dd>{value}</dd>
+    <span className={styles.pill} data-tone={tone}>
+      {text}
+    </span>
+  );
+}
+
+function Field({ label: text, value }: { label: string; value: string }) {
+  return (
+    <div className={styles.field}>
+      <dt className={styles.label}>{text}</dt>
+      <dd className={styles.value}>{value}</dd>
     </div>
   );
 }
 
 export function AssetReceipt({ asset: a }: { asset: UnifiedAssetRow }) {
   const ref = (a.qr_code ?? a.identifier ?? a.id).slice(0, 8).toUpperCase();
+  const status = statusMeta(a.status);
 
-  const vehiclePairs: [string, string][] = [
+  const vehiclePairs: Array<[string, string]> = [
     ["Brand", a.brand ?? "—"],
     ["Color", label(a.color)],
     ["Plate No.", a.plate_number ?? "—"],
@@ -57,107 +69,111 @@ export function AssetReceipt({ asset: a }: { asset: UnifiedAssetRow }) {
   const hasVehicleDetail = vehiclePairs.some(([, v]) => v !== "—");
 
   return (
-    <article className={styles.receipt}>
-      <div className={styles.receiptInner}>
-        {/* ── Masthead ─────────────────────────────────────────────── */}
-        <header className={styles.masthead}>
-          <p className={styles.orgName}>PGSO</p>
-          <p className={styles.orgSub}>Property &amp; Supply Management</p>
-          <p className={styles.docTitle}>*** ASSET RECEIPT ***</p>
-          <p className={styles.docSub}>ASSET RECORD — {ref}</p>
-        </header>
+    <article className={`${styles.sheet} mx-auto w-full max-w-3xl`}>
+      {/* Masthead — same structure as the inspection receipt */}
+      <header className={styles.top}>
+        <div className={styles.brand}>
+          <p className={styles.brandName}>PGSO</p>
+          <p className={styles.brandSub}>Property &amp; Supply Management</p>
+        </div>
+        <div className={styles.doc}>
+          <p className={styles.docTitle}>Asset Receipt</p>
+          <p className={styles.docNo}>{ref}</p>
+          <p className={styles.docDate}>Asset record</p>
+        </div>
+      </header>
 
-        <div className={styles.divider} />
-
-        {/* ── Identification ───────────────────────────────────────── */}
-        <p className={styles.sectionTitle}>IDENTIFICATION</p>
-        <dl className={styles.rows}>
-          {pair("Property No.", a.qr_code ?? "—")}
-          {pair("Account Code", a.account_code ?? "—")}
-          {pair("Asset Type", label(a.category))}
-          {pair("Account Title", label(a.account_title))}
-          {pair("Account Name", label(a.account_name))}
-          {pair("Article", label(a.article))}
-          {pair("Identifier", a.identifier ?? "—")}
-          <div className={styles.row}>
-            <dt>Status</dt>
-            <dd>
-              <span className={styles.resultBadge} data-tone={statusTone(a.status)}>
-                {(a.status ?? "—").toUpperCase()}
-              </span>
+      {/* Identification */}
+      <section className={styles.section}>
+        <p className={styles.sectionTitle}>Identification</p>
+        <dl className={styles.grid}>
+          <Field label="Property No." value={a.qr_code ?? "—"} />
+          <Field label="Account Code" value={a.account_code ?? "—"} />
+          <Field label="Asset Type" value={label(a.category)} />
+          <Field label="Account Title" value={label(a.account_title)} />
+          <Field label="Account Name" value={label(a.account_name)} />
+          <Field label="Article" value={label(a.article)} />
+          <Field label="Identifier" value={a.identifier ?? "—"} />
+          <div className={styles.field}>
+            <dt className={styles.label}>Status</dt>
+            <dd className={styles.value}>
+              <Pill label={status.label} tone={status.tone} />
             </dd>
           </div>
         </dl>
+      </section>
 
-        <div className={styles.divider} />
-
-        {/* ── Description & cost ───────────────────────────────────── */}
-        <p className={styles.sectionTitle}>DESCRIPTION &amp; COST</p>
-        <dl className={styles.rows}>
-          {pair("Description", a.description ?? "—")}
-          {pair(
-            "Quantity",
-            `${a.quantity ?? "—"}${a.unit ? ` ${label(a.unit)}` : ""}`
-          )}
-          {pair("Date Acquired", fmtDate(a.date_acquired))}
-          {pair("Location", a.location ?? "—")}
-          {pair("Condition", label(a.condition))}
-          {pair("Unit Cost", fmtCurrency(a.unit_cost))}
-          {pair("Total Cost", fmtCurrency(a.total_cost))}
-          {pair("Fund", a.fund ?? "—")}
+      {/* Description & cost */}
+      <section className={styles.section}>
+        <p className={styles.sectionTitle}>Description &amp; Cost</p>
+        <dl className={styles.grid}>
+          <Field label="Description" value={a.description ?? "—"} />
+          <Field
+            label="Quantity"
+            value={`${a.quantity ?? "—"}${a.unit ? ` ${label(a.unit)}` : ""}`}
+          />
+          <Field label="Date Acquired" value={fmtDate(a.date_acquired)} />
+          <Field label="Location" value={a.location ?? "—"} />
+          <Field label="Condition" value={label(a.condition)} />
+          <Field label="Unit Cost" value={fmtCurrency(a.unit_cost)} />
+          <Field label="Total Cost" value={fmtCurrency(a.total_cost)} />
+          <Field label="Fund" value={a.fund ?? "—"} />
         </dl>
+      </section>
 
-        {hasVehicleDetail ? (
-          <>
-            <div className={styles.divider} />
-            <p className={styles.sectionTitle}>VEHICLE DETAILS</p>
-            <dl className={styles.rows}>
-              {vehiclePairs.map(([k, v]) => pair(k, v))}
-            </dl>
-          </>
-        ) : null}
+      {hasVehicleDetail ? (
+        <section className={styles.section}>
+          <p className={styles.sectionTitle}>Vehicle Details</p>
+          <dl className={styles.grid}>
+            {vehiclePairs.map(([k, v]) => (
+              <Field key={k} label={k} value={v} />
+            ))}
+          </dl>
+        </section>
+      ) : null}
 
-        <div className={styles.divider} />
-
-        {/* ── Document reference ───────────────────────────────────── */}
-        <p className={styles.sectionTitle}>DOCUMENT REFERENCE</p>
-        <dl className={styles.rows}>
-          {pair("Supplier/Payee", a.supplier_payee ?? "—")}
-          {pair("DV Tracking No.", a.dv_tracking_number ?? "—")}
-          {pair("DV No.", a.dv_number ?? "—")}
-          {pair("OBR No.", a.obr_number ?? "—")}
-          {pair("Account No.", a.account_number ?? "—")}
-          {pair("Date Received", fmtDate(a.date_received))}
+      {/* Document reference */}
+      <section className={styles.section}>
+        <p className={styles.sectionTitle}>Document Reference</p>
+        <dl className={styles.grid}>
+          <Field label="Supplier/Payee" value={a.supplier_payee ?? "—"} />
+          <Field label="DV Tracking No." value={a.dv_tracking_number ?? "—"} />
+          <Field label="DV No." value={a.dv_number ?? "—"} />
+          <Field label="OBR No." value={a.obr_number ?? "—"} />
+          <Field label="Account No." value={a.account_number ?? "—"} />
+          <Field label="Date Received" value={fmtDate(a.date_received)} />
         </dl>
+      </section>
 
-        <p className={styles.remarksLabel}>
-          Remarks: <span className={styles.remarks}>{a.remarks || "—"}</span>
-        </p>
-
-        <div className={styles.signatureRow}>
-          <div className={styles.signature}>
-            <p className={styles.signatureName}> </p>
-            <p className={styles.signatureLabel}>
-              SUPPLY AND/OR PROPERTY CUSTODIAN
+      {/* Remarks & signature */}
+      <section className={styles.section}>
+        <p className={styles.sectionTitle}>Remarks &amp; Custodian</p>
+        <dl className={styles.grid}>
+          <Field label="Remarks" value={a.remarks || "—"} />
+        </dl>
+        <div className="mt-4 grid gap-1 sm:grid-cols-2">
+          <div>
+            <p className="m-0 border-b border-navy-900 pb-1 text-sm font-semibold text-navy-900">
+              {" "}
+            </p>
+            <p className="mt-1 text-[0.625rem] font-semibold uppercase tracking-[0.14em] text-navy-500">
+              Supply and/or Property Custodian
             </p>
           </div>
         </div>
+      </section>
 
-        <div className={styles.divider} />
-
-        {/* ── Footer ───────────────────────────────────────────────── */}
-        <p className={styles.receiptKicker}>END OF ASSET RECORD</p>
-        <div
-          aria-hidden="true"
-          className={styles.scanned}
-          style={{
-            background:
-              "repeating-linear-gradient(90deg, #1b2a4a 0 2px, transparent 2px 5px, #1b2a4a 5px 6px, transparent 6px 10px)",
-          }}
-        />
-        <p className={styles.scannedLabel}>ASSET #{ref}</p>
-        <p className={styles.thanks}>*** Thank you! ***</p>
-      </div>
+      {/* Footer */}
+      <footer className={styles.footer}>
+        <p className={styles.kicker}>End of asset record</p>
+        <div className={styles.footerMeta}>
+          <div aria-hidden="true" className={styles.barcode} />
+          <p className={styles.footerRef}>
+            Asset #{ref}
+            {a.source === "stock" ? " • STOCK LINKED" : ""}
+          </p>
+        </div>
+      </footer>
     </article>
   );
 }

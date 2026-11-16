@@ -14,7 +14,7 @@ import {
   type IarRecordRow,
 } from '@/app/personnel/inspections/actions'
 import { getDeliveryDetails, type DeliveryDetails } from '@/app/personnel/deliveries/actions'
-import { getInventoryItems, getInventoryPage, type InventoryRow } from '@/app/personnel/inventory/actions'
+import { getInventoryItems, getInventoryPage, type InventoryRow } from '@/app/personnel/stocks/actions'
 import {
   getUnifiedAssetsPage,
   getUnifiedAsset,
@@ -558,9 +558,9 @@ export async function browseViewedDocKeys(): Promise<string[]> {
   }
 }
 
-// ─── Document-center per-tab windows (server pagination, PAGE_SIZE = 15) ────
+// ─── Document-center per-tab windows (server pagination, PAGE_SIZE = 10) ────
 // Replaces the old 8×500 full-list snapshot + client filter: each visit
-// fetches ONE 15-row window for the ACTIVE tab (plus cached counts), with
+// fetches ONE 10-row window for the ACTIVE tab (plus cached counts), with
 // the same Browse* row shapes (logged_by preserved) the tables render.
 
 export type AdminDocumentsTab = DocumentsTab;
@@ -579,7 +579,7 @@ export async function getAdminDocumentsTabPage(
   opts: { page?: number; q?: string } = {}
 ): Promise<AdminDocumentsTabPage> {
   if (!(await allowed())) {
-    return { rows: [], data: [], total: 0, page: 1, pageSize: 15, totalPages: 1 }
+    return { rows: [], data: [], total: 0, page: 1, pageSize: 10, totalPages: 1 }
   }
   const { withScopedCache } = await import('@/lib/personnel-cache')
   const { PAGE_SIZE } = await import('@/lib/constants')
@@ -670,9 +670,9 @@ export async function getAdminDocumentsTabPage(
   }, { tab, page, pageSize, q })
 }
 
-// ─── Oversight per-resource windows (server pagination, PAGE_SIZE = 15) ───
+// ─── Oversight per-resource windows (server pagination, PAGE_SIZE = 10) ───
 // Replaces the legacy take-300/500 full-list snapshots + client slice: each
-// visit fetches ONE 15-row window (+ exact total per filter set, cached 30s
+// visit fetches ONE 10-row window (+ exact total per filter set, cached 30s
 // and busted by the matching resource writes). Personnel window readers are
 // reused (super_admin scope is global there); per-window enrichment
 // (logged_by for the 15 visible rows) stays bounded.

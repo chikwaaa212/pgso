@@ -145,7 +145,8 @@ flowchart LR
     end
 
     subgraph STOCK["Inventory ▾"]
-        INV["/personnel/inventory — Stocks"]
+        INV["/personnel/stocks — Stocks"]
+        INVD["/personnel/stocks/[id] — stock detail + history"]
         AST["/personnel/assets"]
         ASTD["/personnel/assets/[id] — asset detail editor"]
         ASTS["/personnel/assets/stock/[id] — ↪ asset detail"]
@@ -217,7 +218,7 @@ flowchart LR
     end
 
     subgraph STK["Inventory ▾"]
-        INV["/super-admin/inventory 👁"]
+        INV["/super-admin/stocks 👁"]
         AST["/super-admin/assets ✅"]
         ASTD["/super-admin/assets/[id] ✅"]
         ASTS["/super-admin/assets/stock/[id] ✅"]
@@ -403,7 +404,8 @@ flowchart LR
 | `/personnel/inspections/[id]/iar` | — | AIR/IAR report | Printable sheet, attach/remove image |
 | `/personnel/inspections/[id]/receipt` | — | Latest receipt | Printable receipt, view-AIR action |
 | `/personnel/inspections/[id]/receipts` | — | Receipt history | Stacked receipts |
-| `/personnel/inventory` | Inventory | Stocks | Stock table, recommendations, **Sync from inspections** dialog |
+| `/personnel/stocks` | Inventory | Stocks | Stock table with select/assign/QR, assigned-employee dialog, recommendations |
+| `/personnel/stocks/[id]` | — | Stock detail | Editable fields, assignment history, QR |
 | `/personnel/assets` | Inventory | Assets | Table with QR, add asset, import assets, add custom column, evaluate-issuance dialog |
 | `/personnel/assets/[id]` | — | Asset detail | Editable fields, history, QR |
 | `/personnel/assets/stock/[id]` | — | ↪ redirects to asset detail | — |
@@ -430,7 +432,7 @@ flowchart LR
 | `/super-admin/dashboard` | — | Dashboard | Org-wide KPIs, deliveries vs inspections chart, recent activity, add-personnel dialog |
 | `/super-admin/deliveries` + `/[id]` | Operations | Deliveries | Read-only browse tables with row filters |
 | `/super-admin/inspections` + `/[id]` | Operations | Inspections | Read-only |
-| `/super-admin/inventory` | Inventory | Stocks | Read-only |
+| `/super-admin/stocks` | Inventory | Stocks | Read-only |
 | `/super-admin/assets` + `/[id]` + `/stock/[id]` | Inventory | Assets | Full write (shared dialogs with personnel) |
 | `/super-admin/documents` | Records | Documents | All owners, 8 tabs, read-only |
 | `/super-admin/issuances` + `/[id]` | Records | PAR / ICS | All owners, read-only |

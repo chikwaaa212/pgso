@@ -317,7 +317,21 @@ export function NewRequestForm({
             </label>
             <label style={labelStyle}>
               Quantity
-              <input name="quantity" type="number" min={1} defaultValue={1} style={inputStyle} />
+              <input
+                name="quantity"
+                type="number"
+                inputMode="numeric"
+                min={1}
+                defaultValue={1}
+                style={inputStyle}
+                // Never negative or fractional while typing.
+                onInput={(e) => {
+                  e.currentTarget.value = e.currentTarget.value.replace(
+                    /[^\d]/g,
+                    ""
+                  );
+                }}
+              />
             </label>
           </>
         )}
@@ -327,10 +341,17 @@ export function NewRequestForm({
             <input
               name="quantity"
               type="number"
+              inputMode="numeric"
               min={1}
               max={stockMax}
               defaultValue={1}
               style={inputStyle}
+              // Digits only, and never above what is on hand.
+              onInput={(e) => {
+                const digits = e.currentTarget.value.replace(/[^\d]/g, "");
+                const n = Math.min(Math.max(1, Number(digits || 1)), Math.max(1, stockMax));
+                e.currentTarget.value = Number.isFinite(n) ? String(n) : "1";
+              }}
             />
           </label>
         )}

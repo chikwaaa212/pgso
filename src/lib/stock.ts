@@ -7,16 +7,20 @@ interface ItemCheck {
   actualQty: number;
 }
 
-const STOCKABLE_RESULTS = ["passed", "partial"] as const;
+/**
+ * Only a passed inspection may feed stocks. Partial deliveries are held
+ * until the balance arrives and the inspection can pass in full.
+ */
+const STOCKABLE_RESULTS = ["passed"] as const;
 
 /**
- * Moves an inspection's received items into inventory — for passed AND
- * partial inspections — provided an AIR (generated or attached) backs it.
+ * Moves a passed inspection's received items into inventory. Stocking is
+ * automatic once the verdict is `passed` — an AIR/IAR is generated from the
+ * inspection afterwards and never gates the ledger.
  *
  * Only the not-yet-stocked remainder moves per item: each delivery item
- * carries a `stocked_qty` high-water mark, so a partial (actual 6 of 10)
- * stocks 6, and a later update to passed (actual 10) stocks just the
- * remaining 4. Reprocessing the same inspection adds nothing.
+ * carries a `stocked_qty` high-water mark, so re-processing the same
+ * inspection — or a later re-inspection — adds nothing twice.
  */
 export async function stockInspectionItems(
   inspectionId: string
@@ -31,6 +35,7 @@ export async function stockInspectionItems(
       delivery: {
         select: {
           account_code: true,
+          account_title: true,
           delivery_kind: true,
           asset_type: true,
           stock_type: true,
@@ -46,7 +51,6 @@ export async function stockInspectionItems(
           },
         },
       },
-      iar_records: { select: { id: true }, take: 1 },
     },
   });
 
@@ -57,8 +61,6 @@ export async function stockInspectionItems(
   ) {
     return { stocked: false, reason: "not-stockable" };
   }
-  if (inspection.iar_records.length === 0)
-    return { stocked: false, reason: "no-air" };
 
   const rawChecks = inspection.item_checks as unknown;
   const checks: ItemCheck[] = Array.isArray(rawChecks)
@@ -73,6 +75,7 @@ export async function stockInspectionItems(
   let added = 0;
   let costsFixed = 0;
   const accountCode = inspection.delivery.account_code?.trim() || null;
+  const accountTitle = inspection.delivery.account_title?.trim() || null;
   const deliveryKind = inspection.delivery.delivery_kind?.trim() || null;
   // Stock deliveries carry a Stock Type; assets carry the catalog-derived
   // asset type. Either one seeds the inventory category so new rows keep
@@ -95,7 +98,14 @@ export async function stockInspectionItems(
             item_name: { equals: name, mode: "insensitive" },
             unit: item.unit,
           },
-          select: { id: true, account_code: true, delivery_kind: true, category: true, unit_cost: true },
+          select: {
+            id: true,
+            account_code: true,
+            delivery_kind: true,
+            category: true,
+            unit_cost: true,
+            custom_fields: true,
+          },
         });
 
         if (existing) {
@@ -115,6 +125,20 @@ export async function stockInspectionItems(
           // fill the custom asset type as category when the row has none yet
           if (!existing.category && assetType) {
             patch.category = assetType;
+          }
+          // Carry the catalog Account Title chosen on the delivery log into
+          // the stock row so ICS issuances can display it (inventory has no
+          // dedicated title column).
+          if (accountTitle) {
+            const cf =
+              existing.custom_fields && typeof existing.custom_fields === 'object'
+                ? (existing.custom_fields as Record<string, unknown>)
+                : {};
+            const storedTitle =
+              typeof cf.account_title === 'string' ? cf.account_title.trim() : '';
+            if (!storedTitle) {
+              patch.custom_fields = { ...cf, account_title: accountTitle };
+            }
           }
           // Backfill (or refresh to the latest delivery) cost even when
           // nothing new is added — otherwise rows stocked before the
@@ -143,6 +167,7 @@ export async function stockInspectionItems(
               account_code: accountCode,
               delivery_kind: deliveryKind,
               category: assetType,
+              ...(accountTitle ? { custom_fields: { account_title: accountTitle } } : {}),
               ...(item.unit_cost != null
                 ? { unit_cost: item.unit_cost }
                 : {}),

@@ -1,8 +1,25 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import {
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type KeyboardEvent,
+} from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import {
+  Eye,
+  EyeOff,
+  FileStack,
+  FileText,
+  Info,
+  PackageSearch,
+  Search,
+  TriangleAlert,
+} from "lucide-react";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { PAGE_SIZE } from "@/lib/constants";
 import { Card } from "@/components/ui/card";
@@ -24,7 +41,7 @@ import {
   getDocumentsCounts,
 } from "@/app/personnel/documents/actions";
 import type { UnifiedInspectionRow } from "@/app/personnel/inspections/actions";
-import type { InventoryRow } from "@/app/personnel/inventory/actions";
+import type { InventoryRow } from "@/app/personnel/stocks/actions";
 import type { UnifiedAssetRow } from "@/app/personnel/assets/actions";
 import type { RepairRow } from "@/app/personnel/repairs/actions";
 import type { IssuanceDetail } from "@/app/personnel/issuances/actions";
@@ -36,7 +53,7 @@ import type {
 } from "@/app/personnel/inspections/actions";
 import { InspectionReceipt } from "@/app/personnel/inspections/components/inspection-receipt";
 import { DeliveryReceipt } from "@/app/personnel/deliveries/[id]/delivery-receipt";
-import { StockReceipt } from "@/app/personnel/inventory/stock-receipt";
+import { StockReceipt } from "@/app/personnel/stocks/stock-receipt";
 import { AssetReceipt } from "@/app/personnel/assets/asset-receipt";
 import { RepairReceipt } from "@/app/personnel/repairs/repair-receipt";
 import { IarReportSheet } from "@/app/personnel/documents/iar-report";
@@ -44,12 +61,10 @@ import { ParReportSheet } from "@/app/personnel/documents/par-report";
 import { IcsReportSheet } from "@/app/personnel/documents/ics-report";
 import { ReceiptOverlay } from "@/app/personnel/documents/receipt-overlay";
 import receipt from "@/app/personnel/inspections/components/receipt.module.css";
-import { Pagination } from "@/components/ui/pagination";
-import {
-  DataTableSkeleton,
-  PagerSkeleton,
-} from "@/components/personnel/skeletons";
+import { TablePager } from "@/components/personnel/TablePager";
 import { ReceiptLoading } from "@/components/personnel/ReceiptLoading";
+import { EmptySearchState } from "@/components/personnel/EmptySearchState";
+import { DocumentsTableSkeleton } from "@/components/personnel/DocumentsTableSkeleton";
 import { useCachedAction } from "@/hooks/use-cached-action";
 import { buildQueryKey } from "@/lib/query-keys";
 import {
@@ -58,8 +73,8 @@ import {
 } from "@/lib/client-cache";
 import { useReceipt } from "@/hooks/use-receipt";
 import DocumentsLoading from "./loading";
-import styles from "@/app/personnel/dashboard/page.module.css";
-import air from "@/app/personnel/inspections/air-section.module.css";
+import stockStyles from "@/app/personnel/stocks/page.module.css";
+import docs from "@/app/personnel/documents/page.module.css";
 
 const TABS = [
   { value: "delivery", label: "Delivery" },
@@ -76,6 +91,72 @@ type Tab = (typeof TABS)[number]["value"];
 
 function isTab(v: string | null): v is Tab {
   return TABS.some((t) => t.value === v);
+}
+
+/** Viewed-receipt keys use the singular document type, not the tab id. */
+const DOC_TYPE: Record<Tab, string> = {
+  delivery: "delivery",
+  inspection: "inspection",
+  stocks: "stock",
+  assets: "asset",
+  repairs: "repair",
+  iar: "iar",
+  par: "par",
+  ics: "ics",
+};
+
+const EMPTY_COPY: Record<Tab, string> = {
+  delivery:
+    "Delivery receipts appear here automatically once a delivery is logged.",
+  inspection:
+    "Inspection history receipts appear here once a delivery has been inspected.",
+  stocks:
+    "Stock receipts appear here automatically once a delivery passes inspection.",
+  assets:
+    "Asset receipts appear here once an asset delivery passes inspection or an asset is registered.",
+  repairs:
+    "Repair receipts appear here once a repair ticket is completed.",
+  iar: "IAR reports appear here once an inspection report is generated or attached.",
+  par: "PAR records appear here once items valued over ₱50,000 are issued.",
+  ics: "ICS records appear here once items valued at ₱50,000 or less are issued.",
+};
+
+/** One plain-language sentence per tab so oversight staff never have to guess
+ *  what a document type means before opening it. */
+const TAB_HELP: Record<Tab, string> = {
+  delivery:
+    "Proof that a supplier delivered items — includes the supplier, purchase order, delivery status, and who logged it.",
+  inspection:
+    "What the inspector found after a delivery. Items either pass and go to stock, or are returned to the supplier.",
+  stocks:
+    "Items accepted into the stockroom after a passed inspection, with the quantity on hand.",
+  assets:
+    "Registered property. Each row carries the property number, description, and where the item is kept.",
+  repairs:
+    "Repair tickets for damaged items — who reported it, who fixed it, the cost, and the outcome.",
+  iar: "The Inspection and Acceptance Report that supports a delivery.",
+  par: "Property Acknowledgment Receipt — issued for property worth more than ₱50,000.",
+  ics: "Inventory Custodian Slip — issued for property worth ₱50,000 or less.",
+};
+
+/**
+ * Whole-row opener: one click (or Enter / Space) opens the receipt, matching
+ * the Personnel Documents library and the Inspections list. Action cells stop
+ * propagation so their own button never double-fires.
+ */
+function rowOpenProps(onOpen: () => void) {
+  return {
+    className: docs.clickableRow,
+    tabIndex: 0,
+    title: "Open this document",
+    onClick: onOpen,
+    onKeyDown: (event: KeyboardEvent<HTMLTableRowElement>) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        onOpen();
+      }
+    },
+  } as const;
 }
 
 function fmt(iso: string | null | undefined) {
@@ -97,7 +178,7 @@ function label(value: string | null | undefined) {
 
 function deliveryTone(status: string | null) {
   if (status === "complete") return "ok";
-  if (status === "awaiting") return "info";
+  if (status === "awaiting" || status === "arrival") return "info";
   return "warn";
 }
 
@@ -178,8 +259,8 @@ function SuperAdminDocumentsContent() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, page, debouncedQuery]);
 
-  // Server-paginated tab window (PAGE_SIZE = 15): only the ACTIVE tab
-  // fetches — one 15-row window + cached counts, never the 8×500 snapshot.
+  // Server-paginated tab window (PAGE_SIZE = 10): only the ACTIVE tab
+  // fetches — one 10-row window + cached counts, never the 8×500 snapshot.
   // The hook keeps the previous key's payload while the new key loads; rows
   // are trusted only when stamped for the CURRENT tab.
   const {
@@ -284,6 +365,7 @@ function SuperAdminDocumentsContent() {
   const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null);
   const [selectedRepairId, setSelectedRepairId] = useState<string | null>(null);
 
+  const [viewedFilter, setViewedFilter] = useState<"all" | "unviewed">("all");
   const docKey = (type: string, id: string) => `${type}:${id}`;
   const isViewed = (type: string, id: string) => viewedKeys.has(docKey(type, id));
 
@@ -294,6 +376,24 @@ function SuperAdminDocumentsContent() {
     if (viewedKeys.has(key)) return;
     setViewedKeys((prev) => new Set(prev).add(key));
   }
+
+  // Stable identity per tab, shared by the viewed filter and the unviewed
+  // count — same helper shape as the Personnel library.
+  const rowId = (t: Tab, row: unknown): string => {
+    switch (t) {
+      case "delivery":
+      case "inspection":
+        return (row as { delivery_id: string }).delivery_id;
+      default:
+        return (row as { id: string }).id;
+    }
+  };
+
+  // "Unviewed" narrows the already-fetched page window locally — no fetch.
+  const byViewed = <T,>(rows: T[]): T[] =>
+    viewedFilter === "all"
+      ? rows
+      : rows.filter((row) => !isViewed(DOC_TYPE[tab], rowId(tab, row)));
 
   // Server already searched + paged each tab — these are identity aliases
   // keeping the section render code unchanged. The DB window IS the page.
@@ -508,7 +608,7 @@ function SuperAdminDocumentsContent() {
           (cold ? (
             <>
               <DataTableSkeleton
-                headers={["Ref", "Supplier", "PO ref", "Date delivered", "Items", "Logged By", "Delivery", "Inspection", "Receipt"]}
+                headers={["Ref", "Supplier", "PO ref", "Date inspected", "Items", "Logged By", "Delivery", "Inspection", "Receipt"]}
                 cols={9}
                 label="Loading delivery documents"
               />
@@ -528,7 +628,7 @@ function SuperAdminDocumentsContent() {
                         <th>Ref</th>
                         <th>Supplier</th>
                         <th>PO ref</th>
-                        <th>Date delivered</th>
+                        <th>Date inspected</th>
                         <th>Items</th>
                         <th>Logged By</th>
                         <th>Delivery</th>
@@ -542,7 +642,7 @@ function SuperAdminDocumentsContent() {
                           <td>{d.ref}</td>
                           <td>{d.supplier ?? "—"}</td>
                           <td>{d.po_reference ?? "—"}</td>
-                          <td>{fmt(d.date_delivered)}</td>
+                          <td>{fmt(d.inspection_date ?? d.date_delivered)}</td>
                           <td>{d.item_count}</td>
                           <td>{d.logged_by ?? "—"}</td>
                           <td>

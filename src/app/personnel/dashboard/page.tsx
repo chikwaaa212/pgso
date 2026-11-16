@@ -179,7 +179,7 @@ export default function PersonnelDashboard() {
         lowTotal === 0
           ? `${stats.totalStockSkus} SKUs tracked`
           : `${stats.outOfStockCount} out · ${stats.lowStockCount} low`,
-      href: "/personnel/inventory",
+      href: "/personnel/stocks",
     },
     {
       label: "Assets Tracked",
@@ -250,7 +250,7 @@ export default function PersonnelDashboard() {
         lowTotal === 0
           ? "All stock levels healthy."
           : `${stats.outOfStockCount} out of stock · ${stats.lowStockCount} low.`,
-      href: "/personnel/inventory",
+      href: "/personnel/stocks",
       cta: "Restock",
       tone: lowTotal === 0 ? "ok" : "bad",
       count: lowTotal,
@@ -281,7 +281,7 @@ export default function PersonnelDashboard() {
       {/* Stats — one card per operations area */}
       <div className={styles.stats}>
         {statCards.map((stat) => (
-          <Card key={stat.label} className={`${styles.statCard} p-4`}>
+          <Card key={stat.label} className={`${styles.statCard} rounded-xl p-4`}>
             <span className={styles.statLabel}>{stat.label}</span>
             <span className={styles.statValue}>{stat.value}</span>
             <div className={styles.statFooter}>
@@ -607,7 +607,7 @@ export default function PersonnelDashboard() {
           {lowStock.length === 0 ? (
             <CardEmptyState
               message="All stock levels healthy — nothing at or below threshold."
-              action={{ label: "Manage stocks", href: "/personnel/inventory" }}
+              action={{ label: "Manage stocks", href: "/personnel/stocks" }}
             />
           ) : (
             <div className={styles.tableWrap}>
@@ -644,7 +644,7 @@ export default function PersonnelDashboard() {
           {lowStock.length > 0 && (
             <div className={styles.panelFooter}>
               <Link
-                href="/personnel/inventory"
+                href="/personnel/stocks"
                 className={styles.inspectLink}
               >
                 Manage stocks

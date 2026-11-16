@@ -127,8 +127,8 @@ export const FOOTER_INFO: Record<string, FooterInfoContent> = {
         text: "Go to Inspections, open the delivery, then record inspection results. Accepted items generate an IAR (Inspection & Acceptance Report).",
       },
       {
-        title: "3. Stock goes to Inventory",
-        text: "Accepted quantities automatically reflect in Inventory. Watch low-stock and out-of-stock badges to trigger replenishment.",
+        title: "3. Stock goes to Stocks",
+        text: "Accepted quantities automatically reflect in Stocks. Watch low-stock and out-of-stock badges to trigger replenishment.",
       },
       {
         title: "4. Issue to requesters",
@@ -142,7 +142,7 @@ export const FOOTER_INFO: Record<string, FooterInfoContent> = {
     destinations: [
       { label: "Personnel → Deliveries", href: "/personnel/deliveries", hint: "Log incoming supplies" },
       { label: "Personnel → Inspections", href: "/personnel/inspections", hint: "Inspect & generate IAR" },
-      { label: "Personnel → Inventory", href: "/personnel/inventory", hint: "Monitor stock levels" },
+      { label: "Personnel → Stocks", href: "/personnel/stocks", hint: "Monitor stock levels" },
       { label: "Personnel → Issuances", href: "/personnel/issuances", hint: "Issue supplies" },
     ],
     tip: "Tip: never issue supplies without an approved request and a completed inspection — that keeps inventory balances and IARs consistent.",
@@ -235,7 +235,7 @@ export const FOOTER_INFO: Record<string, FooterInfoContent> = {
       },
       {
         title: "2. Core resources",
-        text: "/personnel/assets, /personnel/inventory, /personnel/deliveries, /personnel/inspections, /personnel/issuances, /personnel/requests, /personnel/repairs map 1:1 to data entities.",
+        text: "/personnel/assets, /personnel/stocks, /personnel/deliveries, /personnel/inspections, /personnel/issuances, /personnel/requests, /personnel/repairs map 1:1 to data entities.",
       },
       {
         title: "3. Detail & scan routes",
@@ -252,7 +252,7 @@ export const FOOTER_INFO: Record<string, FooterInfoContent> = {
     ],
     destinations: [
       { label: "Personnel → Assets", href: "/personnel/assets", hint: "Canonical asset resource" },
-      { label: "Personnel → Inventory", href: "/personnel/inventory", hint: "Stock resource" },
+      { label: "Personnel → Stocks", href: "/personnel/stocks", hint: "Stock resource" },
       { label: "Super Admin → Master Data", href: "/super-admin/master-data", hint: "Reference tables" },
       { label: "Super Admin → Logs", href: "/super-admin/logs", hint: "Audit stream" },
     ],

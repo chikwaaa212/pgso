@@ -2,13 +2,13 @@ import 'server-only'
 
 import {
   getAgingReport,
-  getAssetConditionReport,
+  getAssetAvailabilityReport,
   getQuarterlyIssuanceReport,
   type ReportPortal,
 } from '@/lib/reporting-queries'
 import {
   buildAgingWorkbook,
-  buildConditionWorkbook,
+  buildAvailabilityWorkbook,
   buildQuarterlyWorkbook,
 } from '@/lib/report-excel'
 import { parseReportYear } from '@/lib/reporting'
@@ -16,7 +16,7 @@ import { parseReportYear } from '@/lib/reporting'
 export const REPORT_XLSX_IDS = [
   'aging',
   'quarterly-issuance',
-  'asset-conditions',
+  'asset-availability',
 ] as const
 
 export type ReportXlsxId = (typeof REPORT_XLSX_IDS)[number]
@@ -39,8 +39,8 @@ function fileName(portal: ReportPortal, report: ReportXlsxId, year?: number): st
   if (report === 'quarterly-issuance') {
     return `PGSO-${scope}-Quarterly-Issuance-${year ?? new Date().getFullYear()}.xlsx`
   }
-  if (report === 'asset-conditions') {
-    return `PGSO-${scope}-Asset-Conditions-${stamp()}.xlsx`
+  if (report === 'asset-availability') {
+    return `PGSO-${scope}-Asset-Availability-${stamp()}.xlsx`
   }
   return `PGSO-${scope}-Aging-Report-${stamp()}.xlsx`
 }
@@ -110,8 +110,8 @@ export async function buildReportXlsxResponse(
     workbook = buildQuarterlyWorkbook(data, portal)
     name = fileName(portal, report, year)
   } else {
-    const data = await getAssetConditionReport()
-    workbook = buildConditionWorkbook(data, portal)
+    const data = await getAssetAvailabilityReport()
+    workbook = buildAvailabilityWorkbook(data, portal)
     name = fileName(portal, report)
   }
 

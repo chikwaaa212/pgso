@@ -156,18 +156,27 @@ describe("custom columns: optimistic fields + cell failure toast", () => {
   });
 });
 
-describe("inventory save: optimistic create/update + rollback + record", () => {
-  const page = src("../app/personnel/inventory/page.tsx");
-  it("paints save instantly, rolls back, reconciles server record", () => {
-    assert.match(page, /mutateRows\(\(p\) =>/);
-    assert.match(page, /mutateRows\(\(\) => snapshot\)/);
-    assert.match(page, /patchRowInPage\(p, record\.id/);
-    assert.match(page, /disabled=\{!canSave \|\| saving\}/);
+describe("personnel stocks ledger: passed-only, no manual add", () => {
+  const page = src("../app/personnel/stocks/page.tsx");
+  it("filters the ledger to passed-inspection sources", () => {
+    assert.match(page, /passedOnly: true/);
+    assert.match(page, /kind: 'stock'/);
+    assert.match(page, /getInventoryStats\(\{ passedOnly: true, kind: 'stock' \}\)/);
+  });
+  it("searches and pages locally over the loaded stock window", () => {
+    assert.match(page, /const filtered = useMemo/);
+    assert.match(page, /filtered\.slice\(/);
+    assert.ok(!page.includes("filters: { q:"), "search never hits the server");
+  });
+  it("no manual add/edit dialog or saveInventoryItem call", () => {
+    assert.ok(!page.includes("saveInventoryItem"), "manual add removed");
+    assert.ok(!page.includes("Add stock"), "no add-stock action");
+    assert.ok(!page.includes("useMasterData"), "no master-data form state");
   });
 });
 
 describe("threshold cells: optimistic patch + revert + record", () => {
-  const page = src("../app/super-admin/inventory/page.tsx");
+  const page = src("../app/super-admin/stocks/page.tsx");
   it("threshold applies instantly with rollback on failure", () => {
     assert.match(page, /onOptimistic=\{\(id, threshold\) => patchThreshold/);
     assert.match(page, /onRevert=\{\(id, prev\) => patchThreshold/);
@@ -192,9 +201,9 @@ describe("mutation responses carry records (patch without refetch)", () => {
     });
   }
   it("saveInventoryItem + setReorderThreshold return records", () => {
-    assert.match(src("../app/personnel/inventory/actions.ts"), /return \{ success: true, record \}/);
+    assert.match(src("../app/personnel/stocks/actions.ts"), /return \{ success: true, record \}/);
     assert.match(
-      src("../app/super-admin/inventory/actions.ts"),
+      src("../app/super-admin/stocks/actions.ts"),
       /record: \{ id: itemId, reorder_threshold: threshold \}/
     );
   });

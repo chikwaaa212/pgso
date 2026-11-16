@@ -14,6 +14,8 @@ export const BUTTON_VARIANTS: Record<ButtonVariant, string> = {
   secondary: "bg-yellow-100 text-navy-900 hover:bg-yellow-500",
   outline: "border border-navy-200 bg-transparent hover:bg-yellow-100",
   ghost: "bg-transparent hover:bg-yellow-100",
+  warning:
+    "border border-yellow-600 bg-yellow-500 text-navy-900 hover:bg-yellow-400",
 };
 
 export const BUTTON_SIZES: Record<ButtonSize, string> = {

@@ -11,6 +11,7 @@ import {
   resolveDocType,
   type AccountabilityDocType,
 } from '@/lib/issuance-rules'
+import { assetOptionDisabledReason } from '@/lib/asset-option'
 
 // ─── Raw data layer ──────────────────────────────────────────────────────────
 // NOTE: uses $queryRaw/$executeRaw instead of prisma.issuanceRecord so this
@@ -65,7 +66,7 @@ async function listIssuanceRows(opts: IssuanceListOpts = {}): Promise<{ rows: Is
     if (scope.isEmpty || !scope.userId) return { rows: [], total: 0 }
     const page = Math.floor(Number(opts.page)) >= 1 ? Math.min(Math.floor(Number(opts.page)), 1000) : 1
     const pageSize = Number.isFinite(Number(opts.pageSize))
-      ? Math.min(Math.max(Math.floor(Number(opts.pageSize)), 1), 100)
+      ? Math.min(Math.max(Math.floor(Number(opts.pageSize)), 1), 1000)
       : 500
     const offset = (page - 1) * pageSize
     const q = (opts.q ?? '').trim().slice(0, 120)
@@ -246,32 +247,24 @@ function consolidatedLabel(
   return fallback
 }
 
-function statusLabel(status: string | null | undefined): string {
-  const s = (status ?? '').trim()
-  if (!s) return ''
-  return s.charAt(0).toUpperCase() + s.slice(1)
-}
-
 /**
  * Why an asset can no longer take a NEW assignment (null = assignable).
- * Already-assigned, non-available, or quantity-depleted assets are shown
- * disabled ("Already assigned" / "Out of stock" / status) instead of
- * silently vanishing from the pick lists.
+ * Delegates to the shared rule (`lib/asset-option`) so the issuance picker,
+ * request dialog and employee picker can never drift apart. Already-assigned,
+ * non-available, or quantity-depleted assets are shown disabled instead of
+ * silently vanishing from the pick lists — a lot that still has units on hand
+ * may be issued again.
  */
 function assetDisabledReason(a: {
   status?: string | null
   quantity?: number | null
   assigned_to?: string | null
 }): string | null {
-  if (a.assigned_to) return 'Already assigned'
-  if (typeof a.quantity === 'number' && a.quantity <= 0) return 'Out of stock'
-  const st = (a.status ?? 'available').trim().toLowerCase()
-  if (st !== 'available') return statusLabel(a.status) || 'Unavailable'
-  return null
+  return assetOptionDisabledReason({ source: 'asset', ...a })
 }
 
 function stockDisabledReason(quantity: number): string | null {
-  return quantity <= 0 ? 'Out of stock' : null
+  return assetOptionDisabledReason({ source: 'stock', quantity })
 }
 
 /** Human-readable refusal when an asset fails the assignability check. */
@@ -327,8 +320,8 @@ export async function getIssuancesPage(
   const { withScopedCache } = await import('@/lib/personnel-cache')
   const page = Math.floor(Number(opts.page)) >= 1 ? Math.min(Math.floor(Number(opts.page)), 1000) : 1
   const pageSize = Number.isFinite(Number(opts.pageSize))
-    ? Math.min(Math.max(Math.floor(Number(opts.pageSize)), 1), 100)
-    : 20
+    ? Math.min(Math.max(Math.floor(Number(opts.pageSize)), 1), 1000)
+    : 10
   const q = (opts.q ?? '').trim().slice(0, 120)
   const docType = (opts.docType ?? 'all').trim()
   return withScopedCache('personnel:issuances', 30, async () => {
@@ -871,19 +864,35 @@ async function evaluateAndAssign(
         if (assetDisabledReason(cur))
           throwRefusal(assetRefusal('Selected asset', cur))
         const q = cur?.quantity
-        await tx.asset.update({
-          where: { id: assetId },
-          data: {
-            assigned_to: employeeId,
-            ...(employeeName ? { end_user: employeeName } : {}),
-            ...(q == null
-              ? { status: 'in use' }
-              : {
-                  quantity: Math.max(0, q - 1),
-                  ...(q - 1 <= 0 ? { status: 'in use' } : {}),
-                }),
-          },
-        })
+        if (q == null) {
+          await tx.asset.update({
+            where: { id: assetId },
+            data: {
+              assigned_to: employeeId,
+              ...(employeeName ? { end_user: employeeName } : {}),
+              status: 'in use',
+            },
+          })
+        } else {
+          // Atomic claim: two clerks assigning the same last unit cannot both
+          // win — the loser gets a refusal instead of a negative lot.
+          const claimed = await tx.asset.updateMany({
+            where: { id: assetId, quantity: { gt: 0 } },
+            data: {
+              assigned_to: employeeId,
+              ...(employeeName ? { end_user: employeeName } : {}),
+              quantity: { decrement: 1 },
+            },
+          })
+          if (claimed.count === 0)
+            throwRefusal('Selected asset has no units left to assign.')
+          if (q - 1 <= 0) {
+            await tx.asset.update({
+              where: { id: assetId },
+              data: { status: 'in use' },
+            })
+          }
+        }
       } else if (inventoryId) {
         const stock = await tx.inventoryItem.findUnique({
           where: { id: inventoryId },
@@ -891,10 +900,12 @@ async function evaluateAndAssign(
         })
         if (!stock) throw new Error('Stock item disappeared.')
         const qty = Math.min(quantity, stock.quantity)
-        await tx.inventoryItem.update({
-          where: { id: inventoryId },
-          data: { quantity: stock.quantity - qty },
+        const claimed = await tx.inventoryItem.updateMany({
+          where: { id: inventoryId, quantity: { gte: qty } },
+          data: { quantity: { decrement: qty } },
         })
+        if (claimed.count === 0)
+          throw new Error('Stock quantity changed — reload and try again.')
       }
       return newId
     })
@@ -903,7 +914,7 @@ async function evaluateAndAssign(
     // the client's immediate refetch must not re-cache pre-write rows as
     // fresh. revalidatePath() below is pure Next.js (no hidden extra busts).
     const { bustPersonnelScopes, bustCachePrefixes } = await import('@/lib/personnel-cache')
-    await bustPersonnelScopes(['issuances', 'documents', 'dashboard', 'assets', 'requests', 'issues'])
+    await bustPersonnelScopes(['issuances', 'documents', 'dashboard', 'assets', 'inventory', 'requests', 'issues'])
     // Employee-visible issuance data (docs, assets, detail sheets) changes
     // here too — bust the employee namespace (module-scoped, never the
     // whole cache). Human-frequency writes; correctness first.
@@ -1409,19 +1420,37 @@ export async function approveRequestWithIssuance(
           if (assetDisabledReason(cur))
             throwRefusal(assetRefusal(line.label || 'Selected asset', cur))
           const q = cur?.quantity
-          await tx.asset.update({
-            where: { id: line.assetId },
-            data: {
-              assigned_to: employeeId,
-              ...(employeeName ? { end_user: employeeName } : {}),
-              ...(q == null
-                ? { status: 'in use' }
-                : {
-                    quantity: Math.max(0, q - 1),
-                    ...(q - 1 <= 0 ? { status: 'in use' } : {}),
-                  }),
-            },
-          })
+          if (q == null) {
+            await tx.asset.update({
+              where: { id: line.assetId },
+              data: {
+                assigned_to: employeeId,
+                ...(employeeName ? { end_user: employeeName } : {}),
+                status: 'in use',
+              },
+            })
+          } else {
+            // Atomic claim — see evaluateAndAssign: the last unit can only be
+            // claimed once, even when two approvals race.
+            const claimed = await tx.asset.updateMany({
+              where: { id: line.assetId, quantity: { gt: 0 } },
+              data: {
+                assigned_to: employeeId,
+                ...(employeeName ? { end_user: employeeName } : {}),
+                quantity: { decrement: 1 },
+              },
+            })
+            if (claimed.count === 0)
+              throwRefusal(
+                `${line.label || 'Selected asset'} has no units left to assign.`
+              )
+            if (q - 1 <= 0) {
+              await tx.asset.update({
+                where: { id: line.assetId },
+                data: { status: 'in use' },
+              })
+            }
+          }
         } else if (line.inventoryId) {
           const stock = await tx.inventoryItem.findUnique({
             where: { id: line.inventoryId },
@@ -1429,10 +1458,12 @@ export async function approveRequestWithIssuance(
           })
           if (!stock) throw new Error('Stock item disappeared.')
           const qty = Math.min(line.quantity, stock.quantity)
-          await tx.inventoryItem.update({
-            where: { id: line.inventoryId },
-            data: { quantity: stock.quantity - qty },
+          const claimed = await tx.inventoryItem.updateMany({
+            where: { id: line.inventoryId, quantity: { gte: qty } },
+            data: { quantity: { decrement: qty } },
           })
+          if (claimed.count === 0)
+            throw new Error('Stock quantity changed — reload and try again.')
         }
       }
       await tx.request.update({
@@ -1451,7 +1482,7 @@ export async function approveRequestWithIssuance(
     // below — no per-path bust fan-out (that stormed Upstash with ~6 busts
     // per write and stalled actions for seconds).
     const { bustPersonnelScopes, bustCachePrefixes } = await import('@/lib/personnel-cache')
-    await bustPersonnelScopes(['issuances', 'documents', 'dashboard', 'assets', 'requests', 'issues'])
+    await bustPersonnelScopes(['issuances', 'documents', 'dashboard', 'assets', 'inventory', 'requests', 'issues'])
     // Employee-visible issuance data (docs, assets, detail sheets) changes
     // here too — bust the employee namespace (module-scoped, never the
     // whole cache). Human-frequency writes; correctness first.
@@ -1508,7 +1539,7 @@ export async function attachIssuanceScan(
     await prisma.$executeRaw`
       UPDATE issuance_records SET image_url = ${url} WHERE id = ${issuanceId}::uuid`
     const { bustPersonnelScopes, bustCachePrefixes } = await import('@/lib/personnel-cache')
-    await bustPersonnelScopes(['issuances', 'documents', 'dashboard', 'assets', 'requests', 'issues'])
+    await bustPersonnelScopes(['issuances', 'documents', 'dashboard', 'assets', 'inventory', 'requests', 'issues'])
     // Employee-visible issuance data (docs, assets, detail sheets) changes
     // here too — bust the employee namespace (module-scoped, never the
     // whole cache). Human-frequency writes; correctness first.
@@ -1532,7 +1563,7 @@ export async function removeIssuanceScan(
     await prisma.$executeRaw`
       UPDATE issuance_records SET image_url = NULL WHERE id = ${issuanceId}::uuid`
     const { bustPersonnelScopes, bustCachePrefixes } = await import('@/lib/personnel-cache')
-    await bustPersonnelScopes(['issuances', 'documents', 'dashboard', 'assets', 'requests', 'issues'])
+    await bustPersonnelScopes(['issuances', 'documents', 'dashboard', 'assets', 'inventory', 'requests', 'issues'])
     // Employee-visible issuance data (docs, assets, detail sheets) changes
     // here too — bust the employee namespace (module-scoped, never the
     // whole cache). Human-frequency writes; correctness first.

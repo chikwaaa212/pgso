@@ -24,7 +24,7 @@ import { getActiveCatalogEntries, resolveUnitName } from '@/lib/master-data'
 import type { SignupState } from '@/types'
 
 const deliveryKinds = ['stock', 'asset'] as const
-const inspectionResults = ['passed', 'partial', 'failed'] as const
+const inspectionResults = ['passed', 'failed'] as const
 
 interface ItemInput {
   description?: string
@@ -33,14 +33,45 @@ interface ItemInput {
   unitCost?: string | number
 }
 
-// Server-side fallback for the Generate button (the form normally fills the
-// code client-side). Kept so an empty code + explicit auto-generate request
-// still yields a provisional unique code.
-function makeProvisionalCode(kind: string): string {
-  const prefix = kind === 'asset' ? 'AST' : 'STK'
-  const date = new Date().toISOString().slice(0, 10).replace(/-/g, '')
-  const rand = Math.random().toString(36).slice(2, 6).toUpperCase().padEnd(4, '0')
-  return `${prefix}-${date}-${rand}`
+// System-generated account codes: AST-xxx-xx-xx for assets, STK-xxx-xx-xx for
+// stocks. Personnel never allocate or edit these.
+const ACCOUNT_CODE_PREFIX = { asset: 'AST', stock: 'STK' } as const
+type AccountCodeKind = keyof typeof ACCOUNT_CODE_PREFIX
+
+function formatAccountCode(prefix: string, sequence: number): string {
+  const block1 = String(Math.floor(sequence / 10000) % 1000).padStart(3, '0')
+  const block2 = String(Math.floor(sequence / 100) % 100).padStart(2, '0')
+  const block3 = String(sequence % 100).padStart(2, '0')
+  return `${prefix}-${block1}-${block2}-${block3}`
+}
+
+/**
+ * Allocate the next system account code for a delivery kind. New codes follow
+ * the AST/STK template; legacy catalog-style codes are ignored by the scan.
+ */
+export async function generateAccountCode(
+  kind: AccountCodeKind
+): Promise<{ code: string } | { error: string }> {
+  const prefix = ACCOUNT_CODE_PREFIX[kind]
+  const pattern = new RegExp(`^${prefix}-(\\d{3})-(\\d{2})-(\\d{2})$`, 'i')
+  try {
+    const rows = await prisma.delivery.findMany({
+      where: { account_code: { startsWith: `${prefix}-`, mode: 'insensitive' } },
+      select: { account_code: true },
+    })
+    let max = 0
+    for (const row of rows) {
+      const match = pattern.exec((row.account_code ?? '').trim())
+      if (!match) continue
+      const n =
+        Number(match[1]) * 10000 + Number(match[2]) * 100 + Number(match[3])
+      if (n > max) max = n
+    }
+    return { code: formatAccountCode(prefix, max + 1) }
+  } catch (e) {
+    console.error('[generateAccountCode]', e)
+    return { error: 'Could not generate an account code. Please try again.' }
+  }
 }
 
 // System-generated PO reference (PGSO-XXXX-XXXX). Personnel never type it.
@@ -53,25 +84,34 @@ function makePoReference(): string {
   return `PGSO-${block()}-${block()}`
 }
 
+/** Calendar day (YYYY-MM-DD) in Manila — date-only columns compare safely. */
+function manilaDateKey(d: Date): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(d)
+}
+
+/**
+ * Arrival is logged on the day the delivery is recorded, so the arrival date
+ * is always the current Manila day. Returned as a UTC-midnight Date so the
+ * `@db.Date` column stores that calendar day without shifting.
+ */
+function todayArrivalDate(): Date {
+  return new Date(manilaDateKey(new Date()))
+}
+
 export async function logDelivery(
   _prevState: SignupState,
   formData: FormData
 ): Promise<SignupState> {
-  const accountCodeRaw = (formData.get('accountCode') as string)?.trim()
   const assetTypeRaw = (formData.get('assetType') as string)?.trim()
   const stockTypeRaw = (formData.get('stockType') as string)?.trim()
   const accountTitleRaw = (formData.get('accountTitle') as string)?.trim()
   const deliveryKind = (formData.get('deliveryKind') as string)?.trim()?.toLowerCase()
   const dateSupplied = formData.get('dateSupplied') as string
-  const expectedArrival = formData.get('expectedArrival') as string
   const supplierName = (formData.get('supplierName') as string)?.trim()
   let poReference = (formData.get('poReference') as string)?.trim()?.toUpperCase() || ''
   if (!PO_REFERENCE_PATTERN.test(poReference)) {
     poReference = makePoReference()
   }
-  const deliveryStatus = (
-    formData.get('deliveryStatus') as string
-  )?.toLowerCase()
   const recipientRole = (formData.get('recipientRole') as string)?.trim()
   const recipientName = (formData.get('recipientName') as string)?.trim()
 
@@ -79,39 +119,13 @@ export async function logDelivery(
     return { error: 'Choose whether this delivery is for Stocks or Assets.' }
   }
 
-  // Asset codes are free-form (typed or generated). Stock codes come from the
-  // stock header in Master Data and are validated against it further below.
-  let accountCode = accountCodeRaw || ''
-  // Empty code + explicit auto-generate request → provisional unique code.
-  // The form's Generate button normally fills this client-side; this is the
-  // server-side fallback so an empty asset code never blocks a save.
-  if (!accountCode && deliveryKind === 'asset' && (formData.get('autoGenerateCode') as string) === '1') {
-    accountCode = makeProvisionalCode(deliveryKind)
-  }
-  if (!accountCode) {
-    return {
-      error:
-        deliveryKind === 'stock'
-          ? 'Select a stock code from Master Data.'
-          : 'Account code is required — type a code or press Generate.',
-    }
-  }
-  if (accountCode.length < 2 || accountCode.length > 60) {
-    return {
-      error:
-        deliveryKind === 'stock'
-          ? 'Stock code must be 2–60 characters.'
-          : 'Account code must be 2–60 characters.',
-    }
-  }
-  if (!/^[A-Za-z0-9][A-Za-z0-9\-._/\s]*$/.test(accountCode)) {
-    return {
-      error:
-        deliveryKind === 'stock'
-          ? 'Stock code may only contain letters, numbers, spaces, and - . _ /'
-          : 'Account code may only contain letters, numbers, spaces, and - . _ /',
-    }
-  }
+  // Account codes are system-owned: AST-xxx-xx-xx for assets and
+  // STK-xxx-xx-xx for stocks. The submitted value is ignored.
+  const generatedCode = await generateAccountCode(
+    deliveryKind === 'stock' ? 'stock' : 'asset'
+  )
+  if ('error' in generatedCode) return { error: generatedCode.error }
+  const accountCode = generatedCode.code
 
   // Assets are catalog-driven (title → type); stocks are header-driven
   // (code + title + type all come from Super Admin → Master Data → Stock
@@ -137,8 +151,7 @@ export async function logDelivery(
     const titleNorm = accountTitleInput.toLowerCase()
     const typeNorm = stockTypeRaw.trim().toLowerCase()
     // Stock title + type must match one active stock header. The code is
-    // free-form like an asset code (typed or Generated), so it is kept as
-    // submitted unless it matches the header's canonical casing.
+    // owned by that header (canonicalized below).
     const header = activeStockHeaders.find((h) => {
       const hTitle = (h.account_title ?? h.name).trim().toLowerCase()
       const hType = (h.asset_type ?? h.name).trim().toLowerCase()
@@ -148,9 +161,6 @@ export async function logDelivery(
       return {
         error: 'Pick a stock title and stock type that match a stock header in Master Data.',
       }
-    }
-    if (header.account_code && accountCode.toLowerCase() === header.account_code.toLowerCase()) {
-      accountCode = header.account_code
     }
     accountTitleCanon = header.account_title ?? header.name
     stockTypeCanon = header.asset_type ?? header.name
@@ -192,23 +202,8 @@ export async function logDelivery(
     }
   }
 
-  // Every new delivery is logged as waiting for arrival. Complete/partial are
-  // inspection outcomes, not log-time choices.
-  if (deliveryStatus !== 'awaiting') {
-    return { error: 'New deliveries are logged as waiting for arrival.' }
-  }
-
-  if (!expectedArrival || Number.isNaN(Date.parse(expectedArrival))) {
-    return { error: 'A target date of arrival is required for waiting arrivals.' }
-  }
-
-  // Target arrival cannot be in the past (compare calendar days in PH time).
-  const dateKeyManila = (d: Date) =>
-    new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(d)
-  if (dateKeyManila(new Date(expectedArrival)) < dateKeyManila(new Date())) {
-    return { error: 'The target date of arrival cannot be in the past.' }
-  }
-
+  // Deliveries are logged as an arrival: the arrival date is the current day
+  // in Manila. The inspection verdict is recorded later, not at log time.
   if (!supplierName) {
     return { error: 'Supplier is required.' }
   }
@@ -296,9 +291,9 @@ export async function logDelivery(
             supplier: supplierName,
             po_reference: poReference,
             date_delivered: dateSupplied && !Number.isNaN(Date.parse(dateSupplied)) ? new Date(dateSupplied) : null,
-            expected_arrival_date: expectedArrival && !Number.isNaN(Date.parse(expectedArrival)) ? new Date(expectedArrival) : null,
+            expected_arrival_date: todayArrivalDate(),
             delivery_kind: deliveryKind,
-            delivery_status: deliveryStatus,
+            delivery_status: 'arrival',
             inspection_status: 'pending',
             received_by: user.id,
             recipient_role: recipientRole,
@@ -330,7 +325,7 @@ export async function logDelivery(
       module: 'deliveries',
       details: {
         purpose: `Log delivery from ${supplierName}`,
-        summary: `PO ${poReference} · ${parsedItems.length} item(s) · ${deliveryStatus} · ${deliveryKind}`,
+        summary: `PO ${poReference} · ${parsedItems.length} item(s) · arrival · ${deliveryKind}`,
         reference_id: outcome.result.deliveryId,
         supplier: supplierName,
         po_reference: poReference,
@@ -355,7 +350,6 @@ export async function updateDelivery(
 ): Promise<SignupState> {
   const deliveryId = (formData.get('deliveryId') as string)?.trim()
   const deliveryKind = (formData.get('deliveryKind') as string)?.trim()?.toLowerCase()
-  const accountCodeRaw = (formData.get('accountCode') as string)?.trim()
   const assetTypeRaw = (formData.get('assetType') as string)?.trim()
   const stockTypeRaw = (formData.get('stockType') as string)?.trim()
   const accountTitleRaw = (formData.get('accountTitle') as string)?.trim()
@@ -374,33 +368,8 @@ export async function updateDelivery(
     return { error: 'Choose whether this delivery is for Stocks or Assets.' }
   }
 
-  // Same code rules as the create form: free-form, 2–60 chars, safe charset.
-  const accountCode = accountCodeRaw || ''
-  if (!accountCode) {
-    return {
-      error:
-        deliveryKind === 'stock'
-          ? 'Select a stock code from Master Data.'
-          : 'Account code is required — type a code or press Generate.',
-    }
-  }
-  if (accountCode.length < 2 || accountCode.length > 60) {
-    return {
-      error:
-        deliveryKind === 'stock'
-          ? 'Stock code must be 2–60 characters.'
-          : 'Account code must be 2–60 characters.',
-    }
-  }
-  if (!/^[A-Za-z0-9][A-Za-z0-9\-._/\s]*$/.test(accountCode)) {
-    return {
-      error:
-        deliveryKind === 'stock'
-          ? 'Stock code may only contain letters, numbers, spaces, and - . _ /'
-          : 'Account code may only contain letters, numbers, spaces, and - . _ /',
-    }
-  }
-
+  // Account codes are system-owned and never edited. The stored code is kept
+  // as-is; only a legacy row with no code gets a new AST/STK sequence.
   // Re-derive the canonical title/type triple from Master Data so a stale or
   // tampered hidden field can never store a mismatched combination.
   let accountTitleCanon = ''
@@ -475,9 +444,12 @@ export async function updateDelivery(
     return { error: 'PO reference must look like PGSO-XXXX-XXXX.' }
   }
 
-  if (!expectedArrival || Number.isNaN(Date.parse(expectedArrival))) {
-    return { error: 'A valid target date of arrival is required.' }
-  }
+  // Arrival date has no target/input — it is the day the delivery arrived
+  // (today). Legacy rows keep their stored date so history stays accurate.
+  const arrivalDate =
+    expectedArrival && !Number.isNaN(Date.parse(expectedArrival))
+      ? new Date(expectedArrival)
+      : todayArrivalDate()
 
   if (dateSupplied && Number.isNaN(Date.parse(dateSupplied))) {
     return { error: 'Date supplied is not a valid date.' }
@@ -553,7 +525,7 @@ export async function updateDelivery(
   try {
     const existing = await prisma.delivery.findUnique({
       where: { id: deliveryId },
-      select: { received_by: true, inspection_status: true },
+      select: { received_by: true, inspection_status: true, account_code: true },
     })
 
     if (!existing) {
@@ -569,6 +541,17 @@ export async function updateDelivery(
       return { error: 'Only deliveries still pending inspection can be edited.' }
     }
 
+    // Keep the stored system code. Legacy rows without one get a fresh code
+    // for their kind so every delivery traces back to an AST/STK sequence.
+    let accountCode = (existing.account_code ?? '').trim()
+    if (!accountCode) {
+      const generatedCode = await generateAccountCode(
+        deliveryKind === 'stock' ? 'stock' : 'asset'
+      )
+      if ('error' in generatedCode) return { error: generatedCode.error }
+      accountCode = generatedCode.code
+    }
+
     await prisma.$transaction(async (tx) => {
       const updated = await tx.delivery.updateMany({
         where: { id: deliveryId, inspection_status: 'pending' },
@@ -581,7 +564,7 @@ export async function updateDelivery(
           supplier: supplierName,
           po_reference: poReference,
           date_delivered: dateSupplied ? new Date(dateSupplied) : null,
-          expected_arrival_date: new Date(expectedArrival),
+          expected_arrival_date: arrivalDate,
           recipient_role: recipientRole,
           recipient_name: recipientNameCanon,
         },
@@ -757,18 +740,19 @@ export async function recordInspection(
       return { error: 'You can only inspect your own logged deliveries.' }
     }
 
-    // Inspections open on the target arrival day (Manila calendar) — not before.
+    // Legacy rows logged with a future target date still gate inspection —
+    // today's arrivals are inspectable immediately.
     if (exists.expected_arrival_date) {
-      const dayKey = (d: Date) =>
-        new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(d)
-      if (dayKey(exists.expected_arrival_date) > dayKey(new Date())) {
+      if (manilaDateKey(exists.expected_arrival_date) > manilaDateKey(new Date())) {
         return {
           error:
-            'This delivery is still waiting for arrival — inspect it on or after the target arrival date.',
+            'This delivery has not arrived yet — inspect it on or after its arrival date.',
         }
       }
     }
 
+    // Legacy partial rows stay re-inspectable so old deliveries can still be
+    // completed; new inspections may only be passed or returned.
     if (exists.inspection_status !== 'pending' && exists.inspection_status !== 'partial' && exists.inspection_status !== 'failed') {
       return { error: 'This delivery has already been inspected.' }
     }
@@ -817,12 +801,12 @@ export async function recordInspection(
         return { inspectionId: inspection.id }
       }
     ).then(async (outcome) => {
-      // Passed/partial + already has an AIR (e.g. re-inspection) → move the
+      // Passed + already has an AIR (e.g. re-inspection) → move the
       // remaining received items to stock. Never fails the save; idempotent.
       let stockWarning: string | undefined
       try {
         const res = await stockInspectionItems(outcome.result.inspectionId)
-        if (res.stocked) revalidatePath('/personnel/inventory')
+        if (res.stocked) revalidatePath('/personnel/stocks')
       } catch (e) {
         console.error('[recordInspection:stock]', e)
         stockWarning =
@@ -1074,7 +1058,7 @@ export async function getDeliveriesPage(
   const page = Math.floor(Number(opts.page)) >= 1 ? Math.min(Math.floor(Number(opts.page)), 1000) : 1
   const pageSize = Number.isFinite(Number(opts.pageSize))
     ? Math.min(Math.max(Math.floor(Number(opts.pageSize)), 1), 100)
-    : 20
+    : 10
   const q = (opts.q ?? '').trim().slice(0, 120)
   const status = (opts.status ?? 'all').trim()
   return withScopedCache('personnel:deliveries-list', 30, async () => {
@@ -1082,7 +1066,7 @@ export async function getDeliveriesPage(
       const scope = await getPersonnelScope()
       if (scope.isEmpty || !scope.userId) return { rows: [], total: 0 }
       const where: Record<string, unknown> = scope.isSuperAdmin ? {} : { received_by: scope.userId }
-      // UI status terms (Complete/Partial/Awaiting arrival) map to delivery_status.
+      // UI status terms (Arrival/Complete/Partial/Awaiting) map to delivery_status.
       if (status !== 'all') {
         const mapped =
           status.toLowerCase() === 'complete'
@@ -1091,7 +1075,9 @@ export async function getDeliveriesPage(
               ? 'partial'
               : status.toLowerCase().startsWith('awaiting')
                 ? 'awaiting'
-                : status
+                : status.toLowerCase().startsWith('arrival') || status.toLowerCase() === 'arrived'
+                  ? 'arrival'
+                  : status
         ;(where as Record<string, string>).delivery_status = mapped
       }
       if (q) {
@@ -1148,9 +1134,8 @@ export async function getDeliveriesPage(
 /**
  * Catalog options for the Log delivery form, sourced from the active account
  * catalog. Account title is a strict dropdown; asset type is auto-filled from
- * the chosen title (accountTitleTypes). The account code is NOT from the
- * catalog — personnel types it or presses Generate. Codes listed here are
- * prior history for reference only.
+ * the chosen title (accountTitleTypes). Account codes are system-generated
+ * (AST/STK) and are not chosen here.
  */
 export async function getDeliveryFormOptions(): Promise<DeliveryFormOptions> {
   const { withCache, cacheKey } = await import('@/lib/personnel-cache')

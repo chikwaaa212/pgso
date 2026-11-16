@@ -36,13 +36,15 @@ function fmt(iso: string | null | undefined) {
 
 type Tone = "ok" | "warn" | "info" | "bad";
 
-/** Same two delivery states the log table shows. */
+/** Same delivery states the log table shows. */
 function deliveryLabel(value: string | null | undefined) {
-  return value === "awaiting" ? "Waiting for arrival" : "Delivered";
+  if (value === "awaiting") return "Waiting for arrival";
+  if (value === "arrival") return "Arrival";
+  return "Delivered";
 }
 
 function deliveryTone(value: string | null | undefined): Tone {
-  return value === "awaiting" ? "info" : "ok";
+  return value === "awaiting" || value === "arrival" ? "info" : "ok";
 }
 
 function inspectionLabel(value: string | null | undefined) {
@@ -173,7 +175,7 @@ export function DeliveryReceipt({
     ["PO Ref", delivery.po_reference ?? "—"],
     ["Supplier", delivery.supplier ?? "—"],
     ["Type", kind],
-    ["Target Arrival", fmt(delivery.expected_arrival_date)],
+    ["Arrival Date", fmt(delivery.expected_arrival_date)],
     [
       "Delivery",
       <Pill

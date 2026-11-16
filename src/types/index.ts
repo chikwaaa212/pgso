@@ -11,7 +11,7 @@ export interface ApiResponse<T = unknown> {
   error?: string;
 }
 
-export type ButtonVariant = "primary" | "secondary" | "outline" | "ghost";
+export type ButtonVariant = "primary" | "secondary" | "outline" | "ghost" | "warning";
 export type ButtonSize = "sm" | "md" | "lg";
 
 export type UserRole = "super_admin" | "pgso_personnel" | "employee";

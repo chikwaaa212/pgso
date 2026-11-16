@@ -147,7 +147,7 @@ export async function getRequestsPage(
 ): Promise<{ rows: RequestRow[]; total: number }> {
   const { withScopedCache } = await import('@/lib/personnel-cache')
   const page = clampPage(opts.page, 1)
-  const pageSize = clampPageSize(opts.pageSize, 20)
+  const pageSize = clampPageSize(opts.pageSize, 10)
   const q = (opts.q ?? '').trim().slice(0, 120)
   const status = (opts.status ?? 'all').trim()
   const type = (opts.type ?? 'all').trim()
@@ -396,7 +396,13 @@ export interface EmployeeOption {
 
 export interface AssetOption {
   id: string
+  /** How the item is tracked: an `assets` row or an inventory lot. Drives
+   *  quantity rules (a lot needs a quantity, an asset row does not). */
   kind: 'asset' | 'stock'
+  /** Which picker tab lists the item — mirrors the Assets page origins:
+   *  'asset' is the asset register plus asset-kind lots stocked by a passed
+   *  inspection; 'stock' is consumable stock lots. */
+  tab: 'asset' | 'stock'
   label: string
   location: string | null
   status: string | null
@@ -423,13 +429,13 @@ export async function getRequestFormOptions(
   const q = String(opts.q ?? '').trim().slice(0, 60)
   const { withCache, cacheKey } = await import('@/lib/personnel-cache')
   const { PAGE_SIZE } = await import('@/lib/constants')
-  return withCache(cacheKey('personnel:request-form-options', { q }), 60, async () => {
+  return withCache(cacheKey('personnel:request-form-options:v2', { q }), 60, async () => {
   try {
     // Slim pick-list (labels only, no QR / custom-bag fan-out of
     // getAllUnifiedAssets() — the dialog renders zero QR codes).
-    // Server-searched PAGE_SIZE window per source (was two 500-row takes =
-    // ~1000 rows per dialog open): typing filters in the DB, the dialog
-    // merges windows by id so a picked item stays resolvable.
+    // Dropdown-only picker: the empty-query window returns the full available
+    // list. Text search (QR scan prefill) keeps the smaller PAGE_SIZE window.
+    const pickLimit = q === '' ? 500 : PAGE_SIZE
     const assetWhere =
       q !== ''
         ? {
@@ -440,7 +446,11 @@ export async function getRequestFormOptions(
               { qr_code: { contains: q, mode: 'insensitive' as const } },
             ],
           }
-        : {}
+        : {
+            // Assets with no quantity are individually tracked units; quantity
+            // 0 or below is out of stock and never offered.
+            OR: [{ quantity: null }, { quantity: { gt: 0 } }],
+          }
     const stockWhere =
       q !== ''
         ? {
@@ -449,7 +459,7 @@ export async function getRequestFormOptions(
               { account_code: { contains: q, mode: 'insensitive' as const } },
             ],
           }
-        : {}
+        : { quantity: { gt: 0 } }
     const [profiles, assetRows, stockRows] = await Promise.all([
       // Only employees can file requests — personnel cannot request.
       prisma.profile.findMany({
@@ -461,7 +471,7 @@ export async function getRequestFormOptions(
         .findMany({
           where: assetWhere,
           orderBy: { created_at: 'desc' },
-          take: PAGE_SIZE,
+          take: pickLimit,
           select: {
             id: true, qr_code: true, account_code: true, article: true,
             description: true, account_title: true, account_name: true,
@@ -474,25 +484,103 @@ export async function getRequestFormOptions(
         .findMany({
           where: stockWhere,
           orderBy: { item_name: 'asc' },
-          take: PAGE_SIZE,
+          take: pickLimit,
           select: {
-            id: true, item_name: true, account_code: true, quantity: true,
-            location: true, unit_cost: true,
+            id: true, item_name: true, account_code: true, category: true,
+            quantity: true, location: true, unit_cost: true, custom_fields: true,
+            delivery_kind: true,
           },
         })
         .catch(() => []),
     ])
+    // Inventory rows only store the account code; resolve the human-readable
+    // title + type from Master Data (and, for legacy rows, the stocking
+    // delivery) so the pick-list banner is never blank where stock data exists.
+    const titleByCode = new Map<string, { title: string; type: string | null }>()
+    try {
+      const { getActiveCatalogEntries } = await import('@/lib/master-data')
+      for (const entry of await getActiveCatalogEntries()) {
+        titleByCode.set(entry.code.trim().toLowerCase(), {
+          title: entry.title,
+          type: entry.type || null,
+        })
+      }
+    } catch {
+      /* catalog unavailable — fall back to stored values */
+    }
+    // Keep the original casing for the DB lookup (`account_code` is
+    // case-sensitive); lowercase only when building the map key below.
+    const stockCodes = [
+      ...new Set(
+        stockRows
+          .map((s) => s.account_code?.trim())
+          .filter((v): v is string => Boolean(v))
+      ),
+    ]
+    // The delivery that stocked a row already holds the Stock Title/Type the
+    // user picked (inventory has no columns for them). Newest delivery wins.
+    const deliveryByCode = new Map<
+      string,
+      { title: string | null; type: string | null }
+    >()
+    if (stockCodes.length > 0) {
+      try {
+        const deliveries = await prisma.delivery.findMany({
+          where: { account_code: { in: stockCodes } },
+          orderBy: { created_at: 'desc' },
+          select: {
+            account_code: true,
+            account_title: true,
+            stock_type: true,
+            asset_type: true,
+          },
+        })
+        for (const d of deliveries) {
+          const key = d.account_code?.trim().toLowerCase()
+          if (key && !deliveryByCode.has(key)) {
+            deliveryByCode.set(key, {
+              title: d.account_title?.trim() || null,
+              type: (d.stock_type ?? d.asset_type)?.trim() || null,
+            })
+          }
+        }
+      } catch {
+        /* deliveries unavailable — catalog/stored values still apply */
+      }
+    }
+    const customString = (raw: unknown, key: string): string | null => {
+      if (!raw || typeof raw !== 'object') return null
+      const v = (raw as Record<string, unknown>)[key]
+      return typeof v === 'string' && v.trim() ? v.trim() : null
+    }
+    const catalogFor = (code: string | null) => {
+      if (!code) return undefined
+      const key = code.trim().toLowerCase()
+      const exact = titleByCode.get(key)
+      if (exact) return exact
+      // Stock codes carry a generated sequence (43-435-46-0001) while the
+      // catalog row is the base code — retry without the trailing segment.
+      const base = key.replace(/-\d+$/, '')
+      return base !== key ? titleByCode.get(base) : undefined
+    }
+    const deliveryFor = (code: string | null) =>
+      code ? deliveryByCode.get(code.trim().toLowerCase()) : undefined
     const unified = [
       ...assetRows.map((a) => ({
         id: a.id,
         kind: 'asset' as const,
+        tab: 'asset' as const,
         label: assetLabel(a),
         location: a.location,
         status: a.status,
         quantity: a.quantity,
         account_code: a.account_code,
-        account_title: a.account_title ?? a.account_name,
-        asset_type: a.category,
+        account_title:
+          a.account_title ??
+          a.account_name ??
+          catalogFor(a.account_code)?.title ??
+          null,
+        asset_type: a.category ?? catalogFor(a.account_code)?.type ?? null,
         unit_cost: a.unit_cost != null ? Number(a.unit_cost) : null,
         disabledReason: assetOptionDisabledReason({
           source: 'asset',
@@ -504,6 +592,10 @@ export async function getRequestFormOptions(
       ...stockRows.map((s) => ({
         id: s.id,
         kind: 'stock' as const,
+        // A passed inspection stocks asset-kind deliveries as quantity lots
+        // in inventory; the Assets page lists those under "From inspected",
+        // so they belong in the Asset tab here too (still quantity-tracked).
+        tab: s.delivery_kind === 'asset' ? ('asset' as const) : ('stock' as const),
         label: assetLabel({
           qr_code: null,
           account_code: s.account_code,
@@ -514,8 +606,17 @@ export async function getRequestFormOptions(
         status: 'available' as string | null,
         quantity: s.quantity,
         account_code: s.account_code,
-        account_title: null as string | null,
-        asset_type: null as string | null,
+        account_title:
+          customString(s.custom_fields, 'account_title') ??
+          catalogFor(s.account_code)?.title ??
+          deliveryFor(s.account_code)?.title ??
+          null,
+        asset_type:
+          s.category ??
+          customString(s.custom_fields, 'asset_type') ??
+          catalogFor(s.account_code)?.type ??
+          deliveryFor(s.account_code)?.type ??
+          null,
         unit_cost: s.unit_cost != null ? Number(s.unit_cost) : null,
         disabledReason: assetOptionDisabledReason({ source: 'stock', quantity: s.quantity }),
       })),
@@ -991,7 +1092,7 @@ export async function createStockReplenishment(
     const { bustPersonnelCache: bustStockCache } = await import('@/lib/personnel-cache')
     await bustStockCache()
     revalidatePath('/personnel/requests')
-    revalidatePath('/personnel/inventory')
+    revalidatePath('/personnel/stocks')
     revalidatePath('/super-admin/requests')
     return { success: true }
   } catch (e) {
@@ -1052,6 +1153,10 @@ export async function setRequestStatus(
   const remarks = note?.trim() ?? ''
   if (!remarks) return { error: 'Enter remarks for this action.' }
 
+  // What the row actually ends up as (approvals that execute immediately are
+  // closed out as completed); kept outside the try so the audit log sees it.
+  let finalStatus: RequestStatus = status
+
   try {
     const supabaseEarly = await createClient()
     const {
@@ -1077,12 +1182,24 @@ export async function setRequestStatus(
       }
     }
 
+    // Approving a transfer / repair / stock replenishment executes its effect
+    // below, so the request is closed out in the same step — no second
+    // "Complete" click. New assignments never reach here (they go through the
+    // issuance evaluation above), and rejections stay rejected.
+    const finalStatusForRequest: RequestStatus =
+      status === 'approved' && current.request_type !== 'new_assignment'
+        ? 'completed'
+        : status
+    finalStatus = finalStatusForRequest
+    const noteLabel =
+      finalStatusForRequest === status ? status : `${status} & completed`
+
     await prisma.request.update({
       where: { id },
       data: {
-        status,
+        status: finalStatus,
         date_resolved: new Date(),
-        description: `${current.description}\nNote (${status}): ${remarks}`,
+        description: `${current.description}\nNote (${noteLabel}): ${remarks}`,
       },
     })
 
@@ -1206,13 +1323,13 @@ export async function setRequestStatus(
     if (user) {
       await writeAuditLog({
         userId: user.id,
-        action: `request:${status}`,
+        action: `request:${finalStatus}`,
         module: 'requests',
         details: {
           purpose: remarks,
-          summary: `Request ${id.slice(0, 8).toUpperCase()} → ${status}`,
+          summary: `Request ${id.slice(0, 8).toUpperCase()} → ${finalStatus}`,
           reference_id: id,
-          status,
+          status: finalStatus,
         },
       })
     }

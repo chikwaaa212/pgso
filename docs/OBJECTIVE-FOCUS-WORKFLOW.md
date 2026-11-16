@@ -24,7 +24,7 @@ PGSO-PSMS is built around a single guarded chain that closes both gaps. Every ot
 ```text
 Delivery logged
     ↓
-Inspection recorded (passed / partial)
+Inspection recorded (passed / returned)
     ↓
 AIR / IAR generated or attached
     ↓
@@ -69,7 +69,7 @@ Each arrow is a **server-side rule**, not a UI hint. The next stage refuses to s
 │    Enter quantity received THIS ROUND per item.                      │
 │    System converts to cumulative = already stocked + this round.     │
 │    Result: passed  ⟺ every item cumulative = PO quantity             │
-│            partial ⟺ any shortfall / damage / incomplete             │
+│            returned ⟺ any missing / damaged item                     │
 └───────────────────────────────┬──────────────────────────────────────┘
                                 ↓
 ┌──────────────────────────────────────────────────────────────────────┐
@@ -79,7 +79,7 @@ Each arrow is a **server-side rule**, not a UI hint. The next stage refuses to s
 └───────────────────────────────┬──────────────────────────────────────┘
                                 ↓
 ┌──────────────────────────────────────────────────────────────────────┐
-│ 4. STOCKING  (passed or partial + AIR/IAR)                           │
+│ 4. STOCKING  (passed + AIR/IAR only)                                 │
 │    Only the not-yet-stocked remainder moves:                         │
 │    addable = actual − stocked_qty      watermark = max(stocked, actual)│
 │    Re-processing the same inspection adds ZERO.                      │
@@ -178,7 +178,7 @@ The pass gate is strict:
 
 ```text
 passed  ⟺  for every item: cumulative received = PO quantity
-partial ⟺  any item is short, damaged, or incomplete
+returned ⟺  any item is missing or damaged
 ```
 
 This is implemented in `src/lib/inspection-rules.ts`:
@@ -189,9 +189,9 @@ This is implemented in `src/lib/inspection-rules.ts`:
 | `remainingOf(item)` | Outstanding balance: `max(0, PO quantity − stocked_qty)`. |
 | `toCumulative(checks, items)` | Adds the already-counted base to this round's count and clamps invalid values to zero. |
 
-**Partial is not a failure.** It is the honest result when part of an order has arrived. The same delivery can be inspected again when the remainder shows up. The cumulative gate still applies on the second inspection.
+**A short delivery is not accepted piecemeal.** It stays pending until the balance arrives and can pass in full; missing or damaged items go back to the supplier. The cumulative gate still applies on the next inspection.
 
-**Legacy `failed`:** older records may carry `failed`. It does not stock, but it remains editable so it can be corrected to `partial` or `passed`.
+**Legacy rows:** older records may carry `partial` or `failed`. They remain editable and follow the same passed-or-returned verdicts; only `passed` stocks.
 
 **Photos:** up to five inspection photos can be attached and appear in the Documents hub.
 
@@ -222,7 +222,7 @@ The inspector can:
 Eligibility:
 
 ```text
-result ∈ { passed, partial }  AND  at least one linked AIR/IAR
+result = passed  AND  at least one linked AIR/IAR
 ```
 
 The high-water mark is the heart of the safety model:
@@ -236,8 +236,8 @@ Consequences:
 
 | Situation | Result |
 | --- | --- |
-| PO 10, inspect 6 → partial | Stock +6; watermark = 6. |
-| Later inspect remaining 4 → passed | Stock +4; watermark = 10. |
+| PO 10, inspect 6 → short | No stock; delivery stays pending with 4 due. |
+| Later inspect all 10 → passed | Stock +10; watermark = 10. |
 | Re-process the same inspection | Add 0; watermark unchanged. |
 | Inspect 6, then re-open and still count 6 | Add 0. |
 | Legacy `failed` inspection | Does not stock. |
@@ -453,7 +453,7 @@ This is the same story told in the user guide, annotated with the rules.
 | Inspection recording | `src/app/personnel/inspections/actions.ts`, `[id]/inspection-form.tsx` |
 | Pass/partial and cumulative math | `src/lib/inspection-rules.ts` |
 | Idempotent stocking / high-water mark | `src/lib/stock.ts` |
-| Inspection → stock sync | `src/app/personnel/inventory/actions.ts` (`syncUnstockedInspections`) |
+| Inspection → stock sync | `src/app/personnel/stocks/actions.ts` (`syncUnstockedInspections`) |
 | PAR/ICS threshold and totals | `src/lib/issuance-rules.ts` |
 | Issuance and assignment | `src/app/personnel/issuances/actions.ts` |
 | Request approval and transitions | `src/app/personnel/requests/actions.ts`, `request-types.ts` |

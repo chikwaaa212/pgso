@@ -10,9 +10,11 @@ import {
   DELAYED_THRESHOLD_DAYS,
   REPORT_MODULES,
   agingBucket,
+  classifyAvailability,
   classifyCondition,
   conditionLabel,
   lastQuarters,
+  normalizeAssetStatus,
   normalizeCondition,
   parseAgingBucket,
   parseReportModule,
@@ -21,7 +23,9 @@ import {
   quarterKey,
   quarterLabel,
   quartersForYear,
+  assetStatusLabel,
   type AgingBucket,
+  type AvailabilityClass,
   type ConditionClass,
   type Quarter,
   type QuarterRef,
@@ -799,4 +803,191 @@ export async function getAssetConditionReport(): Promise<AssetConditionReport> {
       return empty
     }
   })
+}
+
+// ─── Asset availability & status (shared global registry) ──────────────────
+
+export interface AssetStatusRow {
+  status: string
+  label: string
+  /** Registry rows (items) in this status bucket. */
+  items: number
+  /** Sum of units on hand for those rows. */
+  units: number
+  /** Share of items (0–100, rounded). */
+  pct: number
+  cls: AvailabilityClass
+}
+
+export interface AssetAvailabilityReport {
+  generatedAt: string
+  /** Registry rows (items) — matches "Items in the registry". */
+  total: number
+  /** Sum of quantities — matches "Units on hand". */
+  totalUnits: number
+  available: number
+  inUse: number
+  unavailable: number
+  availablePct: number
+  rows: AssetStatusRow[]
+}
+
+interface StatusDbRow {
+  status: string | null
+  items: bigint
+  units: bigint | null
+}
+
+/**
+ * Asset availability distribution from the *same unified registry* the Assets
+ * page reads: rows in the `assets` table plus asset-kind inventory lots that a
+ * passed inspection stocked (`delivery_kind = 'asset'`). Reading only `assets`
+ * made the report show 0 while the registry listed stocked lots.
+ *
+ * Buckets mirror the page: an assigned row is reported as `assigned`, a
+ * depleted unassigned row as `out of stock`, otherwise the stored status.
+ */
+export async function getAssetAvailabilityReport(): Promise<AssetAvailabilityReport> {
+  const generatedAt = new Date().toISOString()
+  const empty: AssetAvailabilityReport = {
+    generatedAt,
+    total: 0,
+    totalUnits: 0,
+    available: 0,
+    inUse: 0,
+    unavailable: 0,
+    availablePct: 0,
+    rows: [],
+  }
+  const scope = await getPersonnelScope()
+  if (scope.isEmpty || !scope.userId) return empty
+
+  return withScopedCache(
+    'personnel:reports:asset-availability',
+    REPORT_TTL,
+    async () => {
+      try {
+        const dbRows = await prisma.$queryRaw<StatusDbRow[]>`
+          WITH issued_items AS (
+            -- Every item a PAR/ICS covered. Single-line docs store the item in
+            -- the FK columns; consolidated docs only carry it inside
+            -- issuance_data.lines[], so read both or multi-line assignments
+            -- silently disappear from the report.
+            SELECT asset_id::text AS item_id
+            FROM issuance_records
+            WHERE asset_id IS NOT NULL
+            UNION
+            SELECT inventory_id::text AS item_id
+            FROM issuance_records
+            WHERE inventory_id IS NOT NULL
+            UNION
+            SELECT NULLIF(line->>'assetId', '') AS item_id
+            FROM issuance_records ir
+            CROSS JOIN LATERAL jsonb_array_elements(
+              CASE
+                WHEN jsonb_typeof(ir.issuance_data->'lines') = 'array'
+                THEN ir.issuance_data->'lines'
+                ELSE '[]'::jsonb
+              END
+            ) line
+            UNION
+            SELECT NULLIF(line->>'inventoryId', '') AS item_id
+            FROM issuance_records ir
+            CROSS JOIN LATERAL jsonb_array_elements(
+              CASE
+                WHEN jsonb_typeof(ir.issuance_data->'lines') = 'array'
+                THEN ir.issuance_data->'lines'
+                ELSE '[]'::jsonb
+              END
+            ) line
+          ),
+          registry AS (
+            SELECT a.status AS status,
+                   a.quantity AS quantity,
+                   a.assigned_to IS NOT NULL AS has_holder,
+                   EXISTS (
+                     SELECT 1 FROM issued_items ii WHERE ii.item_id = a.id::text
+                   ) AS issued
+            FROM assets a
+            UNION ALL
+            SELECT 'available' AS status,
+                   s.quantity AS quantity,
+                   false AS has_holder,
+                   EXISTS (
+                     SELECT 1 FROM issued_items ii WHERE ii.item_id = s.id::text
+                   ) AS issued
+            FROM inventory s
+            WHERE s.delivery_kind = 'asset'
+              AND EXISTS (
+                SELECT 1
+                FROM delivery_items di
+                JOIN inspections i ON i.delivery_id = di.delivery_id
+                WHERE i.result = 'passed'
+                  AND lower(di.item_name) = lower(s.item_name)
+                  AND di.unit IS NOT DISTINCT FROM s.unit
+              )
+          ),
+          bucketed AS (
+            SELECT
+              -- Mirrors the Assets page: a lot with units still on hand is
+              -- issuable, a depleted lot is "in use" only when it has a
+              -- holder/issuance, otherwise it is out of stock.
+              CASE
+                WHEN quantity IS NOT NULL AND quantity > 0
+                  THEN COALESCE(NULLIF(LOWER(TRIM(status)), ''), 'available')
+                WHEN has_holder OR issued THEN 'assigned'
+                WHEN quantity IS NOT NULL AND quantity <= 0 THEN 'out of stock'
+                ELSE COALESCE(NULLIF(LOWER(TRIM(status)), ''), 'available')
+              END AS status,
+              GREATEST(COALESCE(quantity, 0), 0)::bigint AS units
+            FROM registry
+          )
+          SELECT status,
+                 COUNT(*)::bigint AS items,
+                 COALESCE(SUM(units), 0)::bigint AS units
+          FROM bucketed
+          GROUP BY 1
+          ORDER BY items DESC, status
+        `.catch(() => [] as StatusDbRow[])
+
+        const rows: AssetStatusRow[] = dbRows.map((r) => {
+          const key = normalizeAssetStatus(r.status)
+          return {
+            status: key,
+            label: assetStatusLabel(key),
+            items: Number(r.items ?? 0),
+            units: Number(r.units ?? 0),
+            pct: 0,
+            cls: classifyAvailability(key),
+          }
+        })
+        const total = rows.reduce((n, r) => n + r.items, 0)
+        const totalUnits = rows.reduce((n, r) => n + r.units, 0)
+        for (const row of rows) row.pct = percentage(row.items, total)
+        const available = rows
+          .filter((r) => r.cls === 'available')
+          .reduce((n, r) => n + r.items, 0)
+        const inUse = rows
+          .filter((r) => r.cls === 'in-use')
+          .reduce((n, r) => n + r.items, 0)
+        // Everything that is not issuable and not with a custodian —
+        // out of stock, maintenance, retired, lost/disposed, or unrecorded.
+        const unavailable = Math.max(0, total - available - inUse)
+
+        return {
+          generatedAt,
+          total,
+          totalUnits,
+          available,
+          inUse,
+          unavailable,
+          availablePct: percentage(available, total),
+          rows,
+        }
+      } catch (e) {
+        console.error('[getAssetAvailabilityReport]', e)
+        return empty
+      }
+    }
+  )
 }

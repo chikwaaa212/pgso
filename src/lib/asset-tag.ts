@@ -33,7 +33,7 @@ export interface AssetTagRef {
 }
 
 const ASSET_PATH_RE =
-  /\/personnel\/assets\/(?:(stock)\/)?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?=$|[/?#])/i;
+  /\/(?:personnel|super-admin)\/assets\/(?:(stock)\/)?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?=$|[/?#])/i;
 
 /**
  * Recognize an asset tag from either an asset page URL (what we generate) or

@@ -14,8 +14,9 @@ import air from "./air-section.module.css";
 
 const HEADERS = [
   "PO ref",
+  "Type",
   "Supplier",
-  "Target arrival",
+  "Arrival date",
   "Date inspected",
   "Result",
   "Action",
@@ -66,7 +67,7 @@ export default function InspectionsLoading() {
           />
         </div>
 
-        {/* Table — same 6 columns and row actions */}
+        {/* Table — same 7 columns and row actions */}
         <div className={styles.tableWrap}>
           <table className={styles.table} aria-hidden="true">
             <thead>
@@ -86,6 +87,9 @@ export default function InspectionsLoading() {
                 <tr key={r} style={{ opacity: 1 - r * 0.04 }}>
                   <td>
                     <TextPulse className="h-3.5 w-20" />
+                  </td>
+                  <td>
+                    <TextPulse className="h-3 w-14" />
                   </td>
                   <td>
                     <TextPulse className="h-3.5 w-24" />

@@ -17,6 +17,7 @@ import { requirePersonnelScope } from "@/lib/personnel-scope";
 import { assetOptionDisabledReason } from "@/lib/asset-option";
 import { ASSET_TAG_ID_RE } from "@/lib/asset-tag";
 import type { ScannedAssetPrefill } from "@/lib/scan-actions";
+import { getAssetHistory, type AssetHistory } from "@/app/personnel/assets/actions";
 
 function label(bits: (string | null | undefined)[], fallback: string): string {
   const text = bits.filter(Boolean).join(" — ");
@@ -149,5 +150,33 @@ export async function getScannedAssetOption(
   } catch (e) {
     console.error("[getScannedAssetOption]", e);
     return { error: "Could not load the scanned record. Please try again." };
+  }
+}
+
+/**
+ * Full record trail for a scanned asset/stock tag: PAR/ICS assignments, the
+ * requests that led to them, and repair tickets. Reuses the same scoped reader
+ * as the asset detail History tab so the scanner never shows a different story.
+ */
+export async function getScannedAssetHistory(
+  id: string
+): Promise<{ history: AssetHistory } | { error: string }> {
+  const assetId = String(id ?? "").trim();
+  if (!ASSET_TAG_ID_RE.test(assetId)) {
+    return { error: "That tag does not carry a valid record id." };
+  }
+
+  try {
+    await requirePersonnelScope();
+  } catch {
+    return { error: "Sign in with a personnel account to view this record's history." };
+  }
+
+  try {
+    const history = await getAssetHistory(assetId);
+    return { history };
+  } catch (e) {
+    console.error("[getScannedAssetHistory]", e);
+    return { error: "Could not load the record history. Please try again." };
   }
 }

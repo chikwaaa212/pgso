@@ -197,6 +197,7 @@ export function buildOptimisticAssetRow(formData: FormData): UnifiedAssetRow {
     qr_code: get("qr_code"),
     assigned_to: null,
     qr_data_url: "",
+    assignees: [],
     custom_fields: {},
   };
 }

@@ -16,7 +16,15 @@ export function assetOptionDisabledReason(a: {
       ? 'Out of stock'
       : null
   }
-  if (a.assigned_to) return 'Already assigned'
+  // A depleted asset is never assignable, whether or not it still carries a
+  // holder. An asset that still has quantity on hand can be issued again even
+  // if a previous holder is recorded.
+  if (
+    a.assigned_to &&
+    (typeof a.quantity !== 'number' || a.quantity <= 0)
+  ) {
+    return 'Already assigned'
+  }
   if (typeof a.quantity === 'number' && a.quantity <= 0) return 'Out of stock'
   const st = (a.status ?? 'available').trim().toLowerCase()
   if (st !== 'available') {

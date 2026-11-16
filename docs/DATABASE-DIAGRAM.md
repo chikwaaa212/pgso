@@ -123,7 +123,7 @@ erDiagram
         uuid inspector_id FK "soft -> profiles.id"
         varchar inspector_name
         date inspection_date
-        varchar result "passed | partial | failed"
+        varchar result "passed | failed"
         text remarks
         jsonb supplier_checks
         jsonb item_checks

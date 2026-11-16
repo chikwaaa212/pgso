@@ -1,6 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import Link from "next/link";
+import {
+  ArrowUpRight,
+  ClipboardList,
+  FileText,
+  PackageCheck,
+  UserRoundCheck,
+  Wrench,
+} from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { getIssuance, type IssuanceDetail } from "../../issuances/actions";
 import { RepairReceipt } from "../../repairs/repair-receipt";
@@ -8,9 +17,24 @@ import { ParReportSheet } from "../../documents/par-report";
 import { IcsReportSheet } from "../../documents/ics-report";
 import { ReceiptOverlay } from "../../documents/receipt-overlay";
 import { ReceiptLoading } from "@/components/personnel/ReceiptLoading";
+import { formatPeso } from "@/lib/issuance-rules";
 import receipt from "../../inspections/components/receipt.module.css";
 import styles from "../../dashboard/page.module.css";
-import type { AssetHistory, UnifiedAssetRow } from "../actions";
+import hist from "./history.module.css";
+import {
+  getAssetHistory,
+  type AssetHistory,
+  type AssetHistoryIssuance,
+  type AssetHistoryRepair,
+  type AssetHistoryRequest,
+  type UnifiedAssetRow,
+} from "../actions";
+
+function toTime(value: string | null | undefined) {
+  if (!value) return 0;
+  const d = new Date(value.includes("T") ? value : `${value}T00:00:00`);
+  return Number.isNaN(d.getTime()) ? 0 : d.getTime();
+}
 
 function fmtDate(value: string | null | undefined) {
   if (!value) return "—";
@@ -24,31 +48,356 @@ function fmtDate(value: string | null | undefined) {
   });
 }
 
-function repairTone(status: string | null) {
-  if (status === "completed") return "ok";
-  if (status === "in_progress") return "info";
-  return "warn";
+function fmtShort(id: string) {
+  return id.slice(0, 8).toUpperCase();
 }
 
-function repairLabel(status: string | null) {
-  if (!status) return "—";
-  return status.charAt(0).toUpperCase() + status.slice(1).replace(/_/g, " ");
+function labelOf(value: string | null | undefined) {
+  if (!value) return "—";
+  return value.charAt(0).toUpperCase() + value.slice(1).replace(/_/g, " ");
 }
+
+function statusTone(status: string | null | undefined) {
+  const v = (status ?? "").toLowerCase();
+  if (v === "completed" || v === "approved") return "ok";
+  if (v === "rejected" || v === "cancelled") return "bad";
+  if (v === "in_progress" || v === "pending") return "warn";
+  return "info";
+}
+
+function Field({
+  label,
+  value,
+  emphasis = false,
+}: {
+  label: string;
+  value: ReactNode;
+  /** Renders the value larger — used for amounts and quantities. */
+  emphasis?: boolean;
+}) {
+  return (
+    <div className={hist.field} data-emphasis={emphasis || undefined}>
+      <span className={hist.fieldLabel}>{label}</span>
+      <span className={hist.fieldValue}>{value}</span>
+    </div>
+  );
+}
+
+/** Icon + document tag + reference + subtitle, with right-aligned meta. */
+function CardHead({
+  icon,
+  tag,
+  reference,
+  subtitle,
+  meta,
+}: {
+  icon: ReactNode;
+  tag: string;
+  reference: string;
+  subtitle: ReactNode;
+  meta: ReactNode;
+}) {
+  return (
+    <header className={hist.head}>
+      <span className={hist.icon} aria-hidden="true">
+        {icon}
+      </span>
+      <div className={hist.headMain}>
+        <p className={hist.title}>
+          <span className={hist.tag}>{tag}</span>
+          <span className={hist.docNo}>{reference}</span>
+        </p>
+        <p className={hist.subtitle}>{subtitle}</p>
+      </div>
+      <div className={hist.headMeta}>{meta}</div>
+    </header>
+  );
+}
+
+/* ─── Assignments ──────────────────────────────────────────────────────── */
+
+function AssignmentCard({
+  issuance,
+  requestById,
+  onOpen,
+}: {
+  issuance: AssetHistoryIssuance;
+  requestById: Map<string, AssetHistoryRequest>;
+  onOpen: () => void;
+}) {
+  const request = issuance.request_id
+    ? requestById.get(issuance.request_id)
+    : undefined;
+  const initiated = issuance.request_id
+    ? `Request ${fmtShort(issuance.request_id)}${
+        request ? ` · ${labelOf(request.status)}` : ""
+      }`
+    : "Direct issuance";
+
+  return (
+    <article className={hist.card} data-kind="assignment">
+      <CardHead
+        icon={<PackageCheck size={15} />}
+        tag={issuance.doc_type}
+        reference={issuance.doc_no ?? `#${fmtShort(issuance.id)}`}
+        subtitle={
+          <>
+            <span className={hist.who}>Assigned to</span>
+            <strong>{issuance.employee_name}</strong>
+          </>
+        }
+        meta={
+          <span className={hist.date}>
+            {fmtDate(issuance.created_at ?? issuance.doc_date)}
+          </span>
+        }
+      />
+
+      <div className={hist.fields}>
+        <Field
+          label="Assigned by"
+          value={issuance.assigned_by_name ?? "Not recorded"}
+        />
+        <Field label="Initiated" value={initiated} />
+        {request ? (
+          <Field label="Requested by" value={request.employee_name} />
+        ) : null}
+        <Field
+          label="Quantity"
+          emphasis
+          value={`${issuance.quantity}${issuance.unit ? ` ${issuance.unit}` : ""}`}
+        />
+        <Field
+          label="Amount"
+          emphasis
+          value={
+            issuance.total_amount != null
+              ? formatPeso(issuance.total_amount)
+              : "—"
+          }
+        />
+      </div>
+
+      {issuance.purpose ? (
+        <p className={hist.note}>
+          <span className={hist.noteLabel}>Purpose</span>
+          <span className={hist.noteBody}>{issuance.purpose}</span>
+        </p>
+      ) : null}
+
+      <footer className={hist.foot}>
+        <span className={hist.footMeta}>{fmtShort(issuance.id)}</span>
+        <button type="button" className={hist.link} onClick={onOpen}>
+          View {issuance.doc_type}
+          <ArrowUpRight size={12} aria-hidden="true" />
+        </button>
+      </footer>
+    </article>
+  );
+}
+
+/* ─── Repairs ──────────────────────────────────────────────────────────── */
+
+function RepairCard({
+  repair,
+  onOpen,
+}: {
+  repair: AssetHistoryRepair;
+  onOpen: () => void;
+}) {
+  return (
+    <article className={hist.card} data-kind="repair">
+      <CardHead
+        icon={<Wrench size={15} />}
+        tag="Repair"
+        reference={`#${fmtShort(repair.id)}`}
+        subtitle={<span className={hist.who}>Repair work order</span>}
+        meta={
+          <>
+            <span className={hist.badge} data-tone={statusTone(repair.status)}>
+              {labelOf(repair.status)}
+            </span>
+            <span className={hist.date}>
+              {fmtDate(repair.created_at ?? repair.repair_date)}
+            </span>
+          </>
+        }
+      />
+
+      <div className={hist.fields}>
+        <Field label="Reported by" value={repair.reporter_name} />
+        <Field label="Repair date" value={fmtDate(repair.repair_date)} />
+        <Field label="Technician" value={repair.technician ?? "Unassigned"} />
+        <Field
+          label="Cost"
+          emphasis
+          value={repair.cost != null ? formatPeso(repair.cost) : "—"}
+        />
+      </div>
+
+      {repair.description ? (
+        <p className={hist.note}>
+          <span className={hist.noteLabel}>Issue</span>
+          <span className={hist.noteBody}>{repair.description}</span>
+        </p>
+      ) : null}
+
+      <footer className={hist.foot}>
+        <span className={hist.footMeta}>{fmtShort(repair.id)}</span>
+        <button type="button" className={hist.link} onClick={onOpen}>
+          View receipt
+          <ArrowUpRight size={12} aria-hidden="true" />
+        </button>
+      </footer>
+    </article>
+  );
+}
+
+/* ─── Requests ─────────────────────────────────────────────────────────── */
+
+function RequestCard({ request }: { request: AssetHistoryRequest }) {
+  return (
+    <article className={hist.card} data-kind="request">
+      <CardHead
+        icon={<FileText size={15} />}
+        tag="Request"
+        reference={labelOf(request.request_type)}
+        subtitle={
+          <>
+            <span className={hist.who}>Requested by</span>
+            <strong>{request.employee_name}</strong>
+          </>
+        }
+        meta={
+          <>
+            <span
+              className={hist.badge}
+              data-tone={statusTone(request.status)}
+            >
+              {labelOf(request.status)}
+            </span>
+            <span className={hist.date}>
+              {fmtDate(request.date_requested)}
+            </span>
+          </>
+        }
+      />
+
+      <div className={hist.fields}>
+        <Field
+          label="Handled by"
+          value={request.handled_by_name ?? "Not recorded"}
+        />
+        <Field label="Requested" value={fmtDate(request.date_requested)} />
+        {request.date_resolved ? (
+          <Field label="Resolved" value={fmtDate(request.date_resolved)} />
+        ) : null}
+      </div>
+
+      {request.description ? (
+        <p className={hist.note}>
+          <span className={hist.noteLabel}>Details</span>
+          <span className={hist.noteBody}>{request.description}</span>
+        </p>
+      ) : null}
+
+      <footer className={hist.foot}>
+        <span className={hist.footMeta}>{fmtShort(request.id)}</span>
+      </footer>
+    </article>
+  );
+}
+
+/* ─── Current holder without a linked document ─────────────────────────── */
+
+function HolderCard({
+  asset,
+  holderName,
+}: {
+  asset: UnifiedAssetRow;
+  holderName: string;
+}) {
+  return (
+    <article className={hist.card} data-kind="holder">
+      <CardHead
+        icon={<UserRoundCheck size={15} />}
+        tag="Assignment"
+        reference={`#${fmtShort(asset.id)}`}
+        subtitle={
+          <>
+            <span className={hist.who}>Held by</span>
+            <strong>{holderName}</strong>
+          </>
+        }
+        meta={<span className={hist.date}>No linked document</span>}
+      />
+
+      <div className={hist.fields}>
+        <Field label="Status" value={labelOf(asset.status)} />
+        <Field
+          label="On hand"
+          emphasis
+          value={`${asset.quantity ?? 0}${asset.unit ? ` ${asset.unit}` : ""}`}
+        />
+        <Field label="Location" value={asset.location ?? "—"} />
+      </div>
+
+      <p className={hist.note}>
+        <span className={hist.noteLabel}>Note</span>
+        <span className={hist.noteBody}>
+          This item was assigned through a request approval or an older record,
+          so no PAR/ICS document is linked to it.
+        </span>
+      </p>
+    </article>
+  );
+}
+
+/* ─── Section ──────────────────────────────────────────────────────────── */
+
+type HistoryEvent =
+  | { kind: "assignment"; at: number; issuance: AssetHistoryIssuance }
+  | { kind: "repair"; at: number; repair: AssetHistoryRepair }
+  | { kind: "request"; at: number; request: AssetHistoryRequest };
 
 export function AssetHistorySection({
   asset,
   history,
+  embedded = false,
+  noun = "asset",
 }: {
   asset: UnifiedAssetRow;
   history: AssetHistory;
+  /** Renders inside the detail page's History tab (no duplicate card heading). */
+  embedded?: boolean;
+  /** Record noun used in copy ("asset" on the registry, "stock" in stocks). */
+  noun?: string;
 }) {
   const [repairId, setRepairId] = useState<string | null>(null);
   const [issuanceId, setIssuanceId] = useState<string | null>(null);
   const [issuanceDoc, setIssuanceDoc] = useState<IssuanceDetail | null>(null);
   const [issuanceLoading, setIssuanceLoading] = useState(false);
 
+  // The page payload is a server render; an assignment may have happened
+  // since. Repaint from a fresh read the moment the History tab opens so the
+  // list never shows a stale "nothing recorded yet".
+  const [timeline, setTimeline] = useState<AssetHistory>(history);
+  useEffect(() => {
+    let cancelled = false;
+    void getAssetHistory(asset.id)
+      .then((next) => {
+        if (!cancelled) setTimeline(next);
+      })
+      .catch(() => {
+        /* keep the server payload on failure */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [asset.id]);
+
   const activeRepair =
-    history.repairs.find((r) => r.id === repairId) ?? null;
+    timeline.repairs.find((r) => r.id === repairId) ?? null;
 
   function openIssuance(id: string) {
     setIssuanceId(id);
@@ -60,195 +409,109 @@ export function AssetHistorySection({
     });
   }
 
-  const ref = asset.id.slice(0, 8).toUpperCase();
-  const hasEvents =
-    history.issuances.length > 0 ||
-    history.repairs.length > 0 ||
-    history.requests.length > 0;
+  const requestById = new Map(timeline.requests.map((r) => [r.id, r]));
 
-  return (
-    <Card className={styles.panel}>
-      <h2 className={styles.panelTitle}>History</h2>
-      <p className={styles.panelSub}>
-        Every assignment and repair for this asset — each opens its receipt.
-      </p>
+  const events: HistoryEvent[] = [
+    ...timeline.issuances.map((issuance) => ({
+      kind: "assignment" as const,
+      at: toTime(issuance.created_at ?? issuance.doc_date),
+      issuance,
+    })),
+    ...timeline.repairs.map((repair) => ({
+      kind: "repair" as const,
+      at: toTime(repair.created_at ?? repair.repair_date),
+      repair,
+    })),
+    ...timeline.requests.map((request) => ({
+      kind: "request" as const,
+      at: toTime(request.date_requested),
+      request,
+    })),
+  ].sort((a, b) => b.at - a.at);
 
-      {!hasEvents && !history.assignedToName ? (
-        <div className={styles.emptyState}>
+  const hasEvents = events.length > 0;
+  const holderName = timeline.assignedToName;
+  const showHolderCard = !!holderName && timeline.issuances.length === 0;
+
+  const content = (
+    <>
+      {!embedded ? (
+        <>
+          <h2 className={styles.panelTitle}>History</h2>
           <p className={styles.panelSub}>
-            No assignments or repairs recorded for this asset yet.
+            Every assignment, request, and repair for this {noun} — each card
+            opens its receipt.
+          </p>
+        </>
+      ) : null}
+
+      {!hasEvents && !showHolderCard ? (
+        <div className={hist.empty}>
+          <p className={hist.emptyTitle}>No history yet</p>
+          <p className={hist.emptyText}>
+            Assignments, requests, and repairs for this item will appear here.
           </p>
         </div>
       ) : (
-        <article className={receipt.receipt}>
-          <div className={receipt.receiptInner}>
-            {/* ── Masthead ─────────────────────────────────────────── */}
-            <header className={receipt.masthead}>
-              <p className={receipt.orgName}>PGSO</p>
-              <p className={receipt.orgSub}>Property &amp; Supply Management</p>
-              <p className={receipt.docTitle}>*** ASSET HISTORY ***</p>
-              <p className={receipt.docSub}>
-                ASSET RECORD — {ref}
-              </p>
-            </header>
-
-            <div className={receipt.divider} />
-
-            {/* ── Asset identity ───────────────────────────────────── */}
-            <p className={receipt.sectionTitle}>ASSET</p>
-            <dl className={receipt.rows}>
-              {[
-                ["Article", asset.article ?? asset.description ?? "—"],
-                ["Account Code", asset.account_code ?? "—"],
-                ["Property No.", asset.qr_code ?? "—"],
-                ["Asset Type", asset.category ?? "—"],
-                ["Location", asset.location ?? "—"],
-                [
-                  "Status",
-                  asset.status === "available" && history.assignedToName
-                    ? `ASSIGNED — ${history.assignedToName}`
-                    : (asset.status ?? "—").toUpperCase(),
-                ],
-                [
-                  "Current Holder",
-                  history.assignedToName ?? "AVAILABLE — NOT ASSIGNED",
-                ],
-              ].map(([labelText, value]) => (
-                <div key={labelText} className={receipt.row}>
-                  <dt>{labelText}</dt>
-                  <dd>{value}</dd>
-                </div>
-              ))}
-            </dl>
-
-            <div className={receipt.divider} />
-
-            {/* ── Assignment history ───────────────────────────────── */}
-            <p className={receipt.sectionTitle}>
-              ASSIGNMENT HISTORY ({history.issuances.length})
-            </p>
-            {history.issuances.length === 0 ? (
-              <p className={receipt.remarksLabel}>
-                <span className={receipt.remarks}>Never assigned.</span>
-              </p>
-            ) : (
-              <dl className={receipt.rows}>
-                {history.issuances.map((r) => (
-                  <div key={r.id} className={receipt.row}>
-                    <dt>
-                      {r.doc_type}
-                      {r.doc_no ? ` ${r.doc_no}` : ""} · {fmtDate(r.doc_date)}
-                    </dt>
-                    <dd>
-                      {r.employee_name}{" "}
-                      <button
-                        type="button"
-                        className={`${styles.inspectLinkSecondary} cursor-pointer`}
-                        onClick={() => openIssuance(r.id)}
-                      >
-                        View {r.doc_type}
-                      </button>
-                    </dd>
-                  </div>
-                ))}
-              </dl>
-            )}
-
-            <div className={receipt.divider} />
-
-            {/* ── Repair history ───────────────────────────────────── */}
-            <p className={receipt.sectionTitle}>
-              REPAIR HISTORY ({history.repairs.length})
-            </p>
-            {history.repairs.length === 0 ? (
-              <p className={receipt.remarksLabel}>
-                <span className={receipt.remarks}>No repairs recorded.</span>
-              </p>
-            ) : (
-              <dl className={receipt.rows}>
-                {history.repairs.map((r) => (
-                  <div key={r.id} className={receipt.row}>
-                    <dt>
-                      {fmtDate(r.repair_date)} ·{" "}
-                      <span
-                        className={receipt.resultBadge}
-                        data-tone={repairTone(r.status)}
-                      >
-                        {repairLabel(r.status).toUpperCase()}
-                      </span>{" "}
-                      · {r.technician ?? "Unassigned"}
-                    </dt>
-                    <dd>
-                      <button
-                        type="button"
-                        className={`${styles.inspectLinkSecondary} cursor-pointer`}
-                        onClick={() => setRepairId(r.id)}
-                      >
-                        View receipt
-                      </button>
-                    </dd>
-                  </div>
-                ))}
-              </dl>
-            )}
-
-            <div className={receipt.divider} />
-
-            {/* ── Request history ──────────────────────────────────── */}
-            <p className={receipt.sectionTitle}>
-              REQUEST HISTORY ({history.requests.length})
-            </p>
-            {history.requests.length === 0 ? (
-              <p className={receipt.remarksLabel}>
-                <span className={receipt.remarks}>No requests filed.</span>
-              </p>
-            ) : (
-              <dl className={receipt.rows}>
-                {history.requests.map((r) => (
-                  <div key={r.id} className={receipt.row}>
-                    <dt>
-                      {r.request_type
-                        ? r.request_type.charAt(0).toUpperCase() +
-                          r.request_type.slice(1).replace(/_/g, " ")
-                        : "Request"}{" "}
-                      · {fmtDate(r.date_requested)}
-                    </dt>
-                    <dd>
-                      {r.employee_name} ·{" "}
-                      <span
-                        className={receipt.resultBadge}
-                        data-tone={
-                          r.status === "completed" || r.status === "approved"
-                            ? "ok"
-                            : r.status === "rejected"
-                              ? "bad"
-                              : "warn"
-                        }
-                      >
-                        {(r.status ?? "pending").toUpperCase()}
-                      </span>
-                    </dd>
-                  </div>
-                ))}
-              </dl>
-            )}
-
-            <div className={receipt.divider} />
-
-            {/* ── Footer ───────────────────────────────────────────── */}
-            <p className={receipt.receiptKicker}>END OF ASSET HISTORY</p>
-            <div
-              aria-hidden="true"
-              className={receipt.scanned}
-              style={{
-                background:
-                  "repeating-linear-gradient(90deg, #1b2a4a 0 2px, transparent 2px 5px, #1b2a4a 5px 6px, transparent 6px 10px)",
-              }}
-            />
-            <p className={receipt.scannedLabel}>ASSET #{ref}</p>
-            <p className={receipt.thanks}>*** Thank you! ***</p>
+        <>
+          <div className={hist.summary}>
+            <span className={hist.stat} data-kind="assignment">
+              <PackageCheck size={12} aria-hidden="true" />
+              <strong>{timeline.issuances.length}</strong> Assignments
+            </span>
+            <span className={hist.stat} data-kind="repair">
+              <Wrench size={12} aria-hidden="true" />
+              <strong>{timeline.repairs.length}</strong> Repairs
+            </span>
+            <span className={hist.stat} data-kind="request">
+              <ClipboardList size={12} aria-hidden="true" />
+              <strong>{timeline.requests.length}</strong> Requests
+            </span>
           </div>
-        </article>
+
+          <div className={hist.grid}>
+            {showHolderCard && holderName ? (
+              <HolderCard asset={asset} holderName={holderName} />
+            ) : null}
+            {events.map((event) => {
+              if (event.kind === "assignment") {
+                return (
+                  <AssignmentCard
+                    key={`assignment-${event.issuance.id}`}
+                    issuance={event.issuance}
+                    requestById={requestById}
+                    onOpen={() => openIssuance(event.issuance.id)}
+                  />
+                );
+              }
+              if (event.kind === "repair") {
+                return (
+                  <RepairCard
+                    key={`repair-${event.repair.id}`}
+                    repair={event.repair}
+                    onOpen={() => setRepairId(event.repair.id)}
+                  />
+                );
+              }
+              return (
+                <RequestCard
+                  key={`request-${event.request.id}`}
+                  request={event.request}
+                />
+              );
+            })}
+          </div>
+        </>
+      )}
+    </>
+  );
+
+  return (
+    <>
+      {embedded ? (
+        <div className={hist.section}>{content}</div>
+      ) : (
+        <Card className={styles.panel}>{content}</Card>
       )}
 
       <ReceiptOverlay
@@ -265,17 +528,25 @@ export function AssetHistorySection({
 
       <ReceiptOverlay
         open={issuanceId !== null}
-        title="Accountability receipt"
+        title={
+          issuanceDoc?.doc_type === "PAR"
+            ? "Property Acknowledgment Receipt"
+            : issuanceDoc?.doc_type === "ICS"
+              ? "Inventory Custodian Slip"
+              : "Accountability receipt"
+        }
         onClose={() => {
           setIssuanceId(null);
           setIssuanceDoc(null);
         }}
+        printable={!issuanceLoading && !!issuanceDoc}
       >
         {issuanceLoading ? (
           <ReceiptLoading label="Loading receipt…" />
         ) : !issuanceDoc ? (
-          <div className={styles.emptyState}>
-            <p className={styles.panelSub}>
+          <div className={hist.empty}>
+            <p className={hist.emptyTitle}>Record unavailable</p>
+            <p className={hist.emptyText}>
               This record is no longer available.
             </p>
           </div>
@@ -286,9 +557,26 @@ export function AssetHistorySection({
             ) : (
               <IcsReportSheet issuance={issuanceDoc} />
             )}
+            <p className={hist.receiptLinks}>
+              <Link
+                href={`/personnel/issuances/${issuanceDoc.id}`}
+                className={hist.receiptLink}
+              >
+                Open full report
+              </Link>{" "}
+              ·{" "}
+              <a
+                href={`/api/personnel/issuances/${issuanceDoc.id}/${
+                  issuanceDoc.doc_type === "PAR" ? "par" : "ics"
+                }-xlsx`}
+                className={hist.receiptLink}
+              >
+                Download Excel
+              </a>
+            </p>
           </div>
         )}
       </ReceiptOverlay>
-    </Card>
+    </>
   );
 }

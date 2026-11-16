@@ -27,7 +27,7 @@ function fmtDate(value: string | null) {
 export default function SuperAdminIssuesPage() {
   // Server-driven filters (reported up by the table, debounced there).
   const [filters, setFilters] = useState({ q: "", docType: "all", assetType: "all" });
-  // Fixed 20 documents/page (no selector) — the DB returns only this window
+  // Fixed 10 documents/page (no selector) — the DB returns only this window
   // (super_admin scope is global). Same pattern as the personnel page.
   const [page, setPage] = useState(1);
   const [completedPage, setCompletedPage] = useState(1);
@@ -48,12 +48,13 @@ export default function SuperAdminIssuesPage() {
       module: 'super-admin',
       resource: 'issues',
       page,
-      pageSize: 20,
+      pageSize: FIXED_PAGE_SIZE,
       filters: { q: filters.q, docType: filters.docType, assetType: filters.assetType },
     }),
     () =>
       getPublicIssuesPage({
         page,
+        pageSize: FIXED_PAGE_SIZE,
         q: filters.q,
         docType: filters.docType,
         assetType: filters.assetType,
@@ -113,6 +114,7 @@ export default function SuperAdminIssuesPage() {
             id="admin-issues"
             total={totalDocs}
             page={page}
+            pageSize={FIXED_PAGE_SIZE}
             onPageChange={setPage}
           />
         ) : null}

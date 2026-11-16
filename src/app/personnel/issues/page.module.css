@@ -1,0 +1,127 @@
+/* Personnel → Issues. Relaid out to match the Assets / Stocks / Issuances
+   screens: header actions, three summary tiles, an Issued / Completed tab
+   strip, then one card at a time with a shared toolbar + ledger table. */
+
+/* Tab strip sits below the summary tiles, outside the card — same rhythm as
+   the Assets / Issuances screens. */
+.tabsRow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+/* Count pill inside the view tabs (mirrors the Issuances tab strip). */
+.tabCount {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 0.375rem;
+  min-width: 1.125rem;
+  height: 1rem;
+  padding-inline: 0.25rem;
+  border-radius: 9999px;
+  background-color: var(--color-navy-100);
+  font-size: 0.625rem;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-navy-600);
+}
+
+.tabCount[data-active="true"] {
+  background-color: rgba(15, 23, 42, 0.12);
+  color: var(--color-navy-900);
+}
+
+/* Toolbar meta as separate chips — no "·" separators. */
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.375rem;
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--color-navy-600);
+  font-variant-numeric: tabular-nums;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.1875rem 0.5rem;
+  border-radius: 9999px;
+  background-color: var(--color-navy-100);
+  color: var(--color-navy-600);
+  white-space: nowrap;
+}
+
+.chip strong {
+  font-weight: 700;
+  color: var(--color-navy-900);
+}
+
+.chip[data-tone="ok"] {
+  background-color: #dcfce7;
+  color: #166534;
+}
+
+.chip[data-tone="info"] {
+  background-color: #dbeafe;
+  color: #1d4ed8;
+}
+
+.chip[data-tone="warn"] {
+  background-color: #fef3c7;
+  color: #92400e;
+}
+
+/* Search field with a leading icon (Assets registry pattern). */
+.searchWrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 16rem;
+  max-width: 100%;
+}
+
+.searchIcon {
+  position: absolute;
+  left: 0.625rem;
+  color: var(--color-navy-400);
+  pointer-events: none;
+}
+
+.search {
+  padding-left: 2rem;
+}
+
+/* Completed-requests ledger cells. */
+.bodyRow:hover td {
+  background-color: #f8fafc;
+}
+
+.cellMain {
+  display: block;
+  font-weight: 600;
+  color: var(--color-navy-900);
+}
+
+.cellSub {
+  display: block;
+  margin-top: 0.0625rem;
+  font-size: 0.75rem;
+  color: var(--color-navy-500);
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.actionCell {
+  text-align: right;
+  white-space: nowrap;
+}

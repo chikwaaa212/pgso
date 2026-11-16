@@ -1,7 +1,6 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
-import { DatePicker } from "@/components/ui/date-picker";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -9,7 +8,7 @@ import { useToast } from "@/components/ui/toaster";
 import { CLIENT_CACHE_KEYS, bustClientCache } from "@/lib/client-cache";
 import { resourcePrefix } from "@/lib/query-keys";
 import { cn } from "@/lib/utils";
-import { logDelivery, updateDelivery, getDeliveryFormOptions, getPersonnelRecipients, type DeliveryFormOptions, type DeliveryDetails, type PersonnelRecipient } from "./actions";
+import { logDelivery, updateDelivery, getDeliveryFormOptions, getPersonnelRecipients, generateAccountCode, type DeliveryFormOptions, type DeliveryDetails, type PersonnelRecipient } from "./actions";
 import {
   addPendingDelivery,
   confirmPendingDelivery,
@@ -78,6 +77,16 @@ function fromDateKey(value: string | null): Date | undefined {
   return new Date(y, m - 1, d);
 }
 
+/** Read-only arrival date shown in the log form (today's calendar day). */
+function formatArrivalDate(date: Date | undefined): string {
+  const value = date ?? new Date();
+  return value.toLocaleDateString("en-PH", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+}
+
 /** System-generated PO reference: PGSO-XXXX-XXXX (no personnel input). */
 function makePoReference(): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -142,10 +151,10 @@ export function useLogDeliveryDraft() {
   });
   const [step2, setStep2] = useState<Step2Data>(() => ({
     dateSupplied: undefined,
-    expectedArrival: undefined,
+    expectedArrival: new Date(),
     supplierName: "",
     poReference: makePoReference(),
-    deliveryStatus: "Awaiting",
+    deliveryStatus: "Arrival",
   }));
   const [recipient, setRecipient] = useState<RecipientData>({
     recipientRole: "",
@@ -157,10 +166,10 @@ export function useLogDeliveryDraft() {
     setStep1({ deliveryKind: "", assetType: "", stockType: "", accountCode: "", accountTitle: "" });
     setStep2({
       dateSupplied: undefined,
-      expectedArrival: undefined,
+      expectedArrival: new Date(),
       supplierName: "",
       poReference: makePoReference(),
-      deliveryStatus: "Awaiting",
+      deliveryStatus: "Arrival",
     });
     setRecipient({ recipientRole: "", recipientName: "" });
     setStep3({ items: [] });
@@ -201,10 +210,10 @@ export function hydrateDeliveryDraft(
   });
   draft.setStep2({
     dateSupplied: fromDateKey(delivery.date_delivered),
-    expectedArrival: fromDateKey(delivery.expected_arrival_date),
+    expectedArrival: fromDateKey(delivery.expected_arrival_date) ?? new Date(),
     supplierName: delivery.supplier ?? "",
     poReference: delivery.po_reference ?? "",
-    deliveryStatus: "Awaiting",
+    deliveryStatus: "Arrival",
   });
   draft.setRecipient({
     recipientRole: delivery.recipient_role ?? "PGSO Personnel",
@@ -265,7 +274,7 @@ export function LogDeliveryMockForm({
   });
   const [recipients, setRecipients] = useState<PersonnelRecipient[]>([]);
 
-  /** Switching kinds clears the detail fields so stock and asset values never mix. */
+  /** Switching kinds clears the detail fields and allocates that kind's code. */
   const handleDeliveryKindChange = (value: string) => {
     setStep1((prev) =>
       prev.deliveryKind === value
@@ -278,33 +287,33 @@ export function LogDeliveryMockForm({
             accountTitle: "",
           }
     );
+    // Edits keep their stored system code — never re-allocate on an edit.
+    if (editDeliveryId) return;
+    void previewAccountCode(value);
   };
 
   /**
-   * Account code is free-form (typed or Generated) — NOT from the catalog.
-   * Account title is a strict catalog dropdown; Asset Type auto-fills from the
-   * selected title (validated client + re-derived server-side).
+   * Account codes are system-owned: AST-xxx-xx-xx for assets, STK-xxx-xx-xx
+   * for stocks. The form shows the next code and refuses typed input; the
+   * server allocates the authority value again on save.
    */
-  const handleAccountCodeChange = (value: string) => {
-    setStep1((prev) => ({ ...prev, accountCode: value }));
-  };
-
-  const handleGenerateCode = () => {
-    const prefix = step1.deliveryKind === "asset" ? "AST" : "STK";
-    const date = new Date().toISOString().slice(0, 10).replace(/-/g, "");
-    const known = new Set(formOptions.codes.map((c) => c.code.toUpperCase()));
-    let code = "";
-    for (let i = 0; i < 10; i++) {
-      // eslint-disable-next-line react-hooks/purity -- event handler, impure call is intentional for code generation
-      const rand = Math.random().toString(36).slice(2, 6).toUpperCase().padEnd(4, "0");
-      const candidate = `${prefix}-${date}-${rand}`;
-      if (!known.has(candidate.toUpperCase())) {
-        code = candidate;
-        break;
-      }
-      code = candidate;
+  const [generatingCode, setGeneratingCode] = useState(false);
+  // Only the latest request may write the code, so quickly toggling kinds
+  // never leaves a stale (previous kind's) code behind.
+  const codeRequestRef = useRef(0);
+  const previewAccountCode = async (kind: string) => {
+    const requestId = ++codeRequestRef.current;
+    setGeneratingCode(true);
+    const res = await generateAccountCode(kind === "stock" ? "stock" : "asset").catch(
+      () => ({ error: "Could not reach the server — try again." })
+    );
+    if (requestId !== codeRequestRef.current) return;
+    setGeneratingCode(false);
+    if ("error" in res) {
+      toast({ title: "Could not generate a code", description: res.error, variant: "error" });
+      return;
     }
-    setStep1((prev) => ({ ...prev, accountCode: code }));
+    setStep1((prev) => ({ ...prev, accountCode: res.code }));
   };
 
   const assetTypesForTitle = (title: string): string[] => {
@@ -324,26 +333,30 @@ export function LogDeliveryMockForm({
   };
 
   /**
-   * Picking an account title drives Asset Type. The type is auto-filled from
-   * the catalog entry (and locked in the UI when the title maps to one type).
+   * Picking an account title drives Asset Type (auto-filled from the catalog
+   * row). The account code is independent of the title (system AST/STK).
    */
   const handleAccountTitleChange = (value: string) => {
     const derived = assetTypesForTitle(value);
+    const assetType = derived.length > 0 ? derived[0] : "";
     setStep1((prev) => ({
       ...prev,
       accountTitle: value,
-      assetType: derived.length > 0 ? derived[0] : "",
+      assetType,
     }));
   };
 
+  /** Choosing an asset type narrows the catalog row shown on the receipt. */
   const handleAssetTypeChange = (value: string) => {
-    setStep1((prev) => ({ ...prev, assetType: value }));
+    setStep1((prev) => ({
+      ...prev,
+      assetType: value,
+    }));
   };
 
   /**
    * Stocks: title + type come from one Master Data stock header. Picking a
-   * title fills the header's code; the code can still be typed or Generated
-   * exactly like an asset code.
+   * title fills the header's title/type; the code is system-generated.
    */
   const handleStockTypeChange = (value: string) => {
     setStep1((prev) => {
@@ -372,7 +385,6 @@ export function LogDeliveryMockForm({
     if (!header) return;
     setStep1((prev) => ({
       ...prev,
-      accountCode: header.code,
       accountTitle: header.title,
       stockType: header.type,
       assetType: "",
@@ -424,8 +436,8 @@ export function LogDeliveryMockForm({
     void getPersonnelRecipients().then(setRecipients);
   }, []);
 
-  // Codes are free-form for both kinds (typed or Generated). Asset title drives
-  // its asset type; stock title + type come from one Master Data stock header.
+  // Account codes are system-owned (AST/STK); the picker below shows the
+  // selected title's asset types only.
   const selectedTitleTypes = assetTypesForTitle(step1.accountTitle);
   const isStockKind = step1.deliveryKind === "stock";
   const isAssetKind = step1.deliveryKind === "asset";
@@ -456,11 +468,10 @@ export function LogDeliveryMockForm({
         selectedTitleTypes.some(
           (t) => t.toLowerCase() === step1.assetType.trim().toLowerCase()
         ));
-  // Every logged delivery is a waiting arrival: only the target arrival date
-  // is captured (no received date, no Complete/Partial choice). The PO
-  // reference is system-generated, so it never blocks the step.
-  const isStep2Valid =
-    !!step2.supplierName && !!step2.poReference && !!step2.expectedArrival;
+  // Every logged delivery is an arrival: the arrival date is set to today, so
+  // there is no target date to pick. The PO reference is system-generated, so
+  // it never blocks the step either.
+  const isStep2Valid = !!step2.supplierName && !!step2.poReference;
   const isRecipientValid = !!recipient.recipientName;
   const isStep3Valid = step3.items.length > 0;
 
@@ -681,38 +692,6 @@ export function LogDeliveryMockForm({
         {isStockKind ? (
           <>
             <div>
-              <Label htmlFor="stock-code" className="mb-1 block text-sm font-medium">
-                Stock Code{" "}
-                <span className="font-normal text-navy-500">
-                  (type or generate — auto-fills from stock title)
-                </span>
-              </Label>
-              <div className="flex gap-2">
-                <Input
-                  id="stock-code"
-                  name="accountCode"
-                  value={step1.accountCode}
-                  onChange={(e) => handleAccountCodeChange(e.target.value)}
-                  placeholder="Pick a stock title or press Generate"
-                  className="flex-1"
-                />
-                <button
-                  type="button"
-                  onClick={handleGenerateCode}
-                  title="Auto-generate a unique stock code"
-                  className={cn(
-                    "inline-flex h-9 shrink-0 items-center justify-center rounded-[4px] border border-navy-200 bg-transparent px-3 text-xs font-semibold text-navy-700 hover:bg-navy-100"
-                  )}
-                >
-                  Generate
-                </button>
-              </div>
-              <p className="mt-1 text-xs text-navy-500">
-                Picking a stock title fills its code, or press Generate for an auto
-                code. The title and type still come from Master Data.
-              </p>
-            </div>
-            <div>
               <Label htmlFor="stock-title" className="mb-1 block text-sm font-medium">
                 Stock Title{" "}
                 <span className="font-normal text-navy-500">(from Master Data)</span>
@@ -764,6 +743,25 @@ export function LogDeliveryMockForm({
                 </p>
               )}
             </div>
+            <div>
+              <Label htmlFor="stock-code" className="mb-1 block text-sm font-medium">
+                Stock Code{" "}
+                <span className="font-normal text-navy-500">
+                  (system-generated)
+                </span>
+              </Label>
+              <Input
+                id="stock-code"
+                value={generatingCode ? "Generating…" : step1.accountCode}
+                readOnly
+                placeholder="Choose Stocks above to generate a code"
+                className="bg-navy-50"
+              />
+              <p className="mt-1 text-xs text-navy-500">
+                Generated automatically in the STK-xxx-xx-xx format — no typing or
+                Generate button needed.
+              </p>
+            </div>
             {formOptions.stockHeaders.length === 0 && (
               <p className="text-xs font-medium text-red-600">
                 No active stock headers — ask your Super Admin to add them in
@@ -773,43 +771,6 @@ export function LogDeliveryMockForm({
           </>
         ) : (
           <>
-            <div>
-              <Label htmlFor="account-code" className="mb-1 block text-sm font-medium">
-                Account Code{" "}
-                <span className="font-normal text-navy-500">
-                  (type or generate — not from catalog)
-                </span>
-              </Label>
-              <div className="flex gap-2">
-                <Input
-                  id="account-code"
-                  name="accountCode"
-                  value={step1.accountCode}
-                  onChange={(e) => handleAccountCodeChange(e.target.value)}
-                  placeholder="Type a code, e.g. 1-06-05-020"
-                  className="flex-1"
-                />
-                <button
-                  type="button"
-                  onClick={handleGenerateCode}
-                  title="Auto-generate a unique code for this asset"
-                  className={cn(
-                    "inline-flex h-9 shrink-0 items-center justify-center rounded-[4px] border border-navy-200 bg-transparent px-3 text-xs font-semibold text-navy-700 hover:bg-navy-100"
-                  )}
-                >
-                  Generate
-                </button>
-              </div>
-              {step1.accountCode.trim() === "" ? (
-                <p className="mt-1 text-xs text-navy-500">
-                  Type a code for this asset or press Generate for an auto code.
-                </p>
-              ) : (
-                <p className="mt-1 text-xs text-navy-500">
-                  Free-form code — saved on this delivery only, not added to the catalog.
-                </p>
-              )}
-            </div>
             <div>
               <Label htmlFor="account-title" className="mb-1 block text-sm font-medium">
                 Account Title <span className="font-normal text-navy-500">(from catalog)</span>
@@ -864,6 +825,25 @@ export function LogDeliveryMockForm({
                 </p>
               )}
             </div>
+            <div>
+              <Label htmlFor="account-code" className="mb-1 block text-sm font-medium">
+                Account Code{" "}
+                <span className="font-normal text-navy-500">
+                  (system-generated)
+                </span>
+              </Label>
+              <Input
+                id="account-code"
+                value={generatingCode ? "Generating…" : step1.accountCode}
+                readOnly
+                placeholder="Choose Assets above to generate a code"
+                className="bg-navy-50"
+              />
+              <p className="mt-1 text-xs text-navy-500">
+                Generated automatically in the AST-xxx-xx-xx format — no typing or
+                Generate button needed.
+              </p>
+            </div>
             {catalogEmpty && (
               <p className="text-xs font-medium text-red-600">
                 No active catalog entries — ask your Super Admin to add asset types
@@ -884,26 +864,27 @@ export function LogDeliveryMockForm({
         </Label>
         <Input
           id="delivery-status"
-          value="Waiting for arrival"
+          value="Arrival"
           readOnly
           className="bg-navy-50"
         />
         <p className="mt-1 text-xs text-navy-500">
-          Deliveries are always logged as waiting for arrival — set the target
-          date below.
+          Deliveries are logged as an arrival — there is no waiting period.
         </p>
       </div>
       <div>
-        <Label htmlFor="expected-arrival" className="mb-1 block text-sm font-medium">
-          Target Date of Arrival
+        <Label htmlFor="arrival-date" className="mb-1 block text-sm font-medium">
+          Date of Arrival
         </Label>
-        <DatePicker
-          id="expected-arrival"
-          value={step2.expectedArrival}
-          onChange={(d) => handleStep2Change("expectedArrival", d)}
-          placeholder="Pick a target date"
-          disablePast
+        <Input
+          id="arrival-date"
+          value={formatArrivalDate(step2.expectedArrival)}
+          readOnly
+          className="bg-navy-50"
         />
+        <p className="mt-1 text-xs text-navy-500">
+          Set automatically to the current date when you log this delivery.
+        </p>
       </div>
       <div>
         <Label htmlFor="supplier-name" className="mb-1 block text-sm font-medium">
@@ -1129,7 +1110,7 @@ export function LogDeliveryMockForm({
       <input
         type="hidden"
         name="expectedArrival"
-        value={step2.expectedArrival ? toDateKey(step2.expectedArrival) : ""}
+        value={toDateKey(step2.expectedArrival ?? new Date())}
       />
       <input type="hidden" name="supplierName" value={step2.supplierName} />
       <input type="hidden" name="poReference" value={step2.poReference} />

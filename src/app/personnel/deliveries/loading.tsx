@@ -15,7 +15,7 @@ const HEADERS = [
   "Type",
   "Delivery",
   "Inspection",
-  "Target Arrival",
+  "Arrival Date",
   "Logged By",
   "Action",
 ] as const;

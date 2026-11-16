@@ -2,18 +2,14 @@
 
 import { useRef, useState } from "react";
 import {
-  Calendar,
   Check,
   Copy,
   Download,
-  FileText,
-  Hash,
-  Package,
+  QrCode,
   ScanLine,
   ShieldCheck,
-  User,
+  X,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { getCompletedRequestQr } from "@/app/personnel/requests/actions";
 import { requestTypeLabel } from "@/app/personnel/requests/request-types";
@@ -30,13 +26,6 @@ function fmtDate(value: string | null | undefined) {
     day: "numeric",
     timeZone: "Asia/Manila",
   });
-}
-
-function initials(name: string) {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return "—";
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
 interface QrMeta {
@@ -154,15 +143,14 @@ export function RequestQrButton({ requestId }: { requestId: string }) {
 
   return (
     <>
-      <Button
+      <button
         type="button"
-        variant="outline"
-        size="sm"
         onClick={() => void onOpen()}
-        className="h-8 rounded-[4px] px-3.5 text-xs font-semibold"
+        className={qr.trigger}
       >
+        <QrCode size={14} aria-hidden="true" />
         View QR
-      </Button>
+      </button>
       <Dialog
         open={open}
         onOpenChange={(v) => {
@@ -182,92 +170,44 @@ export function RequestQrButton({ requestId }: { requestId: string }) {
                 className={`${qr.record} ${qr.printArea}`}
                 aria-hidden="true"
               >
-                <header className={qr.masthead}>
-                  <div className={qr.mastheadPattern} />
-                  <p className={qr.kicker}>
-                    <span className={qr.kickerDot} />
-                    PGSO · Property &amp; Supply Management
-                  </p>
-                  <div className={qr.mastheadRow}>
-                    <div>
-                      <div className="h-7 w-48 animate-pulse rounded bg-white/25" />
-                      <div className="mt-2 h-4 w-56 animate-pulse rounded bg-white/20" />
-                    </div>
-                    <div className={qr.docBadge}>
-                      <div className="h-5 w-10 animate-pulse rounded bg-white/25" />
-                      <div className="mt-1 h-3 w-14 animate-pulse rounded bg-white/20" />
-                    </div>
+                <header className={qr.header}>
+                  <div className={qr.headerBar}>
+                    <span className="h-5 w-9 animate-pulse rounded bg-navy-100" />
+                    <span className="h-3.5 w-28 animate-pulse rounded bg-navy-100" />
                   </div>
+                  <div className="h-5 w-52 animate-pulse rounded bg-navy-100" />
+                  <div className="mt-2 h-4 w-64 max-w-full animate-pulse rounded bg-navy-100" />
                 </header>
-
-                <div className={qr.receiver}>
-                  <span
-                    className={qr.avatar}
-                    style={{ background: "var(--color-navy-100)" }}
-                  />
-                  <div className={qr.receiverMeta} style={{ flex: 1 }}>
-                    <p className={qr.receiverLabel}>
-                      <User size={11} /> Requested by
-                    </p>
-                    <div className="mt-1 h-5 w-40 animate-pulse rounded bg-navy-100" />
-                    <div className="mt-1 h-3 w-56 animate-pulse rounded bg-navy-100" />
-                  </div>
-                </div>
 
                 <div className={qr.body}>
                   <div className={qr.qrPanel}>
                     <div className={qr.qrFrame}>
-                      <span className={`${qr.tick} ${qr.tickTL}`} />
-                      <span className={`${qr.tick} ${qr.tickTR}`} />
-                      <span className={`${qr.tick} ${qr.tickBL}`} />
-                      <span className={`${qr.tick} ${qr.tickBR}`} />
                       <div
                         className="animate-pulse rounded bg-navy-100"
-                        style={{ width: "11.5rem", height: "11.5rem" }}
+                        style={{ width: "10.5rem", height: "10.5rem" }}
                       />
                     </div>
-                    <p className={qr.scanHint}>
-                      <ScanLine size={13} /> Scan to verify
-                    </p>
-                    <div className="h-5 w-28 animate-pulse rounded bg-navy-100" />
+                    <div className="h-3.5 w-28 animate-pulse rounded bg-navy-100" />
+                    <div className="h-3 w-24 animate-pulse rounded bg-navy-100" />
                   </div>
 
                   <div className={qr.details}>
-                    <p className={qr.detailsTitle}>Completed transaction</p>
-                    {(
-                      [
-                        { icon: FileText, key: "Type" },
-                        { icon: Package, key: "Item" },
-                        { icon: Hash, key: "Quantity" },
-                        { icon: Calendar, key: "Requested" },
-                        { icon: Calendar, key: "Completed" },
-                      ] as const
-                    ).map(({ icon: Icon, key }) => (
-                      <div key={key} className={qr.detailRow}>
-                        <span className={qr.detailIcon}>
-                          <Icon size={15} />
-                        </span>
-                        <div className={qr.detailText} style={{ flex: 1 }}>
-                          <p className={qr.detailKey}>{key}</p>
-                          <div className="mt-1 h-4 w-3/4 animate-pulse rounded bg-navy-100" />
-                        </div>
+                    {Array.from({ length: 5 }).map((_, i) => (
+                      <div key={i} className={qr.detailRow}>
+                        <div className="h-3.5 w-16 animate-pulse rounded bg-navy-100" />
+                        <div className="h-4 w-3/4 animate-pulse rounded bg-navy-100" />
                       </div>
                     ))}
                   </div>
                 </div>
 
-                <div className={qr.trust}>
-                  <div className="h-4 w-4 animate-pulse rounded-full bg-navy-100" />
-                  <div style={{ flex: 1 }}>
-                    <div className="h-3 w-full animate-pulse rounded bg-navy-100" />
-                    <div className="mt-1 h-3 w-2/3 animate-pulse rounded bg-navy-100" />
+                <footer className={qr.footer}>
+                  <div className="h-3.5 w-64 max-w-full animate-pulse rounded bg-navy-100" />
+                  <div className={qr.actions}>
+                    <span className="inline-flex h-8 w-24 animate-pulse rounded-[4px] bg-navy-100" />
+                    <span className="inline-flex h-8 w-28 animate-pulse rounded-[4px] bg-navy-100" />
                   </div>
-                </div>
-
-                <div className={`${qr.actions} ${qr.noPrint}`}>
-                  <span className="inline-flex h-8 w-32 animate-pulse rounded-[4px] bg-navy-100" />
-                  <span className="inline-flex h-8 w-28 animate-pulse rounded-[4px] bg-navy-100" />
-                </div>
+                </footer>
               </article>
             </div>
           ) : error ? (
@@ -276,44 +216,29 @@ export function RequestQrButton({ requestId }: { requestId: string }) {
             </p>
           ) : meta ? (
             <article className={`${qr.record} ${qr.printArea}`} aria-label="Request QR record">
-              <header className={qr.masthead}>
-                <div className={qr.mastheadPattern} aria-hidden="true" />
-                <p className={qr.kicker}>
-                  <span className={qr.kickerDot} aria-hidden="true" />
-                  PGSO · Property &amp; Supply Management
+              <header className={qr.header}>
+                <div className={qr.headerBar}>
+                  <span className={qr.docTag}>REQ</span>
+                  <span className={qr.docNo}>No. {meta.ref}</span>
+                  <button
+                    type="button"
+                    className={qr.closeBtn}
+                    onClick={() => setOpen(false)}
+                    aria-label="Close"
+                    title="Close"
+                  >
+                    <X size={16} aria-hidden="true" />
+                  </button>
+                </div>
+                <h2 className={qr.headerTitle}>
+                  {requestTypeLabel(meta.request_type)}
+                </h2>
+                <p className={qr.headerSub}>
+                  Requested by <strong>{meta.employee_name}</strong> · completed{" "}
+                  {fmtDate(meta.date_resolved)}
+                  {meta.recipient_name ? ` · handled by ${meta.recipient_name}` : ""}
                 </p>
-                <div className={qr.mastheadRow}>
-                  <div>
-                    <h2 className={qr.mastheadTitle}>Request QR Record</h2>
-                    <p className={qr.mastheadSub}>
-                      {requestTypeLabel(meta.request_type)} · Completed{" "}
-                      {fmtDate(meta.date_resolved)}
-                    </p>
-                  </div>
-                  <div className={qr.docBadge}>
-                    <span className={qr.docBadgeKind}>REQ</span>
-                    <span className={qr.docBadgeNo}>{meta.ref}</span>
-                  </div>
-                </div>
               </header>
-
-              <div className={qr.receiver}>
-                <span className={qr.avatar} aria-hidden="true">
-                  {initials(meta.employee_name)}
-                </span>
-                <div className={qr.receiverMeta}>
-                  <p className={qr.receiverLabel}>
-                    <User size={11} aria-hidden="true" /> Requested by
-                  </p>
-                  <p className={qr.receiverName}>{meta.employee_name}</p>
-                  <p className={qr.receiverCap}>
-                    {meta.recipient_name
-                      ? `Handled by ${meta.recipient_name}`
-                      : "Personnel transaction"}
-                    {meta.item_count > 1 ? ` · ${meta.item_count} items` : ""}
-                  </p>
-                </div>
-              </div>
 
               <div className={qr.body}>
                 <div className={qr.qrPanel}>
@@ -323,104 +248,88 @@ export function RequestQrButton({ requestId }: { requestId: string }) {
                       <img
                         src={dataUrl}
                         alt={`QR record for completed ${meta.request_type} ${meta.ref}`}
+                        width={168}
+                        height={168}
                         loading="lazy"
                         decoding="async"
                       />
                     ) : null}
                   </div>
                   <p className={qr.scanHint}>
-                    <ScanLine size={13} aria-hidden="true" /> Scan to verify
+                    <ScanLine size={14} aria-hidden="true" /> Scan to verify
                   </p>
                   <p className={qr.refCode} title={payload}>
-                    REF {meta.ref}
+                    Ref {meta.ref}
                   </p>
                 </div>
 
-                <div className={qr.details}>
-                  <p className={qr.detailsTitle}>Completed transaction</p>
+                <dl className={qr.details}>
                   {(
                     [
-                      { key: "Type", value: requestTypeLabel(meta.request_type) },
                       { key: "Item", value: meta.asset_label?.trim() || "—" },
                       { key: "Quantity", value: String(meta.quantity ?? 1) },
                       ...(meta.from_holder
-                        ? [{ key: "From (previous holder)", value: meta.from_holder }]
+                        ? [{ key: "From", value: meta.from_holder }]
                         : []),
                       ...(meta.transfer_to
-                        ? [{ key: "To (transferred to)", value: meta.transfer_to }]
+                        ? [{ key: "To", value: meta.transfer_to }]
                         : []),
                       { key: "Requested", value: fmtDate(meta.date_requested) },
                       { key: "Completed", value: fmtDate(meta.date_resolved) },
                     ] as const
                   ).map(({ key, value }) => (
                     <div key={key} className={qr.detailRow}>
-                      <span className={qr.detailIcon} aria-hidden="true">
-                        {key === "Item" ? (
-                          <Package size={15} />
-                        ) : key === "Type" ? (
-                          <FileText size={15} />
-                        ) : key === "Requested" ? (
-                          <Calendar size={15} />
-                        ) : (
-                          <Hash size={15} />
-                        )}
-                      </span>
-                      <div className={qr.detailText}>
-                        <p className={qr.detailKey}>{key}</p>
-                        <p className={qr.detailValue}>{value}</p>
-                      </div>
+                      <dt className={qr.detailKey}>{key}</dt>
+                      <dd className={qr.detailValue}>{value}</dd>
                     </div>
                   ))}
                   {meta.lines.length > 1 ? (
                     <div className={qr.detailRow}>
-                      <span className={qr.detailIcon} aria-hidden="true">
-                        <Package size={15} />
-                      </span>
-                      <div className={qr.detailText}>
-                        <p className={qr.detailKey}>Items</p>
-                        <p className={qr.detailValue}>
+                      <dt className={qr.detailKey}>Items</dt>
+                      <dd className={qr.detailValue}>
+                        <span className={qr.detailList}>
                           {meta.lines.map((l, i) => (
-                            <span key={i} style={{ display: "block" }}>
+                            <span key={i}>
                               {l.quantity > 1
                                 ? `${l.description} ×${l.quantity}`
                                 : l.description}
                             </span>
                           ))}
-                        </p>
-                      </div>
+                        </span>
+                      </dd>
                     </div>
                   ) : null}
-                </div>
+                </dl>
               </div>
 
-              <div className={qr.trust}>
-                <ShieldCheck size={16} aria-hidden="true" style={{ flexShrink: 0, marginTop: 1 }} />
-                <p>
-                  <strong>Verified completed request.</strong> This QR encodes the
-                  request type, employee, item, quantity, transfer parties, and
-                  dates only — no cost data.
+              <footer className={qr.footer}>
+                <p className={qr.note}>
+                  <ShieldCheck size={15} aria-hidden="true" />
+                  <span>
+                    <strong>Verified record.</strong> The QR contains the request,
+                    employee, item, quantity, and dates only — no cost data.
+                  </span>
                 </p>
-              </div>
-
-              <div className={`${qr.actions} ${qr.noPrint}`}>
-                {dataUrl ? (
-                  <a
-                    href={dataUrl}
-                    download={`request-${meta.ref}.svg`}
-                    className={qr.btnPrimary}
-                  >
-                    <Download size={15} aria-hidden="true" /> Download QR
-                  </a>
-                ) : null}
-                <button type="button" onClick={() => void copyPayload()} className={qr.btnOutline}>
-                  {copied ? (
-                    <Check size={15} aria-hidden="true" />
-                  ) : (
-                    <Copy size={15} aria-hidden="true" />
-                  )}
-                  {copied ? "Copied!" : "Copy QR data"}
-                </button>
-              </div>
+                <div className={`${qr.actions} ${qr.noPrint}`}>
+                  <button type="button" onClick={() => void copyPayload()} className={qr.btnOutline}>
+                    {copied ? (
+                      <Check size={14} aria-hidden="true" />
+                    ) : (
+                      <Copy size={14} aria-hidden="true" />
+                    )}
+                    {copied ? "Copied" : "Copy data"}
+                  </button>
+                  {dataUrl ? (
+                    <a
+                      href={dataUrl}
+                      download={`request-${meta.ref}.svg`}
+                      className={qr.btnPrimary}
+                    >
+                      <Download size={14} aria-hidden="true" /> Download QR
+                    </a>
+                  ) : null}
+                </div>
+              </footer>
             </article>
           ) : null}
         </DialogContent>

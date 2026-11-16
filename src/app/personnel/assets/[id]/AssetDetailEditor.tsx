@@ -2,7 +2,20 @@
 
 import { useEffect, useMemo, useState, useTransition } from "react";
 import Link from "next/link";
-import { Loader2 } from "lucide-react";
+import {
+  ArrowLeft,
+  ArrowUpRight,
+  Boxes,
+  ClipboardList,
+  Copy,
+  History as HistoryIcon,
+  Loader2,
+  Lock,
+  Pencil,
+  Save,
+  Search,
+  X,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -22,6 +35,7 @@ import { CustomDetailSection } from "../custom-columns";
 import { AssetHistorySection } from "./asset-history";
 import styles from "../../dashboard/page.module.css";
 import assetStyles from "../page.module.css";
+import tabStyles from "../../inspections/air-section.module.css";
 import { cn } from "@/lib/utils";
 
 type EditFieldType = {
@@ -117,6 +131,13 @@ const inputCls = cn(
   "disabled:cursor-not-allowed disabled:opacity-50",
 );
 
+/** 24px yellow action button used across the detail header + forms. */
+const ACTION_BTN = cn(
+  "inline-flex items-center justify-center h-6 gap-1.5 rounded-[4px] border border-yellow-600 bg-yellow-500 px-2.5 text-[11px] font-semibold",
+  "text-navy-900 no-underline opacity-[0.9] transition-colors hover:bg-yellow-400 hover:opacity-100",
+  "disabled:opacity-40"
+);
+
 function fmtEditValue(key: string, value: unknown): string {
   if (value === null || value === undefined) return "";
   if (typeof value === "number") return String(value);
@@ -156,9 +177,48 @@ function statusTone(status: string | null): "ok" | "warn" | "info" {
   return "info";
 }
 
+/**
+ * Display status for the record: an asset with a holder (or no units left)
+ * reads "Assigned", never "Available" — there is nothing left to issue.
+ * Non-available states (maintenance/retired) are shown as stored.
+ */
+function effectiveStatus(asset: UnifiedAssetRow): string | null {
+  const stored = (asset.status ?? "available").trim().toLowerCase();
+  if (stored !== "available") return asset.status;
+  const qty = asset.quantity;
+  if (asset.assigned_to || (typeof qty === "number" && qty <= 0)) {
+    return "assigned";
+  }
+  return asset.status;
+}
+
 function QrCard({ asset }: { asset: UnifiedAssetRow }) {
+  const { toast } = useToast();
+  const code = asset.qr_code ?? asset.account_code ?? asset.id;
+
+  const copyCode = async () => {
+    try {
+      await navigator.clipboard.writeText(code);
+      toast({ title: "Copied", description: "Property number copied to clipboard.", variant: "success" });
+    } catch {
+      toast({ title: "Copy failed", description: "Your browser blocked clipboard access.", variant: "error" });
+    }
+  };
+
   return (
     <div className={assetStyles.qrCard}>
+      <div className={assetStyles.qrCardHead}>
+        <span className={assetStyles.qrLabel}>Scannable tag</span>
+        <button
+          type="button"
+          className={cn(ACTION_BTN, "px-2")}
+          onClick={() => void copyCode()}
+          title="Copy property number"
+        >
+          <Copy size={12} aria-hidden="true" />
+          Copy
+        </button>
+      </div>
       {asset.qr_data_url ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img
@@ -174,9 +234,7 @@ function QrCard({ asset }: { asset: UnifiedAssetRow }) {
         <span className={assetStyles.qrPlaceholder}>No QR code</span>
       )}
       <p className={assetStyles.qrLabel}>Scan for details + history</p>
-      <p className={assetStyles.qrValue}>
-        {asset.qr_code ?? asset.account_code ?? asset.id}
-      </p>
+      <p className={assetStyles.qrValue}>{code}</p>
     </div>
   );
 }
@@ -215,7 +273,26 @@ function DateEditField({ field, asset }: { field: EditFieldType; asset: UnifiedA
   );
 }
 
-function SelectEditField({ field, asset }: { field: EditFieldType; asset: UnifiedAssetRow }) {
+/** Fields that belong to the accountability record once an item is assigned. */
+const LOCKED_WHEN_ASSIGNED = new Set<keyof UnifiedAssetRow>([
+  "quantity",
+  "unit",
+  "status",
+  "end_user",
+]);
+
+function SelectEditField({
+  field,
+  asset,
+  disabled = false,
+  noun = "asset",
+}: {
+  field: EditFieldType;
+  asset: UnifiedAssetRow;
+  disabled?: boolean;
+  /** Record noun shown in placeholders ("asset" / "stock"). */
+  noun?: string;
+}) {
   const { key, label, options } = field;
   const rawValue = asset[key];
   const inputId = `field-${key}`;
@@ -229,12 +306,15 @@ function SelectEditField({ field, asset }: { field: EditFieldType; asset: Unifie
       <Label htmlFor={inputId} className={assetStyles.detailLabel}>
         {label}
       </Label>
-      <Select value={value} onValueChange={setValue}>
-        <SelectTrigger id={inputId} className={inputCls}>
+      <Select value={value} onValueChange={setValue} disabled={disabled}>
+        <SelectTrigger
+          id={inputId}
+          className={cn(inputCls, disabled && "bg-navy-50")}
+        >
           <SelectValue
             placeholder={
               key === "category"
-                ? "Select asset type"
+                ? `Select ${noun} type`
                 : key === "condition"
                   ? "Select condition"
                   : `Select ${label.toLowerCase()}`
@@ -254,14 +334,26 @@ function SelectEditField({ field, asset }: { field: EditFieldType; asset: Unifie
   );
 }
 
-function EditField({ field, asset }: { field: EditFieldType; asset: UnifiedAssetRow }) {
-  const { key, label, type, options } = field;
+function EditField({
+  field,
+  asset,
+  disabled = false,
+  noun = "asset",
+}: {
+  field: EditFieldType;
+  asset: UnifiedAssetRow;
+  disabled?: boolean;
+  /** Record noun shown in placeholders ("asset" / "stock"). */
+  noun?: string;
+}) {
+  const { key, label, type } = field;
   const rawValue = asset[key];
   const inputId = `field-${key}`;
   const commonProps = {
     id: inputId,
     name: key,
     defaultValue: fmtEditValue(key, rawValue),
+    disabled,
   };
 
   if (type === "textarea") {
@@ -270,13 +362,24 @@ function EditField({ field, asset }: { field: EditFieldType; asset: UnifiedAsset
         <Label htmlFor={inputId} className={assetStyles.detailLabel}>
           {label}
         </Label>
-        <textarea {...commonProps} rows={3} className={inputCls} />
+        <textarea
+          {...commonProps}
+          rows={3}
+          className={cn(inputCls, disabled && "bg-navy-50")}
+        />
       </div>
     );
   }
 
   if (type === "select") {
-    return <SelectEditField field={field} asset={asset} />;
+    return (
+      <SelectEditField
+        field={field}
+        asset={asset}
+        disabled={disabled}
+        noun={noun}
+      />
+    );
   }
 
   if (type === "date") {
@@ -295,6 +398,7 @@ function EditField({ field, asset }: { field: EditFieldType; asset: UnifiedAsset
         {...commonProps}
         type={htmlType}
         step={step}
+        className={cn(disabled && "bg-navy-50")}
       />
     </div>
   );
@@ -302,7 +406,8 @@ function EditField({ field, asset }: { field: EditFieldType; asset: UnifiedAsset
 
 function ReadOnlyField({ field, asset }: { field: EditFieldType; asset: UnifiedAssetRow }) {
   const { key, label } = field;
-  const tone = statusTone(asset.status);
+  const statusValue = key === "status" ? effectiveStatus(asset) : null;
+  const tone = statusTone(statusValue);
   const statusClass = assetStyles[`status${tone.charAt(0).toUpperCase() + tone.slice(1)}`];
 
   return (
@@ -311,12 +416,36 @@ function ReadOnlyField({ field, asset }: { field: EditFieldType; asset: UnifiedA
       <span className={assetStyles.detailValue}>
         {key === "status" ? (
           <span className={cn(assetStyles.statusBadge, statusClass)}>
-            {statusLabel(asset[key])}
+            {statusLabel(statusValue)}
           </span>
         ) : (
           fmtDisplayValue(key, asset[key])
         )}
       </span>
+    </div>
+  );
+}
+
+/** Shown when the field-label search matches nothing on this record. */
+function FieldSearchEmpty({
+  query,
+  onClear,
+}: {
+  query: string;
+  onClear: () => void;
+}) {
+  return (
+    <div className={assetStyles.fieldSearchEmpty} role="status">
+      <p className={assetStyles.fieldSearchEmptyText}>
+        No field labels match “{query.trim()}”.
+      </p>
+      <button
+        type="button"
+        className={assetStyles.fieldSearchEmptyClear}
+        onClick={onClear}
+      >
+        Clear search
+      </button>
     </div>
   );
 }
@@ -328,6 +457,7 @@ export function AssetDetailEditor({
   backHref,
   crumbBase,
   history = null,
+  noun = "asset",
 }: {
   asset: UnifiedAssetRow;
   categories: string[];
@@ -339,9 +469,13 @@ export function AssetDetailEditor({
   crumbBase?: string;
   /** Assignment + repair timeline; each event opens its receipt. */
   history?: AssetHistory | null;
+  /** Record noun used in copy ("asset" on the registry, "stock" in stocks). */
+  noun?: string;
 }) {
   const { toast } = useToast();
+  const nounLabel = noun.charAt(0).toUpperCase() + noun.slice(1);
   const [isEditing, setIsEditing] = useState(false);
+  const [tab, setTab] = useState<"information" | "history">("information");
   const [isPending, startTransition] = useTransition();
   // Optimistic overlay: submitted values paint instantly (<100ms feel);
   // rolled back on failure, kept on success. Cleared on record change.
@@ -361,6 +495,32 @@ export function AssetDetailEditor({
     )
   );
 
+  // Field search: filters the labeled inputs/sections in place. Pure client
+  // state — no fetch, no debounce, no stale results. Fields stay mounted so
+  // any in-progress edits survive while filtering.
+  const [fieldQuery, setFieldQuery] = useState("");
+  const fieldNeedle = fieldQuery.trim().toLowerCase();
+  const fieldMatches = useMemo(() => {
+    const perSection = FIELD_SECTIONS.map((s) => {
+      const sectionHit =
+        fieldNeedle !== "" && s.title.toLowerCase().includes(fieldNeedle);
+      const hits = s.fields.map(
+        (f) =>
+          fieldNeedle === "" ||
+          sectionHit ||
+          f.label.toLowerCase().includes(fieldNeedle) ||
+          String(f.key).replace(/_/g, " ").includes(fieldNeedle)
+      );
+      const matched = hits.filter(Boolean).length;
+      return { hits, matched, total: s.fields.length };
+    });
+    return {
+      perSection,
+      total: perSection.reduce((n, s) => n + s.matched, 0),
+      active: fieldNeedle !== "",
+    };
+  }, [fieldNeedle]);
+
   const handleSubmit = (formData: FormData) => {
     // Snapshot submitted values as the optimistic overlay ("" → null matches
     // the server's normalization, so the display converges on save).
@@ -376,7 +536,7 @@ export function AssetDetailEditor({
       if (result.success) {
         toast({
           title: "Success",
-          description: "Asset updated successfully.",
+          description: `${nounLabel} updated successfully.`,
           variant: "success",
         });
         setIsEditing(false);
@@ -409,6 +569,52 @@ export function AssetDetailEditor({
     });
   };
 
+  const displayStatus = effectiveStatus(displayed);
+  const toneKey = statusTone(displayStatus);
+  const statusClass = assetStyles[`status${toneKey.charAt(0).toUpperCase() + toneKey.slice(1)}`];
+  // Once a unit is issued the accountability record owns the quantity, unit,
+  // status and end user — editing them here would desync the PAR/ICS.
+  const assigned = displayStatus === "assigned";
+  const lockField = (key: keyof UnifiedAssetRow) =>
+    assigned && LOCKED_WHEN_ASSIGNED.has(key);
+  const historyCount = history
+    ? history.issuances.length +
+      history.repairs.length +
+      history.requests.length +
+      // A holder with no linked issuance still renders an assignment card.
+      (history.assignedToName && history.issuances.length === 0 ? 1 : 0)
+    : 0;
+  const holderName = history?.assignedToName ?? null;
+  const assignments = history?.issuances ?? [];
+  const assigneeCount = new Set(assignments.map((i) => i.employee_name)).size;
+  const holderNote =
+    holderName === null
+      ? null
+      : history?.assignedToName
+        ? "Current holder of this item"
+        : assigneeCount > 1
+          ? `Most recent of ${assignments.length} assignments · ${assigneeCount} assignees`
+          : assignments.length > 1
+            ? `Most recent of ${assignments.length} assignments`
+            : "Assigned through PAR/ICS";
+  const facts: { label: string; value: string }[] = [
+    {
+      label: "Record created",
+      value: fmtDisplayValue("created_at", displayed.created_at),
+    },
+  ];
+
+  const openHistory = () => {
+    setIsEditing(false);
+    setTab("history");
+    // Wait for the history panel to mount before scrolling to it.
+    window.requestAnimationFrame(() => {
+      document
+        .getElementById("asset-history")
+        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  };
+
   return (
     <section className={styles.section}>
       {crumbBase ? (
@@ -417,128 +623,338 @@ export function AssetDetailEditor({
         </p>
       ) : null}
 
-      <div className={styles.headerRow}>
-        <div>
-          <h1 className={styles.title}>Asset Detail</h1>
-          <p className={styles.subtitle}>
-            {[displayed.article ?? displayed.description ?? "Asset", displayed.account_code]
-              .filter(Boolean)
-              .join(" — ")}
-          </p>
+      {/* ── Identity header ─────────────────────────────────────────── */}
+      <header className={assetStyles.detailHero}>
+        <div className={assetStyles.detailHeroMain}>
+          <span className={assetStyles.detailHeroIcon} aria-hidden="true">
+            <Boxes size={22} />
+          </span>
+          <div className={assetStyles.detailHeroText}>
+            <div className={assetStyles.detailHeroTitleRow}>
+              <h1 className={assetStyles.detailHeroTitle}>
+                {displayed.article ?? displayed.description ?? nounLabel}
+              </h1>
+              <span className={cn(assetStyles.statusBadge, statusClass)}>
+                {statusLabel(displayStatus)}
+              </span>
+            </div>
+            <div className={assetStyles.detailHeroActions}>
+              {!isEditing ? (
+                <Link href={backHref ?? "/personnel/assets"} className={ACTION_BTN}>
+                  <ArrowLeft size={13} aria-hidden="true" />
+                  Back
+                </Link>
+              ) : null}
+              {!readOnly &&
+                (isEditing ? (
+                  <Button type="button" variant="primary" className={ACTION_BTN} onClick={() => setIsEditing(false)}>
+                    <X size={13} aria-hidden="true" />
+                    Cancel
+                  </Button>
+                ) : (
+                  <Button type="button" variant="primary" className={ACTION_BTN} onClick={() => setIsEditing(true)}>
+                    <Pencil size={13} aria-hidden="true" />
+                    Edit {noun}
+                  </Button>
+                ))}
+            </div>
+          </div>
         </div>
-        <div className={styles.actions}>
-          {!isEditing && (
-            <Link href={backHref ?? "/personnel/assets"}>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="h-8 gap-2 rounded-[4px] px-3.5 text-xs font-semibold"
+
+        <dl className={assetStyles.detailStats}>
+          {[
+            { label: "Code", value: displayed.account_code },
+            {
+              label: "Type",
+              value: displayed.category ? statusLabel(displayed.category) : null,
+            },
+            {
+              label: "Quantity",
+              value:
+                displayed.quantity !== null && displayed.quantity !== undefined
+                  ? `${displayed.quantity}${displayed.unit ? ` ${displayed.unit}` : ""}`
+                  : null,
+            },
+            { label: "Property", value: displayed.qr_code },
+          ].map((stat) => (
+            <div key={stat.label} className={assetStyles.detailStat}>
+              <dt className={assetStyles.detailStatLabel}>{stat.label}</dt>
+              <dd
+                className={assetStyles.detailStatValue}
+                title={stat.value ?? undefined}
               >
-                Back to Assets
-              </Button>
-            </Link>
-          )}
-          {!readOnly &&
-            (isEditing ? (
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={() => setIsEditing(false)}
-                className="h-8 gap-2 rounded-[4px] px-3.5 text-xs font-semibold"
-              >
-                Cancel
-              </Button>
-            ) : (
-              <Button
-                type="button"
-                variant="primary"
-                size="sm"
-                onClick={() => setIsEditing(true)}
-                className="h-8 gap-2 rounded-[4px] px-3.5 text-xs font-semibold"
-              >
-                Edit
-              </Button>
-            ))}
+                {stat.value ?? "—"}
+              </dd>
+            </div>
+          ))}
+        </dl>
+      </header>
+
+      {/* ── Tabs ────────────────────────────────────────────────────── */}
+      <div className={assetStyles.detailTabsBar}>
+        <div className={tabStyles.tabs} role="tablist" aria-label={`${nounLabel} sections`}>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === "information"}
+            data-active={tab === "information"}
+            className={tabStyles.tab}
+            onClick={() => setTab("information")}
+          >
+            <ClipboardList size={13} aria-hidden="true" className="mr-1.5" />
+            Information
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === "history"}
+            data-active={tab === "history"}
+            className={tabStyles.tab}
+            disabled={isEditing}
+            title={isEditing ? "Save or cancel your edits first" : undefined}
+            onClick={() => setTab("history")}
+          >
+            <HistoryIcon size={13} aria-hidden="true" className="mr-1.5" />
+            History
+            <span className={assetStyles.tabCount}>{historyCount}</span>
+          </button>
+        </div>
+        <div className={assetStyles.tabTools}>
+          {fieldMatches.active && tab === "information" ? (
+            <span className={assetStyles.tabMeta}>
+              {fieldMatches.total} field{fieldMatches.total === 1 ? "" : "s"}{" "}
+              match “{fieldQuery.trim()}”
+            </span>
+          ) : isEditing ? (
+            <span className={assetStyles.tabMeta}>
+              Editing — changes apply to every record view
+            </span>
+          ) : null}
+          {tab === "information" ? (
+            <div className={assetStyles.fieldSearch}>
+              <Search
+                size={13}
+                className={assetStyles.fieldSearchIcon}
+                aria-hidden="true"
+              />
+              <Input
+                type="search"
+                value={fieldQuery}
+                onChange={(e) => setFieldQuery(e.target.value)}
+                placeholder="Find a field — e.g. supplier, cost, plate…"
+                aria-label={`Search ${noun} fields by label`}
+                className={assetStyles.fieldSearchInput}
+              />
+              {fieldQuery !== "" ? (
+                <button
+                  type="button"
+                  className={assetStyles.fieldSearchClear}
+                  onClick={() => setFieldQuery("")}
+                  aria-label="Clear field search"
+                >
+                  <X size={12} aria-hidden="true" />
+                </button>
+              ) : null}
+            </div>
+          ) : null}
         </div>
       </div>
 
-      <Card className={styles.panel}>
-        {isEditing ? (
-          <>
-            <form id="asset-edit-form" action={handleSubmit}>
-              <input type="hidden" name="id" value={asset.id} />
-              <input type="hidden" name="source" value={asset.source} />
-              {sections.map((fields, i) => (
-                <div key={i} className="mb-6 last:mb-0">
-                  <h3 className={assetStyles.sectionTitle}>{FIELD_SECTIONS[i].title}</h3>
-                  <div className={assetStyles.detailFields}>
-                    {fields.map((f) => (
-                      <EditField key={f.key} field={f} asset={displayed} />
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </form>
-            <div className="mt-6">
-              <CustomDetailSection row={displayed} readOnly={readOnly} editMode />
-            </div>
-            <div className="mt-4 flex justify-end gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => setIsEditing(false)}
-                className="h-8 gap-2 rounded-[4px] px-3.5 text-xs font-semibold"
-              >
-                Cancel
-              </Button>
-              <Button
-                type="submit"
-                form="asset-edit-form"
-                variant="primary"
-                size="sm"
-                disabled={isPending}
-                aria-busy={isPending}
-                className="h-8 gap-2 rounded-[4px] px-3.5 text-xs font-semibold"
-              >
-                {isPending ? (
-                  <>
-                    <Loader2 className="size-4 animate-spin" />
-                    Saving…
-                  </>
-                ) : (
-                  "Save All Changes"
-                )}
-              </Button>
-            </div>
-          </>
-        ) : (
-          <div className={assetStyles.detailGrid}>
-            <QrCard asset={displayed} />
-            <div className={assetStyles.detailFields}>
-              {sections.map((fields, i) => (
-                <div key={i} className="mb-6 last:mb-0">
-                  <h3 className={assetStyles.sectionTitle}>{FIELD_SECTIONS[i].title}</h3>
-                  <div className={assetStyles.detailFields}>
-                    {fields.map((f) => (
-                      <ReadOnlyField key={f.key} field={f} asset={displayed} />
-                    ))}
-                  </div>
-                </div>
-              ))}
-              <CustomDetailSection row={displayed} readOnly={readOnly} />
-            </div>
-          </div>
-        )}
-      </Card>
-
-      {history ? (
-        <div id="asset-history" style={{ marginTop: "1.25rem" }}>
-          <AssetHistorySection asset={displayed} history={history} />
+      {tab === "history" ? (
+        <div id="asset-history" className={assetStyles.tabPanel}>
+          {history ? (
+            <AssetHistorySection asset={displayed} history={history} embedded noun={noun} />
+          ) : (
+            <Card className={styles.panel}>
+              <p className={styles.panelSub}>No history available for this {noun}.</p>
+            </Card>
+          )}
         </div>
-      ) : null}
+      ) : (
+        <Card className={cn(styles.panel, assetStyles.detailPanel)}>
+          {isEditing ? (
+            <>
+              <form id="asset-edit-form" action={handleSubmit}>
+                <input type="hidden" name="id" value={asset.id} />
+                <input type="hidden" name="source" value={asset.source} />
+                {assigned ? (
+                  <p className={assetStyles.lockNotice}>
+                    <Lock size={13} aria-hidden="true" />
+                    <span>
+                      This item is <strong>assigned</strong>. Quantity, unit,
+                      status, and end user are locked to the issued PAR/ICS and
+                      cannot be edited here.
+                    </span>
+                  </p>
+                ) : null}
+                {fieldMatches.active && fieldMatches.total === 0 ? (
+                  <FieldSearchEmpty
+                    query={fieldQuery}
+                    onClear={() => setFieldQuery("")}
+                  />
+                ) : null}
+                {sections.map((fields, i) => {
+                  const match = fieldMatches.perSection[i];
+                  return (
+                    <div
+                      key={i}
+                      className="mb-6 last:mb-0"
+                      hidden={match.matched === 0}
+                    >
+                      <h3 className={assetStyles.sectionTitle}>
+                        {FIELD_SECTIONS[i].title}
+                      </h3>
+                      <div className={assetStyles.detailFields}>
+                        {fields.map((f, idx) => (
+                          <div
+                            key={f.key}
+                            style={
+                              match.hits[idx]
+                                ? { display: "contents" }
+                                : { display: "none" }
+                            }
+                          >
+                            <EditField
+                              field={f}
+                              asset={displayed}
+                              disabled={lockField(f.key)}
+                              noun={noun}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </form>
+              <div className="mt-6">
+                <CustomDetailSection row={displayed} readOnly={readOnly} editMode searchNeedle={fieldQuery} />
+              </div>
+              <div className={assetStyles.editActions}>
+                <Button type="button" variant="outline" className={ACTION_BTN} onClick={() => setIsEditing(false)}>
+                  <X size={13} aria-hidden="true" />
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  form="asset-edit-form"
+                  variant="primary"
+                  disabled={isPending}
+                  aria-busy={isPending}
+                  className={ACTION_BTN}
+                >
+                  {isPending ? (
+                    <>
+                      <Loader2 className="size-3.5 animate-spin" />
+                      Saving…
+                    </>
+                  ) : (
+                    <>
+                      <Save size={13} aria-hidden="true" />
+                      Save changes
+                    </>
+                  )}
+                </Button>
+              </div>
+            </>
+          ) : (
+            <div className={assetStyles.infoLayout}>
+              <aside className={assetStyles.infoAside}>
+                <QrCard asset={displayed} />
+              </aside>
+
+              <div className={assetStyles.infoMain}>
+                <button
+                  type="button"
+                  className={assetStyles.factsBanner}
+                  onClick={openHistory}
+                  aria-label="View assignment history"
+                >
+                  <span className={assetStyles.factsBannerMain}>
+                    <span className={assetStyles.factsKicker}>
+                      Accountability
+                    </span>
+                    {holderName ? (
+                      <>
+                        <span className={assetStyles.factsHolder}>
+                          {holderName}
+                        </span>
+                        {holderNote ? (
+                          <span className={assetStyles.factsHolderNote}>
+                            {holderNote}
+                          </span>
+                        ) : null}
+                      </>
+                    ) : null}
+                  </span>
+
+                  <span className={assetStyles.factsBannerMeta}>
+                    {facts.map((fact) => (
+                      <span key={fact.label} className={assetStyles.factsMetaItem}>
+                        <span className={assetStyles.factsMetaLabel}>
+                          {fact.label}
+                        </span>
+                        <span className={assetStyles.factsMetaValue}>
+                          {fact.value}
+                        </span>
+                      </span>
+                    ))}
+                  </span>
+
+                  <span className={assetStyles.factsBannerCta}>
+                    <HistoryIcon size={13} aria-hidden="true" />
+                    View history
+                    {historyCount > 0 ? (
+                      <span className={assetStyles.factsCtaCount}>
+                        {historyCount}
+                      </span>
+                    ) : null}
+                    <ArrowUpRight size={12} aria-hidden="true" />
+                  </span>
+                </button>
+
+                {fieldMatches.active && fieldMatches.total === 0 ? (
+                  <FieldSearchEmpty
+                    query={fieldQuery}
+                    onClear={() => setFieldQuery("")}
+                  />
+                ) : null}
+                {sections.map((fields, i) => {
+                  const match = fieldMatches.perSection[i];
+                  if (match.matched === 0) return null;
+                  return (
+                    <section key={i} className={assetStyles.infoSection}>
+                      <div className={assetStyles.infoSectionHead}>
+                        <h2 className={assetStyles.infoSectionTitle}>
+                          {FIELD_SECTIONS[i].title}
+                        </h2>
+                        <span className={assetStyles.infoSectionCount}>
+                          {fieldMatches.active
+                            ? `${match.matched} of ${match.total}`
+                            : match.total}{" "}
+                          {match.total === 1 ? "field" : "fields"}
+                        </span>
+                      </div>
+                      <div className={assetStyles.detailFields}>
+                        {fields.map((f, idx) =>
+                          match.hits[idx] ? (
+                            <ReadOnlyField key={f.key} field={f} asset={displayed} />
+                          ) : null
+                        )}
+                      </div>
+                    </section>
+                  );
+                })}
+                <CustomDetailSection
+                  row={displayed}
+                  readOnly={readOnly}
+                  searchNeedle={fieldQuery}
+                />
+              </div>
+            </div>
+          )}
+        </Card>
+      )}
     </section>
   );
 }

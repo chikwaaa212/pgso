@@ -450,11 +450,18 @@
 
 /* ─── Print ─────────────────────────────────────────────────────────────── */
 
+/* Zero the page margin (suppresses the browser's date/URL header + footer
+   boxes) and provide the gutter as padding on the page wrapper instead. */
+@page {
+  size: A4 portrait;
+  margin: 0;
+}
+
 @media print {
   .page {
     background-color: #fff;
     min-height: auto;
-    padding: 0;
+    padding: 10mm;
     display: block;
   }
 

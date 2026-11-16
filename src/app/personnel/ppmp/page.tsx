@@ -1,10 +1,22 @@
 "use client";
 
-import { useState, useRef, useTransition } from "react";
+import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Loader2 } from "lucide-react";
-import { Card } from "@/components/ui/card";
+import {
+  ArrowRight,
+  ChartColumn,
+  CheckCircle2,
+  Clock3,
+  FileSpreadsheet,
+  FileText,
+  Layers3,
+  Loader2,
+  Sparkles,
+  Upload,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { PageHeader } from "@/components/personnel/PageHeader";
+import { SummaryTiles } from "@/components/personnel/SummaryTiles";
 import {
   Dialog,
   DialogContent,
@@ -13,26 +25,86 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { useToast } from "@/components/ui/toaster";
-import { importPpmpFromExcel, type ImportPpmpState } from "./actions";
-import { cn } from "@/lib/utils";
+import { listPpmpFiles, importPpmpFromExcel, type ImportPpmpState, type PpmpFileRow } from "./actions";
+import styles from "./page.module.css";
 
-const inputCls = cn(
-  "w-full min-w-0 rounded-md border border-navy-200 bg-transparent px-3 py-2 text-sm text-navy-900",
-  "focus-visible:border-navy-600 focus-visible:ring-navy-600/50 focus-visible:ring-[3px]",
-  "disabled:cursor-not-allowed disabled:opacity-50"
-);
+/** Shared shape for the 24px yellow action buttons used across Personnel. */
+const YELLOW_BTN = "h-6 gap-1.5 rounded-[4px] px-3 text-xs font-semibold";
+
+const MANILA = "Asia/Manila";
+
+function fmtDate(iso: string | null) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleDateString("en-PH", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    timeZone: MANILA,
+  });
+}
+
+function relTime(iso: string | null) {
+  if (!iso) return "—";
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return "—";
+  const diff = Date.now() - then;
+  if (diff < 60_000) return "just now";
+  const mins = Math.floor(diff / 60_000);
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  const weeks = Math.floor(days / 7);
+  if (weeks < 5) return `${weeks}w ago`;
+  return fmtDate(iso);
+}
+
+function fmtSize(bytes: number | null) {
+  if (bytes === null || bytes === undefined) return "—";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+const STEPS = [
+  {
+    title: "Upload the workbook",
+    text: "Import the agency's PPMP .xlsx. Sheets, header rows, and the fiscal year are detected automatically.",
+    icon: Upload,
+  },
+  {
+    title: "Validate & analyze",
+    text: "Confirm the detected structure, then compare categories, quantities, and prices across fiscal years.",
+    icon: ChartColumn,
+  },
+  {
+    title: "Plan the next year",
+    text: "Build a forecast draft with growth rules and a budget ceiling, then export it back to Excel.",
+    icon: Sparkles,
+  },
+] as const;
 
 export default function PpmpPage() {
   const [open, setOpen] = useState(false);
   const [pending, startTransition] = useTransition();
   const [result, setResult] = useState<ImportPpmpState | null>(null);
   const [fileName, setFileName] = useState("");
+  const [files, setFiles] = useState<PpmpFileRow[] | null>(null);
   const formRef = useRef<HTMLFormElement>(null);
   const { toast } = useToast();
   const router = useRouter();
+
+  const loadFiles = useCallback(() => {
+    void listPpmpFiles().then(setFiles);
+  }, []);
+
+  useEffect(() => {
+    loadFiles();
+  }, [loadFiles]);
 
   function submit(formData: FormData) {
     setResult(null);
@@ -41,48 +113,293 @@ export default function PpmpPage() {
       setResult(res);
       if (res.success) {
         toast({
-          title: "Import complete",
-          description: `${res.imported ?? 0} row(s) imported.`,
+          title: res.duplicate ? "Workbook already imported" : "Import complete",
+          description: res.duplicate
+            ? "The same file is already in your library."
+            : `${res.imported ?? 0} row(s) imported.`,
           variant: "success",
         });
         setOpen(false);
         setFileName("");
         formRef.current?.reset();
+        loadFiles();
       }
     });
   }
 
+  const rows = files ?? [];
+  const totalRows = rows.reduce((sum, f) => sum + (f.row_count ?? 0), 0);
+  const fiscalYears = new Set(
+    rows
+      .map((f) => f.fiscal_year)
+      .filter((year): year is number => typeof year === "number")
+  );
+  const latest = rows[0] ?? null;
+
+  const tiles = [
+    {
+      label: "Workbooks",
+      value: files === null ? "—" : rows.length.toLocaleString("en-PH"),
+      hint: "Uploaded PPMP files",
+      icon: FileSpreadsheet,
+      tone: "info" as const,
+    },
+    {
+      label: "Rows ready",
+      value: files === null ? "—" : totalRows.toLocaleString("en-PH"),
+      hint: "Parsed line items for analysis",
+      icon: Layers3,
+      tone: "ok" as const,
+    },
+    {
+      label: "Fiscal years",
+      value: files === null ? "—" : fiscalYears.size.toLocaleString("en-PH"),
+      hint: "Covered by your workbooks",
+      icon: ChartColumn,
+      tone: "warn" as const,
+    },
+    {
+      label: "Last upload",
+      value: files === null ? "—" : latest ? relTime(latest.created_at) : "None yet",
+      hint: latest ? fmtDate(latest.created_at) : "Import a workbook to begin",
+      icon: Clock3,
+      tone: "neutral" as const,
+    },
+  ];
+
   return (
-    <section>
-      <Card className="mt-4 p-6">
-        <h2 className="text-lg font-semibold">PPMP Import</h2>
-        <p className="text-sm text-zinc-600 mt-1">
-          Upload an Excel file to import PPMP records.
-        </p>
-        <Button type="button" className="mt-4" onClick={() => setOpen(true)}>
-          Import Excel
-        </Button>
-      </Card>
+    <section className={styles.page}>
+      <PageHeader
+        eyebrow="Procurement planning"
+        title="PPMP workspace"
+        subtitle="Turn the agency's PPMP workbook into decisions — validate what you uploaded, compare fiscal years, and build next year's procurement plan in one place."
+        meta={
+          files === null
+            ? "Loading your workspace…"
+            : `${rows.length} workbook${rows.length === 1 ? "" : "s"} · ${totalRows.toLocaleString("en-PH")} rows ready`
+        }
+        actions={
+          <Button
+            type="button"
+            variant="warning"
+            className={YELLOW_BTN}
+            onClick={() => setOpen(true)}
+          >
+            <Upload size={13} aria-hidden="true" />
+            Import Excel
+          </Button>
+        }
+      />
 
-      <Card className="mt-4 p-6">
-        <h2 className="text-lg font-semibold">PPMP Analytics</h2>
-        <p className="text-sm text-zinc-600 mt-1">
-          Select uploaded workbooks, validate their structure, and compare them across fiscal years.
-        </p>
-        <Button type="button" className="mt-4" onClick={() => router.push("/personnel/ppmp/analytics")}>
-          Open analytics
-        </Button>
-      </Card>
+      <SummaryTiles tiles={tiles} ariaLabel="PPMP workspace summary" />
 
-      <Card className="mt-4 p-6">
-        <h2 className="text-lg font-semibold">PPMP Planning</h2>
-        <p className="text-sm text-zinc-600 mt-1">
-          Build a forward-looking draft for any future fiscal year: forecast ranges, PPMP table, and Excel export.
-        </p>
-        <Button type="button" className="mt-4" onClick={() => router.push("/personnel/ppmp/planning")}>
-          Open planning
-        </Button>
-      </Card>
+      <div className={styles.flow} aria-label="How the PPMP workspace works">
+        {STEPS.map((step, i) => {
+          const Icon = step.icon;
+          return (
+            <div key={step.title} className={styles.flowStep}>
+              <span className={styles.flowIndex} aria-hidden="true">
+                {String(i + 1).padStart(2, "0")}
+              </span>
+              <span className={styles.flowIcon} aria-hidden="true">
+                <Icon size={16} />
+              </span>
+              <div className={styles.flowBody}>
+                <p className={styles.flowTitle}>{step.title}</p>
+                <p className={styles.flowText}>{step.text}</p>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className={styles.grid}>
+        <div className={styles.tools}>
+          <article className={styles.tool} data-accent="blue">
+            <div className={styles.toolHead}>
+              <span className={styles.toolIcon} aria-hidden="true">
+                <ChartColumn size={19} />
+              </span>
+              <div className={styles.toolHeading}>
+                <div className={styles.toolTitleRow}>
+                  <h2 className={styles.toolTitle}>PPMP analytics</h2>
+                  <span className={styles.toolBadge} data-tone="info">
+                    Compare
+                  </span>
+                </div>
+                <p className={styles.toolText}>
+                  Choose up to five workbooks and see how procurement has moved
+                  — total cost, item counts, and year-over-year changes.
+                </p>
+              </div>
+            </div>
+            <ul className={styles.toolList}>
+              <li>
+                <CheckCircle2 size={13} aria-hidden="true" />
+                Structure validation before every run
+              </li>
+              <li>
+                <CheckCircle2 size={13} aria-hidden="true" />
+                Cross-year comparison with clean totals
+              </li>
+              <li>
+                <CheckCircle2 size={13} aria-hidden="true" />
+                Category and item-level breakdowns
+              </li>
+            </ul>
+            <div className={styles.toolFoot}>
+              <span className={styles.toolHint}>
+                {files === null
+                  ? "Checking your library…"
+                  : rows.length === 0
+                    ? "Add a workbook to unlock analysis"
+                    : `${rows.length} workbook${rows.length === 1 ? "" : "s"} in your library`}
+              </span>
+              <Button
+                type="button"
+                variant="warning"
+                className={YELLOW_BTN}
+                onClick={() => router.push("/personnel/ppmp/analytics")}
+              >
+                Open analytics
+                <ArrowRight size={13} aria-hidden="true" />
+              </Button>
+            </div>
+          </article>
+
+          <article className={styles.tool} data-accent="amber">
+            <div className={styles.toolHead}>
+              <span className={styles.toolIcon} aria-hidden="true">
+                <Sparkles size={19} />
+              </span>
+              <div className={styles.toolHeading}>
+                <div className={styles.toolTitleRow}>
+                  <h2 className={styles.toolTitle}>PPMP planning</h2>
+                  <span className={styles.toolBadge} data-tone="warn">
+                    Forecast
+                  </span>
+                </div>
+                <p className={styles.toolText}>
+                  Draft next fiscal year’s PPMP using your own history, growth
+                  assumptions, and a budget ceiling you control.
+                </p>
+              </div>
+            </div>
+            <ul className={styles.toolList}>
+              <li>
+                <CheckCircle2 size={13} aria-hidden="true" />
+                Growth and price-adjustment methods
+              </li>
+              <li>
+                <CheckCircle2 size={13} aria-hidden="true" />
+                Ceiling-aware recommendations
+              </li>
+              <li>
+                <CheckCircle2 size={13} aria-hidden="true" />
+                Export the draft back to Excel
+              </li>
+            </ul>
+            <div className={styles.toolFoot}>
+              <span className={styles.toolHint}>
+                Plan any future fiscal year
+              </span>
+              <Button
+                type="button"
+                variant="warning"
+                className={YELLOW_BTN}
+                onClick={() => router.push("/personnel/ppmp/planning")}
+              >
+                Open planning
+                <ArrowRight size={13} aria-hidden="true" />
+              </Button>
+            </div>
+          </article>
+        </div>
+
+        <aside className={styles.library} aria-label="Recent PPMP workbooks">
+          <div className={styles.libraryHead}>
+            <div>
+              <h2 className={styles.libraryTitle}>Recent workbooks</h2>
+              <p className={styles.librarySub}>
+                Your latest PPMP uploads, newest first.
+              </p>
+            </div>
+            <span className={styles.libraryCount} aria-hidden="true">
+              {files === null ? "…" : rows.length}
+            </span>
+          </div>
+
+          {files === null ? (
+            <div className={styles.fileList} aria-busy="true">
+              {Array.from({ length: 3 }).map((_, i) => (
+                <div key={i} className={styles.fileSkeleton} aria-hidden="true">
+                  <span className={styles.fileSkeletonIcon} />
+                  <div className={styles.fileSkeletonBody}>
+                    <span className={styles.fileSkeletonLine} />
+                    <span className={styles.fileSkeletonMeta} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : rows.length === 0 ? (
+            <div className={styles.empty}>
+              <span className={styles.emptyIcon} aria-hidden="true">
+                <FileText size={20} />
+              </span>
+              <p className={styles.emptyTitle}>No workbooks yet</p>
+              <p className={styles.emptyText}>
+                Import your first PPMP Excel file to unlock analytics and
+                planning.
+              </p>
+              <Button
+                type="button"
+                variant="warning"
+                className={YELLOW_BTN}
+                onClick={() => setOpen(true)}
+              >
+                <Upload size={13} aria-hidden="true" />
+                Import Excel
+              </Button>
+            </div>
+          ) : (
+            <ul className={styles.fileList}>
+              {rows.slice(0, 5).map((file) => (
+                <li key={file.id} className={styles.fileRow}>
+                  <span className={styles.fileIcon} aria-hidden="true">
+                    <FileSpreadsheet size={15} />
+                  </span>
+                  <div className={styles.fileBody}>
+                    <p className={styles.fileName} title={file.filename}>
+                      {file.filename}
+                    </p>
+                    <p className={styles.fileMeta}>
+                      {file.fiscal_year ? `FY ${file.fiscal_year}` : "FY unknown"}
+                      <span aria-hidden="true">·</span>
+                      {(file.row_count ?? 0).toLocaleString("en-PH")} rows
+                      <span aria-hidden="true">·</span>
+                      {fmtSize(file.file_size)}
+                    </p>
+                  </div>
+                  <span className={styles.fileDate} title={fmtDate(file.created_at)}>
+                    {relTime(file.created_at)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {rows.length > 0 ? (
+            <button
+              type="button"
+              className={styles.libraryLink}
+              onClick={() => router.push("/personnel/ppmp/analytics")}
+            >
+              Compare these workbooks
+              <ArrowRight size={13} aria-hidden="true" />
+            </button>
+          ) : null}
+        </aside>
+      </div>
 
       <Dialog
         open={open}
@@ -98,47 +415,71 @@ export default function PpmpPage() {
           <DialogHeader>
             <DialogTitle>Import PPMP from Excel</DialogTitle>
             <DialogDescription>
-              Upload the PPMP Excel file. Only .xlsx files are accepted (max 10 MB).
+              Upload the PPMP workbook. We read the sheets, header rows, and
+              fiscal year for you — only .xlsx files are accepted (max 10 MB).
             </DialogDescription>
           </DialogHeader>
 
-          <form ref={formRef} action={submit} className="mt-3 grid gap-3">
-            <div className="grid gap-1.5">
-              <Label htmlFor="ppmp-import-file">Upload file</Label>
-              <Input
-                id="ppmp-import-file"
+          <form ref={formRef} action={submit} className={styles.form}>
+            <label className={styles.dropzone} data-has-file={fileName ? "true" : "false"}>
+              <input
                 name="file"
                 type="file"
-                accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 required
-                className={inputCls}
+                className={styles.fileInput}
                 onChange={(e) => setFileName(e.target.files?.[0]?.name ?? "")}
               />
-              {fileName ? <p className="text-xs text-navy-600">Selected: {fileName}</p> : null}
-              <p className="text-xs text-zinc-500">.xlsx only · max 10 MB.</p>
-            </div>
+              <span className={styles.dropIcon} aria-hidden="true">
+                {fileName ? <FileSpreadsheet size={20} /> : <Upload size={20} />}
+              </span>
+              <span className={styles.dropTitle}>
+                {fileName || "Choose an .xlsx workbook"}
+              </span>
+              <span className={styles.dropHint}>
+                {fileName ? "Click to replace the selected file" : ".xlsx only · up to 10 MB"}
+              </span>
+            </label>
 
             {result?.error ? (
-              <p role="alert" className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800">
+              <p role="alert" className={styles.alertError}>
                 {result.error}
               </p>
             ) : null}
             {result?.success ? (
-              <div className="rounded-md border border-green-300 bg-green-50 px-3 py-2 text-sm text-green-900">
-                <p className="font-semibold">
-                  {result.imported ?? 0} row(s) imported
+              <div className={styles.alertSuccess}>
+                <p className={styles.alertTitle}>
+                  {result.duplicate
+                    ? "This workbook is already in your library"
+                    : `${result.imported ?? 0} row(s) imported`}
+                </p>
+                <p className={styles.alertText}>
+                  {result.duplicate
+                    ? "No duplicate copy was stored."
+                    : "Your library is up to date."}
                 </p>
               </div>
             ) : null}
 
             <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setOpen(false)} disabled={pending}>
+              <Button
+                type="button"
+                variant="outline"
+                className={YELLOW_BTN}
+                onClick={() => setOpen(false)}
+                disabled={pending}
+              >
                 {result?.success ? "Close" : "Cancel"}
               </Button>
-              <Button type="submit" disabled={pending}>
+              <Button
+                type="submit"
+                variant="warning"
+                className={YELLOW_BTN}
+                disabled={pending}
+              >
                 {pending ? (
                   <>
-                    <Loader2 className="mr-1 size-4 animate-spin" />
+                    <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
                     Importing…
                   </>
                 ) : (

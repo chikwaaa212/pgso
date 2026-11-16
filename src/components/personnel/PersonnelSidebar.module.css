@@ -51,26 +51,113 @@
 .nav {
   display: flex;
   flex-direction: column;
-  gap: 1.25rem;
+  gap: 1.5rem;
+}
+
+/* Dashboard sits above the grouped modules as the rail's entry point. */
+.nav > .link {
+  padding-block: 0.5rem;
 }
 
 .group {
   display: flex;
   flex-direction: column;
   gap: 0.125rem;
+  padding-top: 0.875rem;
+  border-top: 1px solid var(--color-navy-100);
 }
 
-.groupTitle {
-  margin: 0 0 0.25rem;
-  padding: 0 0.625rem;
+.group:first-of-type {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.groupHeader {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  width: 100%;
+  margin: 0 0 0.375rem;
+  padding: 0.1875rem 0.625rem;
+  font-family: inherit;
   font-size: 0.6875rem;
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+  text-align: left;
   color: var(--color-navy-500);
+  background: transparent;
+  border: 0;
+  border-radius: 0.375rem;
+  cursor: pointer;
+}
+
+.groupHeader:hover {
+  color: var(--color-navy-800);
+  background-color: var(--color-navy-100);
+}
+
+.groupHeader:focus-visible {
+  outline: 2px solid var(--color-navy-900);
+  outline-offset: 1px;
+}
+
+.group[data-active="true"] > .groupHeader {
+  color: var(--color-navy-900);
+}
+
+.groupIcon {
+  flex-shrink: 0;
+  opacity: 0.8;
+}
+
+.groupTitle {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.groupBadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1rem;
+  height: 1rem;
+  padding-inline: 0.25rem;
+  font-size: 0.625rem;
+  font-weight: 700;
+  letter-spacing: 0;
+  color: var(--color-navy-700);
+  background-color: var(--color-navy-100);
+  border-radius: 9999px;
+  flex-shrink: 0;
+}
+
+.group[data-active="true"] > .groupHeader .groupBadge {
+  color: var(--color-white);
+  background-color: var(--color-navy-700);
+}
+
+.groupChevron {
+  margin-left: auto;
+  flex-shrink: 0;
+  opacity: 0.55;
+  transition: transform 150ms ease;
+}
+
+.groupChevron[data-open="false"] {
+  transform: rotate(-90deg);
+}
+
+.groupLinks {
+  display: flex;
+  flex-direction: column;
+  gap: 0.0625rem;
 }
 
 .link {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 0.625rem;
@@ -97,6 +184,19 @@
   color: var(--color-navy-900);
   background-color: var(--color-yellow-500);
   font-weight: 600;
+}
+
+/* Small rail marker so the current section reads at a glance. */
+.link[data-active="true"]::before {
+  content: "";
+  position: absolute;
+  left: 0.125rem;
+  top: 50%;
+  width: 0.1875rem;
+  height: 1rem;
+  transform: translateY(-50%);
+  background-color: var(--color-navy-900);
+  border-radius: 9999px;
 }
 
 .icon {

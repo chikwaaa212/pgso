@@ -3,7 +3,10 @@
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 import receiptStyles from "@/app/personnel/inspections/components/receipt.module.css";
+import styles from "@/app/personnel/deliveries/delivery-receipt.module.css";
 import type { RepairRow } from "./actions";
+
+type Tone = "ok" | "warn" | "info" | "bad";
 
 function fmtDate(value: string | null | undefined) {
   if (!value) return "—";
@@ -26,22 +29,28 @@ function fmtCurrency(value: number | null) {
   }).format(value);
 }
 
-function statusTone(status: string | null) {
-  if (status === "completed") return "ok" as const;
-  if (status === "in_progress") return "info" as const;
-  return "warn" as const;
+function statusMeta(status: string | null): { label: string; tone: Tone } {
+  if (!status) return { label: "—", tone: "info" };
+  const label =
+    status.charAt(0).toUpperCase() + status.slice(1).replace(/_/g, " ");
+  if (status === "completed") return { label, tone: "ok" };
+  if (status === "in_progress") return { label, tone: "info" };
+  return { label, tone: "warn" };
 }
 
-function statusLabel(status: string | null) {
-  if (!status) return "—";
-  return status.charAt(0).toUpperCase() + status.slice(1).replace(/_/g, " ");
-}
-
-function pair(labelText: string, value: string) {
+function Pill({ label, tone }: { label: string; tone: Tone }) {
   return (
-    <div key={labelText} className={receiptStyles.row}>
-      <dt>{labelText}</dt>
-      <dd>{value}</dd>
+    <span className={styles.pill} data-tone={tone}>
+      {label}
+    </span>
+  );
+}
+
+function Field({ label: text, value }: { label: string; value: string }) {
+  return (
+    <div className={styles.field}>
+      <dt className={styles.label}>{text}</dt>
+      <dd className={styles.value}>{value}</dd>
     </div>
   );
 }
@@ -68,6 +77,7 @@ export function RepairReceiptToolbar() {
 
 export function RepairReceipt({ repair: r }: { repair: RepairRow }) {
   const ref = r.id.slice(0, 8).toUpperCase();
+  const status = statusMeta(r.status);
   const generatedOn = new Date().toLocaleDateString("en-PH", {
     year: "numeric",
     month: "short",
@@ -76,94 +86,93 @@ export function RepairReceipt({ repair: r }: { repair: RepairRow }) {
   });
 
   return (
-    <article className={receiptStyles.receipt}>
-      <div className={receiptStyles.receiptInner}>
-        {/* ── Masthead ─────────────────────────────────────────────── */}
-        <header className={receiptStyles.masthead}>
-          <p className={receiptStyles.orgName}>PGSO</p>
-          <p className={receiptStyles.orgSub}>Property &amp; Supply Management</p>
-          <p className={receiptStyles.docTitle}>*** REPAIR RECEIPT ***</p>
-          <p className={receiptStyles.docSub}>REPAIR TICKET — {ref}</p>
-        </header>
+    <article className={`${styles.sheet} mx-auto w-full max-w-3xl`}>
+      {/* Masthead — same structure as the inspection receipt */}
+      <header className={styles.top}>
+        <div className={styles.brand}>
+          <p className={styles.brandName}>PGSO</p>
+          <p className={styles.brandSub}>Property &amp; Supply Management</p>
+        </div>
+        <div className={styles.doc}>
+          <p className={styles.docTitle}>Repair Receipt</p>
+          <p className={styles.docNo}>{ref}</p>
+          <p className={styles.docDate}>Repair ticket</p>
+        </div>
+      </header>
 
-        <div className={receiptStyles.divider} />
-
-        {/* ── Ticket status ────────────────────────────────────────── */}
-        <p className={receiptStyles.sectionTitle}>TICKET</p>
-        <dl className={receiptStyles.rows}>
-          {pair("Ticket No.", ref)}
-          <div className={receiptStyles.row}>
-            <dt>Progress</dt>
-            <dd>
-              <span
-                className={receiptStyles.resultBadge}
-                data-tone={statusTone(r.status)}
-              >
-                {statusLabel(r.status).toUpperCase()}
-              </span>
+      {/* Ticket status */}
+      <section className={styles.section}>
+        <p className={styles.sectionTitle}>Ticket</p>
+        <dl className={styles.grid}>
+          <Field label="Ticket No." value={ref} />
+          <div className={styles.field}>
+            <dt className={styles.label}>Progress</dt>
+            <dd className={styles.value}>
+              <Pill label={status.label} tone={status.tone} />
             </dd>
           </div>
-          {pair("Date Logged", fmtDate(r.created_at))}
-          {pair("Repair Date", fmtDate(r.repair_date))}
-          {pair("Receipt Generated", generatedOn)}
+          <Field label="Date Logged" value={fmtDate(r.created_at)} />
+          <Field label="Repair Date" value={fmtDate(r.repair_date)} />
+          <Field label="Receipt Generated" value={generatedOn} />
         </dl>
+      </section>
 
-        <div className={receiptStyles.divider} />
-
-        {/* ── Asset ────────────────────────────────────────────────── */}
-        <p className={receiptStyles.sectionTitle}>ASSET</p>
-        <dl className={receiptStyles.rows}>
-          {pair("Asset", r.asset_label ?? r.asset_id.slice(0, 8).toUpperCase())}
-          {pair("Account Code", r.account_code ?? "—")}
-          {pair("Account Title", r.account_title ?? "—")}
-          {pair("Asset Type", r.asset_type ?? "—")}
+      {/* Asset */}
+      <section className={styles.section}>
+        <p className={styles.sectionTitle}>Asset</p>
+        <dl className={styles.grid}>
+          <Field
+            label="Asset"
+            value={r.asset_label ?? r.asset_id.slice(0, 8).toUpperCase()}
+          />
+          <Field label="Account Code" value={r.account_code ?? "—"} />
+          <Field label="Account Title" value={r.account_title ?? "—"} />
+          <Field label="Asset Type" value={r.asset_type ?? "—"} />
         </dl>
+      </section>
 
-        <div className={receiptStyles.divider} />
-
-        {/* ── Repair details ───────────────────────────────────────── */}
-        <p className={receiptStyles.sectionTitle}>REPAIR DETAILS</p>
-        <dl className={receiptStyles.rows}>
-          {pair("Reported By", r.reporter_name)}
-          {pair("Technician", r.technician ?? "Unassigned")}
-          {pair("Cost", fmtCurrency(r.cost))}
+      {/* Repair details */}
+      <section className={styles.section}>
+        <p className={styles.sectionTitle}>Repair Details</p>
+        <dl className={styles.grid}>
+          <Field label="Reported By" value={r.reporter_name} />
+          <Field label="Technician" value={r.technician ?? "Unassigned"} />
+          <Field label="Cost" value={fmtCurrency(r.cost)} />
+          <Field label="Issue / Work Done" value={r.description || "—"} />
         </dl>
+      </section>
 
-        <p className={receiptStyles.remarksLabel}>
-          Issue / Work Done:{" "}
-          <span className={receiptStyles.remarks}>{r.description || "—"}</span>
-        </p>
-
-        <div className={receiptStyles.signatureRow}>
-          <div className={receiptStyles.signature}>
-            <p className={receiptStyles.signatureName}>
+      {/* Signatures */}
+      <section className={styles.section}>
+        <p className={styles.sectionTitle}>Signatures</p>
+        <div className="mt-4 grid gap-4 sm:grid-cols-2">
+          <div>
+            <p className="m-0 border-b border-navy-900 pb-1 text-sm font-semibold text-navy-900">
               {r.technician ?? " "}
             </p>
-            <p className={receiptStyles.signatureLabel}>TECHNICIAN</p>
+            <p className="mt-1 text-[0.625rem] font-semibold uppercase tracking-[0.14em] text-navy-500">
+              Technician
+            </p>
           </div>
-          <div className={receiptStyles.signature}>
-            <p className={receiptStyles.signatureName}> </p>
-            <p className={receiptStyles.signatureLabel}>
-              SUPPLY AND/OR PROPERTY CUSTODIAN
+          <div>
+            <p className="m-0 border-b border-navy-900 pb-1 text-sm font-semibold text-navy-900">
+              {" "}
+            </p>
+            <p className="mt-1 text-[0.625rem] font-semibold uppercase tracking-[0.14em] text-navy-500">
+              Supply and/or Property Custodian
             </p>
           </div>
         </div>
+      </section>
 
-        <div className={receiptStyles.divider} />
-
-        {/* ── Footer ───────────────────────────────────────────────── */}
-        <p className={receiptStyles.receiptKicker}>END OF REPAIR RECORD</p>
-        <div
-          aria-hidden="true"
-          className={receiptStyles.scanned}
-          style={{
-            background:
-              "repeating-linear-gradient(90deg, #1b2a4a 0 2px, transparent 2px 5px, #1b2a4a 5px 6px, transparent 6px 10px)",
-          }}
-        />
-        <p className={receiptStyles.scannedLabel}>REPAIR #{ref}</p>
-        <p className={receiptStyles.thanks}>*** Thank you! ***</p>
-      </div>
+      {/* Footer */}
+      <footer className={styles.footer}>
+        <p className={styles.kicker}>End of repair record</p>
+        <div className={styles.footerMeta}>
+          <div aria-hidden="true" className={styles.barcode} />
+          <p className={styles.footerRef}>Repair #{ref}</p>
+        </div>
+      </footer>
     </article>
   );
 }

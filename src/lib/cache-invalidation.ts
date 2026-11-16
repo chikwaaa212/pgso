@@ -43,19 +43,19 @@ export const INVALIDATION_MAP: Record<string, InvalidationEntry> = {
     note: 'inspect / IAR attach busts queue + AIR snapshot + badges + aging reports.',
   },
   inventory: {
-    client: ['pgso:client:inventory-items', 'pgso:client:dashboard-snapshot', v2('personnel', 'inventory'), v2('personnel', 'inventory-stats'), v2('personnel', 'dashboard'), 'pgso:client:admin-inventory-list', v2('super-admin', 'inventory'), v2('super-admin', 'inventory-stats'), v2('personnel', 'recommendations'), v2('super-admin', 'recommendations')],
-    server: ['inventory:', 'personnel:inventory', 'personnel:low-stock', 'personnel:dashboard', 'personnel:recommendations', 'personnel:consumption', 'super-admin:inventory-list', 'super-admin:overview', 'super-admin:record-counts'],
-    note: 'Stock upsert / threshold edit busts quantities + low-stock + badges.',
+    client: ['pgso:client:inventory-items', 'pgso:client:dashboard-snapshot', v2('personnel', 'inventory'), v2('personnel', 'inventory-stats'), v2('personnel', 'dashboard'), 'pgso:client:admin-inventory-list', v2('super-admin', 'inventory'), v2('super-admin', 'inventory-stats'), v2('personnel', 'reports-'), v2('super-admin', 'reports-'), v2('personnel', 'recommendations'), v2('super-admin', 'recommendations')],
+    server: ['inventory:', 'personnel:inventory', 'personnel:low-stock', 'personnel:request-form-options', 'personnel:dashboard', 'personnel:reports', 'personnel:recommendations', 'personnel:consumption', 'super-admin:inventory-list', 'super-admin:overview', 'super-admin:record-counts'],
+    note: 'Stock upsert / threshold edit busts quantities + low-stock + badges + asset-availability reports.',
   },
   asset: {
     client: ['pgso:assets:unified', 'pgso:client:assets-snapshot', 'pgso:client:dashboard-snapshot', v2('personnel', 'assets'), v2('super-admin', 'assets'), v2('personnel', 'reports-'), v2('super-admin', 'reports-'), 'pgso:admin-assets:unified', v2('personnel', 'recommendations'), v2('super-admin', 'recommendations')],
-    server: ['assets:', 'personnel:asset', 'personnel:unified', 'personnel:dashboard', 'personnel:reports', 'personnel:recommendations', 'super-admin:overview', 'super-admin:recent-assets'],
-    note: 'Asset/stock CRUD + import busts registry pages + dashboard + condition reports.',
+    server: ['assets:', 'personnel:asset', 'personnel:unified', 'personnel:request-form-options', 'personnel:dashboard', 'personnel:reports', 'personnel:recommendations', 'super-admin:overview', 'super-admin:recent-assets'],
+    note: 'Asset/stock CRUD + import busts registry pages + dashboard + availability reports.',
   },
   issuance: {
     client: ['pgso:client:issuances-list', 'pgso:client:issues-snapshot', 'pgso:client:dashboard-snapshot', v2('personnel', 'issuances'), v2('personnel', 'issues'), v2('personnel', 'dashboard'), v2('super-admin', 'issuances'), v2('employee', 'assets'), v2('personnel', 'reports-'), v2('super-admin', 'reports-'), v2('personnel', 'recommendations'), v2('super-admin', 'recommendations')],
-    server: ['personnel:issuance', 'personnel:public-issues', 'personnel:dashboard', 'personnel:reports', 'personnel:recommendations', 'personnel:consumption', 'super-admin:issuances-list', 'super-admin:issuances-page', 'super-admin:overview', 'employee:'],
-    note: 'Issuance create/update busts PAR/ICS lists + public issues + inventory counts + the employee namespace (receiver docs/assets/detail) + quarterly reports.',
+    server: ['personnel:issuance', 'personnel:issuance-form-options', 'personnel:request-form-options', 'personnel:public-issues', 'personnel:dashboard', 'personnel:reports', 'personnel:recommendations', 'personnel:consumption', 'inventory:', 'personnel:inventory', 'personnel:low-stock', 'super-admin:issuances-list', 'super-admin:issuances-page', 'super-admin:overview', 'employee:'],
+    note: 'Issuance create/update busts PAR/ICS lists + public issues + inventory counts + the employee namespace (receiver docs/assets/detail) + quarterly reports. It also busts the assignable-item picker so a depleted or already-assigned lot cannot be re-picked for 60s.',
   },
   request: {
     client: ['pgso:client:requests-list', 'pgso:client:dashboard-snapshot', 'pgso:client:employee-requests-snapshot', v2('personnel', 'requests'), v2('employee', 'requests'), v2('super-admin', 'requests'), v2('personnel', 'reports-'), v2('super-admin', 'reports-'), v2('personnel', 'recommendations'), v2('super-admin', 'recommendations')],

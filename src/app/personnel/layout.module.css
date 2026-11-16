@@ -20,3 +20,30 @@
   padding-inline: 1rem;
   padding-bottom: 3rem;
 }
+
+/* Print: drop the portal chrome so document pages print as paper only.
+   The page's own @media print rules handle its header, tiles, and sidebar. */
+@media print {
+  .shell {
+    display: block;
+    min-height: 0;
+  }
+
+  .shell > header {
+    display: none !important;
+  }
+
+  .body {
+    display: block;
+  }
+
+  .body > aside {
+    display: none !important;
+  }
+
+  .main {
+    padding: 0;
+    width: 100%;
+    max-width: none;
+  }
+}

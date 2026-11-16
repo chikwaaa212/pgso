@@ -196,7 +196,7 @@ export interface UsersPage {
 }
 
 /**
- * Server-paged roster window (PAGE_SIZE = 15) replacing the legacy take-300
+ * Server-paged roster window (PAGE_SIZE = 10) replacing the legacy take-300
  * snapshot + client slice: the DB returns only the window (+ exact total per
  * filter set, cached 30s and busted by user writes). Search spans the DB
  * profile columns plus Auth emails (bounded pre-lookup, same 200-user cap as
@@ -209,7 +209,7 @@ export async function getUsersPage(
   try {
     await requireSuperAdmin()
   } catch {
-    return { rows: [], data: [], total: 0, page: 1, pageSize: 15, totalPages: 1 }
+    return { rows: [], data: [], total: 0, page: 1, pageSize: 10, totalPages: 1 }
   }
   const { withScopedCache } = await import('@/lib/personnel-cache')
   const { PAGE_SIZE } = await import('@/lib/constants')

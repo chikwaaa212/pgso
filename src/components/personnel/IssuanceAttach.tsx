@@ -25,10 +25,13 @@ export function IssuanceAttachButton({
   issuanceId,
   label = "Attach signed scan",
   onDone,
+  triggerClassName = "h-8 gap-2 rounded-[4px] px-3.5 text-xs font-semibold",
 }: {
   issuanceId: string;
   label?: string;
   onDone?: () => void;
+  /** Lets a host page restyle the trigger without forking the upload flow. */
+  triggerClassName?: string;
 }) {
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -88,8 +91,8 @@ export function IssuanceAttachButton({
       />
       <Button
         type="button"
-        variant="outline"
-        className="h-8 gap-2 rounded-[4px] px-3.5 text-xs font-semibold"
+        variant="ghost"
+        className={triggerClassName}
         disabled={busy}
         onClick={() => inputRef.current?.click()}
       >
@@ -110,9 +113,12 @@ export function IssuanceAttachButton({
 export function IssuanceRemoveButton({
   issuanceId,
   imageUrl,
+  triggerClassName = "h-8 gap-2 rounded-[4px] px-3.5 text-xs font-semibold",
 }: {
   issuanceId: string;
   imageUrl: string;
+  /** Lets a host page restyle the trigger without forking the removal flow. */
+  triggerClassName?: string;
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
@@ -144,8 +150,8 @@ export function IssuanceRemoveButton({
     <span className="inline-flex items-center gap-2">
       <Button
         type="button"
-        variant="outline"
-        className="h-8 gap-2 rounded-[4px] px-3.5 text-xs font-semibold"
+        variant="ghost"
+        className={triggerClassName}
         disabled={busy}
         onClick={() => void onRemove()}
       >

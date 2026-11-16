@@ -7,7 +7,7 @@ An integrated, role-based web platform for tracking government property, supplie
 PGSO-PSMS replaces spreadsheet-driven property custodianship with a single auditable system:
 
 - Every delivery, inspection, receipt, and issuance is linked to the record that produced it.
-- Stock only increases after an item has **passed (or partially passed) inspection** and is backed by an **AIR/IAR**.
+- Stock only increases after an item has **passed inspection** — automatically, with or without a generated AIR/IAR.
 - Accountability is decided automatically: **PAR** for high-value items, **ICS** for low-value items.
 - Employees see exactly what they hold; personnel see exactly what they processed; Super Admins see the whole province.
 - Uploaded PPMP workbooks can be validated, compared year over year, forecast, and turned into a draft procurement plan.
@@ -63,7 +63,7 @@ A common failure in manual property management is that stock is recorded before 
 ```text
 Delivery logged
     ↓
-Inspection recorded (passed / partial)
+Inspection recorded (passed / returned)
     ↓
 AIR / IAR generated or attached
     ↓
@@ -74,7 +74,7 @@ Issuance prepared (PAR or ICS)
 Employee acknowledges the property
 ```
 
-Each step is guarded by server-side rules, not just UI hints. A record that has not been inspected cannot be stocked; an inspection without an AIR/IAR cannot stock; and an issuance cannot exceed or bypass the asset/stock it references.
+Each step is guarded by server-side rules, not just UI hints. A record that has not been inspected cannot be stocked; a passed inspection stocks automatically without waiting for an AIR/IAR; and an issuance cannot exceed or bypass the asset/stock it references.
 
 ---
 
@@ -196,21 +196,21 @@ The personnel portal is the operational core of the system.
   - Per-item received quantities.
   - Supplier checks and item checks.
   - Remarks.
-  - Result: **passed** or **partial**.
-- “Passed” is only allowed when the cumulative received quantity equals the PO quantity for **every** item. A short delivery must be recorded as partial.
+  - Result: **passed** or **returned to supplier**.
+- “Passed” is only allowed when the cumulative received quantity equals the PO quantity for **every** item. A short delivery stays pending until the balance arrives and can pass in full.
 - Generate the **AIR/IAR** from the inspection, or attach an externally prepared one (including a scanned/signed IAR image).
 - Attach up to **5 optional documentary photos** to an inspection. Photos are uploaded immediately to Supabase Storage and stored as `INSPECTION_PHOTO` documents in the Documents hub; Super Admin delivery and inspection views render thumbnails.
 - Inspection detail, printable receipt, and IAR sheet routes.
-- Re-inspection is supported: updating a partial inspection to passed stocks only the remaining quantity.
+- Re-inspection is supported for returned and legacy partial deliveries; stocking never counts the same quantity twice.
 
-#### Stock — `/personnel/inventory`
+#### Stocks — `/personnel/stocks`
 
-- Inventory of consumables and semi-expendable items.
+- Ledger of consumables and semi-expendable items sourced from **passed** inspections.
 - Search, filter, pagination.
 - Quantities, unit cost, total cost, category, location, reorder threshold.
 - Manual stock creation/editing.
 - Stock detail page with movement/history context.
-- Stock is normally created automatically by passed/partial inspections with an AIR/IAR; manual entry is for corrections and opening balances.
+- Stock is created automatically the moment an inspection passes (an AIR/IAR is optional). The personnel ledger is read-only; Super Admin manages thresholds and corrections.
 
 #### Assets — `/personnel/assets`
 
@@ -297,7 +297,7 @@ Descriptive-analytics workspace for the records the signed-in personnel can see:
 
 - **Aging & delays** — pending inspections, pending requests, and open repairs split into `0–3`, `4–7`, `8–14`, and `15+` day buckets. A record is *delayed* once it is older than 7 days; the page shows totals, overdue counts, the oldest open record, and a paged, filterable list.
 - **Quarterly issuance** — calendar-quarter (Q1 = Jan–Mar) PAR/ICS summary for a selected year: document counts, PAR/ICS split, quantity, amount, an 8-quarter trend, and top items / by office / by employee breakdowns. Consolidated multi-line documents count once in the summary and per line in the item table.
-- **Asset conditions** — normalized current-condition distribution from the shared asset registry, with the serviceable/unserviceable headline, percentages, and an explicit **Unspecified** bucket for blank or unrecognized values. Condition history is not stored, so this is a distribution, not a trend.
+- **Asset availability** — normalized current-status distribution from the same unified registry the Assets page shows (registered assets **plus** asset-kind lots stocked from passed inspections), with total items and units on hand, available (ready to issue), in-use (assigned to a custodian), and unavailable (out of stock, maintenance, retired, lost/disposed, or unrecorded) headline counts, percentages, and per-status rows with item/unit counts. Status history is not stored, so this is a distribution, not a trend.
 - **Download XLSX** produces official ExcelJS workbooks with the report period, applied filters, generation timestamp, and threshold assumptions in the header.
 
 #### QR Scanner — `/personnel/scan`
@@ -389,7 +389,8 @@ Manage the reference data used throughout the system:
 | `/personnel/inspections/[id]/iar` | IAR sheet |
 | `/personnel/inspections/[id]/receipt` | Inspection receipt |
 | `/personnel/inspections/[id]/receipts` | Receipts collection |
-| `/personnel/inventory` | Stock list |
+| `/personnel/stocks` | Stock list with assignment to employees |
+| `/personnel/stocks/[id]` | Stock detail (information + assignment history) |
 | `/personnel/assets` | Asset registry |
 | `/personnel/assets/[id]` | Asset detail |
 | `/personnel/assets/stock/[id]` | Stock detail |
@@ -435,7 +436,7 @@ All personnel routes exist under `/super-admin/*` with the same module names, pl
 | `/api/employee/issuances/[id]/par-xlsx` | Employee PAR download |
 | `/api/employee/issuances/[id]/ics-xlsx` | Employee ICS download |
 | `/api/personnel/ppmp/template-xlsx` | PPMP template |
-| `/api/personnel/reports/[report]` | Personnel report workbook (`aging`, `quarterly-issuance`, `asset-conditions`) |
+| `/api/personnel/reports/[report]` | Personnel report workbook (`aging`, `quarterly-issuance`, `asset-availability`) |
 | `/api/super-admin/reports/[report]` | System-wide report workbook (same report ids) |
 | `/api/super-admin/master-data/catalog-template-xlsx` | Account catalog template |
 
@@ -481,7 +482,7 @@ This is the primary receiving workflow.
 3. Choose the delivery kind:
    - **Stocks** — consumables tracked in inventory.
    - **Assets** — equipment tracked in the asset registry.
-4. Select the account title (from Master Data); the asset type is auto-filled from the chosen title. The account code may be typed manually or generated from the form's history.
+4. Select the account title (from Master Data); the asset type and account code are auto-filled from that catalog row. For stocks, pick the stock title and stock type — the stock code comes from the matched stock header. **Generate** appends the next sequence to the catalog/header code (e.g. `1-06-05-020-0001`); the server rejects any code that does not belong to the selected entry.
 5. Add line items: item name, unit, quantity, unit cost.
 6. Save. The delivery starts with `inspection_status = pending`.
 
@@ -496,30 +497,28 @@ This is the primary receiving workflow.
 5. Add supplier checks, item checks, and remarks.
 6. Choose the result:
    - **Passed** — allowed only when every item's cumulative received quantity equals its PO quantity.
-   - **Partial** — any shortfall, damage, or incomplete delivery.
+   - **Returned to supplier** — an item is missing or damaged.
 
-A delivery that was previously partial can be inspected again. The cumulative gate still applies, and only the newly received quantity is stocked later.
+A short delivery cannot pass yet: it stays pending until the remaining balance arrives and can be inspected to a full pass. Legacy partial records remain editable.
 
 #### Step 3 — Generate or attach the AIR/IAR
 
 - Generate the AIR/IAR from the inspection detail.
 - Or attach a prepared document.
-- Stocking requires at least one AIR/IAR record linked to the inspection.
+- Stocking happens automatically when the inspection passes; an AIR/IAR is not required.
 
 #### Step 4 — Stocking
 
-Stocking happens automatically when the inspection is passed or partial **and** an AIR/IAR exists:
+Stocking happens automatically when the inspection is **passed** and an AIR/IAR exists:
 
 - Each delivery item has a `stocked_qty` high-water mark.
-- A partial inspection of 6 of 10 stocks 6.
-- A later passed inspection stocks the remaining 4.
 - Re-processing the same inspection adds nothing (idempotent).
 - Costs are corrected on the inventory record when unit costs become available.
 
-For **Assets**, accepted items flow into the asset registry; for **Stocks**, they flow into inventory.
+For **Assets**, accepted items flow into the asset registry; for **Stocks**, they flow into the passed-source ledger.
 
 ```text
-PO qty 10 → inspect 6 (partial) → stock +6 → inspect remaining 4 (passed) → stock +4 → total 10
+PO qty 10 → all 10 received → inspect (passed) → stock +10
 ```
 
 ### 5.3 Employee request → approval → issuance
@@ -663,15 +662,14 @@ See [section 8](#8-ppmp-analytics-and-planning).
 | | `awaiting` | Not yet arrived / expected |
 | `inspection_status` | `pending` | Not yet inspected |
 | | `passed` | Fully accepted |
-| | `partial` | Partially accepted |
-| | `failed` | Legacy state; can be edited to partial/passed |
+| | `failed` | Returned to supplier (legacy state; still editable) |
 
 ### 6.3 Inspections
 
 | Value | Meaning |
 | --- | --- |
 | `passed` | Every item's cumulative received quantity equals its PO quantity |
-| `partial` | At least one item is short, damaged, or incomplete |
+| `failed` | At least one item is missing or damaged; returned to supplier |
 | `failed` | Legacy value; remains editable so it can be corrected |
 
 ### 6.4 Assets
@@ -732,9 +730,9 @@ These rules are enforced in shared library code and server actions, not just in 
 ### 7.1 Inspection and stocking
 
 - **Passed requires full quantity.** For every item, cumulative received quantity must equal the PO quantity.
-- **Partial is the fallback.** Any shortfall forces a partial result.
+- **No partial verdict.** A short delivery cannot pass until the balance arrives; missing or damaged items go back to the supplier.
 - **Cumulative accounting.** The inspection form collects this round's quantity; the system adds previously stocked quantities before evaluating and saving.
-- **Stock requires AIR/IAR.** A passed or partial inspection with no AIR/IAR record does not stock.
+- **Stock follows the passed verdict.** A passed inspection stocks immediately; a missing AIR/IAR never blocks the ledger.
 - **High-water mark.** `stocked_qty` prevents double-stocking. Stocking is additive only for the not-yet-stocked remainder.
 - **Failure does not stock.** A legacy `failed` inspection does not move stock.
 - **Cost repair.** When costs arrive later, existing inventory rows are updated without changing quantities.
@@ -1166,7 +1164,7 @@ npm run build
 │   ├── lib/
 │   │   ├── auth-guard.ts          # requireSuperAdmin / requireEmployee
 │   │   ├── personnel-scope.ts     # Ownership scoping
-│   │   ├── inspection-rules.ts    # Passed/partial and cumulative math
+│   │   ├── inspection-rules.ts    # Passed/return and cumulative math
 │   │   ├── issuance-rules.ts      # PAR/ICS threshold
 │   │   ├── stock.ts               # Idempotent stocking
 │   │   ├── idempotency.ts         # Duplicate-write protection
@@ -1217,7 +1215,7 @@ Download templates from **Templates** (`/personnel/templates` or `/super-admin/t
 | Employee ICS | `/api/employee/issuances/[id]/ics-xlsx` |
 | Aging report | `/api/personnel/reports/aging` or `/api/super-admin/reports/aging` |
 | Quarterly issuance report | `/api/personnel/reports/quarterly-issuance?year=YYYY` or the super-admin equivalent |
-| Asset-condition report | `/api/personnel/reports/asset-conditions` or the super-admin equivalent |
+| Asset-availability report | `/api/personnel/reports/asset-availability` or the super-admin equivalent |
 | PPMP draft | Planning results view |
 
 Generated documents mirror the official government layouts and include the stored issuance snapshot, not live asset values. Report workbooks include the report period, applied filters, generation timestamp, and the 7-day delayed threshold in their header block.
@@ -1302,7 +1300,7 @@ npm start
 - [ ] Pending accounts are blocked with the correct notice.
 - [ ] A Super Admin can approve a user.
 - [ ] A delivery can be logged and inspected.
-- [ ] Stocking requires an AIR/IAR.
+- [ ] A passed inspection stocks automatically, with or without an AIR/IAR.
 - [ ] A PAR is generated above ₱50,000 and an ICS at or below it.
 - [ ] Documents download as valid `.xlsx` files.
 - [ ] QR codes resolve.
@@ -1318,8 +1316,8 @@ npm start
 | Redirected to `/login?notice=pending` | Account awaiting approval | Approve it in Super Admin → Users |
 | Redirected to `/login?notice=inactive` | Account deactivated | Reactivate it in Super Admin → Users |
 | Signed in but bounced to `/` | Role does not match the portal | Use the portal for your role, or ask an admin to correct the role |
-| “Passed” is disabled | Received quantities do not equal PO quantities | Record the true quantity as **partial**, or correct the item quantities |
-| Inspection will not stock | No AIR/IAR linked, or result is `failed` | Generate/attach the AIR/IAR and set the result to passed/partial |
+| "Passed" is disabled | Received quantities do not equal PO quantities | Wait for the balance, or correct the item quantities |
+| Inspection will not stock | No AIR/IAR linked, or result is `failed` | Generate/attach the AIR/IAR and set the result to passed |
 | Stock increased twice | This should not happen due to `stocked_qty`; check the inspection history | Review `stocked_qty` and `stocked_at`; do not manually add stock to compensate |
 | Cannot issue an asset | Asset is not `available` or is already assigned | Choose an available asset or correct the assignment |
 | PAR/ICS type looks wrong | Total is on the other side of ₱50,000 | Verify unit cost and quantity; the threshold is strict `>` |

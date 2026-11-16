@@ -72,7 +72,7 @@ Basis: source-code review of this repository as of **3 November 2026**. Routes, 
 | --- | --- | --- | --- |
 | Log a delivery | **Operations → Deliveries** (`/personnel/deliveries`) | `/super-admin/deliveries` | — |
 | Record an inspection | **Operations → Inspections** (`/personnel/inspections`) | `/super-admin/inspections` | — |
-| See stock | **Inventory → Stock** (`/personnel/inventory`) | `/super-admin/inventory` | — |
+| See stock | **Inventory → Stock** (`/personnel/stocks`) | `/super-admin/stocks` | — |
 | See assets | **Inventory → Assets** (`/personnel/assets`) | `/super-admin/assets` | **My Assets** (`/employee/assets`) |
 | See generated documents | **Records → Documents** (`/personnel/documents`) | `/super-admin/documents` | Own documents under My Assets |
 | See repairs | **Records → Repairs** (`/personnel/repairs`) | `/super-admin/repairs` | Request status under **My Requests** |
@@ -84,9 +84,9 @@ Deliveries → Inspections → AIR/IAR → Stocking → Documents / Assets / Rep
 ```
 
 1. **Delivery.** Personnel record supplier, PO reference, dates, kind (`stock` or `asset`), account title, and line items. Starting `inspection_status = pending`.
-2. **Inspection.** The inspector enters the quantity received *this round*. The system converts it to a cumulative quantity and permits `passed` only when every item's cumulative quantity equals its PO quantity; otherwise the result is `partial`.
+2. **Inspection.** The inspector enters the quantity received *this round*. The system converts it to a cumulative quantity and permits `passed` only when every item's cumulative quantity equals its PO quantity; otherwise a short delivery stays pending (or is returned to the supplier if an item is missing/damaged).
 3. **AIR/IAR.** Generate the acceptance report from the inspection, or attach a prepared copy. Stocking is blocked without one.
-4. **Stocking.** Passed/partial inspections with an AIR/IAR move only the not-yet-stocked remainder into inventory. `stocked_qty` is a high-water mark, so re-processing never double-counts.
+4. **Stocking.** Passed inspections with an AIR/IAR move only the not-yet-stocked remainder into inventory. `stocked_qty` is a high-water mark, so re-processing never double-counts.
 5. **Documents.** The Documents hub aggregates the records that already exist — delivery receipt, inspection report, AIR/IAR, PAR, ICS, stock card, asset record, repair ticket. Viewed state is tracked per user.
 6. **Repairs.** Tickets are created from an approved repair request or directly by personnel, then move through `pending → in_progress → completed`.
 
@@ -95,7 +95,7 @@ Deliveries → Inspections → AIR/IAR → Stocking → Documents / Assets / Rep
 ### What to show a reviewer
 
 1. Log a delivery with two line items.
-2. Inspect with a short quantity — **Passed** must be refused; choose **Partial**.
+2. Inspect with a short quantity — **Passed** must stay refused; complete the balance before passing.
 3. Show that stock did not move until an AIR/IAR exists.
 4. Generate the AIR/IAR and re-run **Stock → Sync from inspections**.
 5. Open **Documents** and show the delivery, inspection, AIR/IAR, and stock card in one place.
@@ -114,7 +114,7 @@ Deliveries → Inspections → AIR/IAR → Stocking → Documents / Assets / Rep
 | --- | --- | --- | --- |
 | Asset registry | **Inventory → Assets** (`/personnel/assets`) | `/super-admin/assets` | **My Assets** |
 | Asset detail, custody, history | Asset detail (`/personnel/assets/[id]`) | `/super-admin/assets/[id]` | Own asset view |
-| Stock levels and values | **Inventory → Stock** (`/personnel/inventory`) | `/super-admin/inventory` | — |
+| Stock levels and values | **Inventory → Stock** (`/personnel/stocks`) | `/super-admin/stocks` | — |
 | Issued items and recipients | **Records → Issues** (`/personnel/issues`) | `/super-admin/issues` | — |
 | PAR/ICS documents | **Records → PAR / ICS** (`/personnel/issuances`) | `/super-admin/issuances` | Under **My Assets** |
 | Accountability documents | **Records → Documents** | `/super-admin/documents` | Own documents |
@@ -329,7 +329,7 @@ The chain is the spine. Objectives 2–6 consume the records created by Objectiv
 | --- | --- | --- |
 | 0:00 | Sign in as Super Admin. Show the dashboard KPIs and charts. | 4 |
 | 1:30 | **Deliveries → Log delivery** with two line items. | 1 |
-| 3:00 | **Inspections → Inspect**: enter a short quantity, show **Passed** refused, choose **Partial**. | 1 |
+| 3:00 | **Inspections → Inspect**: enter a short quantity, show **Passed** refused, then complete the balance. | 1 |
 | 4:00 | Generate the AIR/IAR; open **Stock** and show the received quantity. | 1 |
 | 5:00 | Open **Assets**, show a QR code, then **QR Scanner** and the action row. | 6 |
 | 6:30 | **PAR / ICS → New issuance**; show the threshold choosing ICS vs PAR. | 2 |

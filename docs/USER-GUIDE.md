@@ -341,7 +341,7 @@ It answers “what should I do next?” in one screen instead of six menu visits
 - Creates the delivery with `inspection_status = pending`.
 - Tracks two independent statuses:
   - **Delivery status** (`complete`, `partial`, `awaiting`) describes whether the shipment arrived.
-  - **Inspection status** (`pending`, `passed`, `partial`) describes whether it was accepted.
+  - **Inspection status** (`pending`, `passed`, `failed`) describes whether it was accepted.
 - Prevents other personnel from reading or editing your delivery. Only you (or a Super Admin) can open it.
 - Enables the **Inspect** action directly from the row, so you do not have to re-enter the same delivery in another screen.
 
@@ -372,7 +372,7 @@ This is the first link in the chain. If the delivery is logged correctly, everyt
    - Remarks
 3. Choose the result:
    - **Passed** — everything ordered arrived in full.
-   - **Partial** — something is short, damaged, or incomplete.
+   - **Return to Supplier** — an item is missing or damaged.
 4. Optionally attach up to **5 documentary photos**. Photos upload immediately and are stored with the inspection.
 5. Generate the **AIR/IAR** from the inspection, **or** attach an externally prepared one (including a scanned, signed copy).
 6. Save.
@@ -380,17 +380,17 @@ This is the first link in the chain. If the delivery is logged correctly, everyt
 **What the system does — the most important rule in the app**
 
 - It adds the quantity you entered **this round** to what was already stocked, producing a **cumulative received quantity**.
-- **Passed is only allowed when every item’s cumulative received quantity equals its PO quantity.** If even one item is short, the system refuses “Passed” and requires “Partial”.
-- **Stocking requires two things:** a passed or partial inspection **and** at least one linked AIR/IAR record.
+- **Passed is only allowed when every item’s cumulative received quantity equals its PO quantity.** If even one item is short, “Passed” stays disabled until the balance arrives.
+- **A passed verdict stocks automatically.** No AIR/IAR (or manual sync) is required — the received quantities move into stocks the moment the inspection passes.
 - `stocked_qty` is a **high-water mark**. Stocking the same inspection twice adds nothing.
-- A later inspection of a partial delivery stocks only the **remaining** quantity.
+- Re-inspection of a returned or legacy partial delivery is supported; only the not-yet-stocked remainder is added.
 
 **Worked example**
 
 ```text
 PO says 10 boxes.
-Round 1: 6 boxes arrive → record a partial inspection → stock +6.
-Round 2: the other 4 arrive → record a passed inspection → stock +4.
+Round 1: 6 boxes arrive → balance is still due; the delivery stays pending (no stocking).
+Round 2: the other 4 arrive → inspect all 10 → Passed → stock +10.
 Total stocked: 10. Nothing double-counted.
 ```
 
@@ -398,11 +398,11 @@ Total stocked: 10. Nothing double-counted.
 
 This is the rule that prevents phantom inventory and overpayment. A short delivery can never be disguised as complete, and the same goods can never be counted twice.
 
-> **Legacy note:** you may occasionally see an inspection marked `failed` from an older version. It does not move stock, and it can be edited to `partial` or `passed` so it can be corrected.
+> **Legacy note:** older records may show `partial` or `failed`. They still appear in history, remain editable, and follow the same passed-or-returned verdicts.
 
 ---
 
-### 6.4 Stock (the menu says “Stock”, the page title says “Stocks”) — `/personnel/inventory`
+### 6.4 Stock (the menu says “Stock”, the page title says “Stocks”) — `/personnel/stocks`
 
 **Where to find it:** Personnel → **Stock**.
 
@@ -423,14 +423,12 @@ This is the rule that prevents phantom inventory and overpayment. A short delive
 
 **What you can do**
 
-- **Add stock** — create or correct an inventory line manually (useful for opening balances and corrections).
-- **Sync from inspections** — pull in any passed/partial inspection that has not yet been stocked. The system reports how many items it added and whether it repaired any missing costs.
-- Set a **reorder threshold** so the system can warn you before you run out.
-- Open a stock item to see its history.
+- **Sync from inspections** — a manual fallback that re-checks every passed inspection for anything still unstocked (and repairs missing costs). The Stocks page also self-heals on open, so you normally never need it.
+- Open a stock item to see its history. Reorder thresholds are set by the Super Admin.
 
 **What the system does**
 
-- Normally, stock is created **automatically** by passed or partial inspections that have an AIR/IAR. Manual entry is the exception, not the rule.
+- Stock is created **automatically** when an inspection passes (an AIR/IAR is optional). The personnel ledger is read-only and only lists rows that a passed inspection sourced.
 - Issuing stock decreases the quantity. Quantities can never go below zero.
 - If unit costs arrive later, the system updates the cost on the existing stock record **without changing quantities**.
 
@@ -1020,15 +1018,15 @@ This section ties everything together. Follow one delivery and one employee thro
 ### Monday afternoon — the inspection
 
 5. The inspector opens **Inspections** and clicks **Inspect**.
-6. Only **6 laptops** arrived. The inspector enters `6` received, adds remarks, attaches two photos of the boxes, and chooses **Partial**.
-7. The system refuses **Passed** — correctly, because 6 ≠ 10.
-8. The inspector generates the **AIR/IAR**.
+6. Only **6 laptops** arrived. The inspector enters `6` received, adds remarks, and attaches two photos of the boxes.
+7. **Passed** stays disabled — correctly, because 6 ≠ 10. The delivery remains pending with the remaining 4 still due.
+8. The inspector can generate the **AIR/IAR** now or later — nothing moves to stocks while the delivery is short.
 
-### Tuesday — stock and assets appear
+### Tuesday — the balance arrives and stock appears
 
-9. Because the inspection is partial **and** an AIR/IAR exists, the system stocks **6 laptops**.
-10. The remaining **4** are still outstanding. `stocked_qty` remembers that only 6 were received.
-11. The 6 laptops now exist as assets with status **available**.
+9. The remaining **4** laptops arrive. The inspector records the full 10 and chooses **Passed**.
+10. Because the inspection is **passed**, the system stocks all **10 laptops** automatically (no AIR/IAR needed).
+11. The 10 laptops now exist as assets with status **available**.
 
 ### Next week — the rest arrives
 
@@ -1082,15 +1080,14 @@ This section ties everything together. Follow one delivery and one employee thro
 | | `awaiting` | Not yet arrived / expected. |
 | Inspection status | `pending` | Not yet inspected. |
 | | `passed` | Fully accepted. |
-| | `partial` | Partially accepted. |
-| | `failed` | Legacy state; editable so it can be corrected. |
+| | `failed` | Returned to supplier (legacy rows remain editable). |
 
 ### Inspections
 
 | Value | Meaning |
 | --- | --- |
 | `passed` | Every item’s cumulative received quantity equals its PO quantity. |
-| `partial` | At least one item is short, damaged, or incomplete. |
+| `failed` | At least one item is missing or damaged; returned to supplier |
 | `failed` | Legacy; does not move stock; can be corrected. |
 
 ### Assets
@@ -1132,11 +1129,11 @@ This section ties everything together. Follow one delivery and one employee thro
 
 ### “Why can’t I mark this inspection as Passed?”
 
-Because at least one item’s cumulative received quantity is still below its PO quantity. **Passed means everything arrived in full.** Record the shortfall as **Partial**, then inspect again when the rest arrives.
+Because at least one item’s cumulative received quantity is still below its PO quantity. **Passed means everything arrived in full.** Wait for the balance to arrive, then inspect again — there is no partial verdict.
 
 ### “Why isn’t my stock updating after I inspected?”
 
-Stocking needs **two** things: a passed/partial inspection **and** a linked AIR/IAR. Generate or attach the AIR/IAR first, then check **Stock → Sync from inspections**.
+Stocking needs **one** thing: a **passed inspection**. The system stocks the received quantities automatically — no AIR/IAR and no manual sync. If a passed inspection ever shows up unstocked, just open **Stocks** (or use **Sync from inspections**).
 
 ### “Why did nothing happen when I inspected the same delivery twice?”
 
@@ -1188,7 +1185,7 @@ Check the file type and size: only `.xlsx` up to 10 MB is accepted, with up to 1
 | Task | Steps |
 | --- | --- |
 | **Log a delivery** | Deliveries → **Log delivery** → fill header → choose Stocks/Assets → add line items → Save. |
-| **Inspect a delivery** | Inspections → **Inspect** (or delivery row) → enter received quantities → choose Passed/Partial → attach photos → Save. |
+| **Inspect a delivery** | Inspections → **Inspect** (or delivery row) → enter received quantities → choose Passed or Return to Supplier → attach photos → Save. |
 | **Generate an AIR/IAR** | Open the inspection → **AIR / IAR** → generate, or attach a prepared file. |
 | **Sync stock** | Stock → **Sync from inspections**. |
 | **Add a stock item manually** | Stock → **Add stock** → fill item, unit, cost, threshold → Save. |
@@ -1230,7 +1227,7 @@ Check the file type and size: only `.xlsx` up to 10 MB is accepted, with up to 1
 | **Idempotency** | A safety rule that stops the same action from being counted twice. |
 | **Master data** | The shared reference lists: departments, units, and the account catalog. |
 | **PAR** | Property Acknowledgment Receipt — issued for property worth **more than ₱50,000**. |
-| **Partial inspection** | Some items arrived short, damaged, or incomplete. |
+| **Returned inspection** | An item was missing or damaged; the delivery goes back to the supplier. |
 | **Passed inspection** | Every item arrived in full. |
 | **PPMP** | Procurement Plan for Goods and Services. |
 | **QR code** | A scannable square that opens an asset, stock item, or completed request. |

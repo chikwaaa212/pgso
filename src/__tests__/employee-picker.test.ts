@@ -65,8 +65,8 @@ describe("getMyRequestOptions: small page, minimal fields, server search", () =>
     // Held assets always come along (transfer/repair filter to them).
     assert.match(fn, /assigned_to:\s*userId/);
   });
-  it("PAGE_SIZE is the small page (15)", () => {
-    assert.equal(PAGE_SIZE, 15);
+  it("PAGE_SIZE is the small page (10)", () => {
+    assert.equal(PAGE_SIZE, 10);
   });
 });
 
@@ -91,21 +91,56 @@ describe("personnel pick-lists: small window + server search (no 500-row slice)"
   }
 });
 
-describe("personnel dialog search wiring", () => {
+describe("personnel dialog picker wiring", () => {
   // The repairs dialog was extracted into a shared component so the
-  // super-admin portal can mount it too; the search wiring moved with it.
-  for (const [name, file, fn] of [
-    ["requests", "../app/personnel/requests/page.tsx", "getRequestFormOptions({"],
-    ["repairs", "../components/personnel/RepairCreateDialog.tsx", "getRepairFormOptions({"],
-  ] as const) {
-    const page = src(file);
-    it(`${name} dialog has a debounced server search for items`, () => {
-      assert.match(page, /aria-label="Search items"/);
-      assert.match(page, /useDebouncedValue\(itemQuery,\s*300\)/);
-      assert.ok(page.includes(fn), `${name} dialog queries ${fn}`);
-      assert.match(page, /Searching…/);
-    });
-  }
+  // super-admin portal can mount it too. Item selection is a single list
+  // select (no separate search input) — the pick-list window is loaded once
+  // per dialog open.
+  const page = src("../components/personnel/RepairCreateDialog.tsx");
+  it("repairs dialog uses one item select instead of a search field", () => {
+    assert.ok(
+      !page.includes('aria-label="Search items"'),
+      "no separate item search input"
+    );
+    assert.ok(!page.includes("useDebouncedValue"), "no debounced item search");
+    assert.ok(
+      page.includes("getRepairFormOptions({"),
+      "repairs dialog queries getRepairFormOptions"
+    );
+    assert.match(page, /Select an asset or stock item/);
+  });
+});
+
+describe("personnel request dialog: dropdown-only picker", () => {
+  const page = src("../app/personnel/requests/page.tsx");
+  it("has no item search inputs (dropdown selection only)", () => {
+    assert.ok(!page.includes('aria-label="Search items"'), "no search input");
+    assert.ok(!page.includes('aria-label="Search assets"'), "no asset search input");
+    assert.ok(!page.includes("useDebouncedValue"), "no debounced item search");
+  });
+  it("loads the full available pick-list per dialog open", () => {
+    assert.ok(
+      page.includes("getRequestFormOptions({})"),
+      "fetches the empty-query pick-list"
+    );
+  });
+  it("strictly separates tabs and hides out-of-stock items", () => {
+    assert.match(page, /a\.tab === itemKind && a\.disabledReason !== "Out of stock"/);
+  });
+  it("files asset-kind lots stocked by a passed inspection under the Asset tab", () => {
+    const actions = src("../app/personnel/requests/actions.ts");
+    assert.match(
+      actions,
+      /tab: s\.delivery_kind === 'asset' \? \('asset' as const\) : \('stock' as const\)/
+    );
+    assert.match(actions, /delivery_kind: true/);
+  });
+  it("quantity fields clamp to on-hand and reject negatives", () => {
+    assert.match(page, /function clampQuantity\(value: string, max: number\)/);
+    assert.match(page, /setTransferQty\(\s*clampQuantity\(e\.target\.value, transferStockMax\)/);
+    assert.match(page, /quantity: clampQuantity\(e\.target\.value, max\)/);
+    assert.match(page, /setRestockQty\(digitsOnly\(e\.target\.value\)\.slice\(0, 9\)\)/);
+  });
 });
 
 describe("employee request form search wiring", () => {

@@ -5,7 +5,7 @@
  *
  * The scanner links to `…?asset={id}` (plus `scan=transfer|replenish`). This
  * hook resolves the option through the auth-scoped resolver — the scanned
- * asset is usually outside the dialogs' 15-row text-search window — then
+ * asset is usually outside the dialogs' 10-row text-search window — then
  * hands it to the page and strips the params so a refresh or back-navigation
  * cannot re-open the dialog.
  */

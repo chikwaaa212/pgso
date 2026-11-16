@@ -36,7 +36,7 @@ function fmtDateTime(iso: string | null) {
 }
 
 export default function SuperAdminLogsPage() {
-  // Server-paged audit window (PAGE_SIZE = 15): the DB returns only the
+  // Server-paged audit window (PAGE_SIZE = 10): the DB returns only the
   // window + exact total per filter set (30s TTL; audit writes are too
   // frequent to bust per mutation).
   const [query, setQuery] = useState("");

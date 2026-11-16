@@ -43,7 +43,7 @@ function peso(n: number | null | undefined) {
 }
 
 export default function SuperAdminIssuancesPage() {
-  // Server-paged window (PAGE_SIZE = 15): the DB returns only the window +
+  // Server-paged window (PAGE_SIZE = 10): the DB returns only the window +
   // exact total per filter set (30s, busted by issuance writes).
   const [query, setQuery] = useState("");
   const debouncedQuery = useDebouncedValue(query, 300);

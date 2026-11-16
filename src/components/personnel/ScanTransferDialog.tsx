@@ -14,7 +14,6 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Button } from "@/components/ui/button";
 import { ActionButton } from "@/components/ui/action-button";
 import {
   Dialog,
@@ -41,6 +40,18 @@ import type { ScannedAssetPrefill } from "@/lib/scan-actions";
 import rep from "@/app/personnel/repairs/page.module.css";
 
 const MANUAL = "__manual";
+
+/** Keep digits only — a quantity field must never hold a sign or exponent. */
+const digitsOnly = (value: string) => value.replace(/[^\d]/g, "");
+
+/** Clamp a typed quantity into [1, max]; empty stays empty while typing. */
+function clampQuantity(value: string, max: number): string {
+  const digits = digitsOnly(value);
+  if (digits === "") return "";
+  const ceiling = Math.max(1, Math.floor(max));
+  const n = Math.min(Math.max(1, Number(digits)), ceiling);
+  return String(Number.isFinite(n) ? n : 1);
+}
 
 export function ScanTransferDialog({
   open,
@@ -207,9 +218,12 @@ export function ScanTransferDialog({
               <Input
                 id="scan-qty"
                 type="number"
+                inputMode="numeric"
                 min={1}
                 value={quantity}
-                onChange={(e) => setQuantity(e.target.value)}
+                onChange={(e) =>
+                  setQuantity(digitsOnly(e.target.value).slice(0, 9))
+                }
               />
               <p className="text-xs text-zinc-500">
                 On hand: {option.quantity ?? 0}
@@ -291,10 +305,15 @@ export function ScanTransferDialog({
                   <Input
                     id="scan-transfer-qty"
                     type="number"
+                    inputMode="numeric"
                     min={1}
                     max={option.quantity ?? undefined}
                     value={quantity}
-                    onChange={(e) => setQuantity(e.target.value)}
+                    onChange={(e) =>
+                      setQuantity(
+                        clampQuantity(e.target.value, option.quantity ?? 0)
+                      )
+                    }
                   />
                   <p className="text-xs text-zinc-500">
                     On hand: {option.quantity ?? 0}
@@ -333,19 +352,12 @@ export function ScanTransferDialog({
         ) : null}
 
         <DialogFooter>
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => onOpenChange(false)}
-            disabled={saving}
-          >
-            Cancel
-          </Button>
           <ActionButton
             type="button"
             disabled={!canSubmit || saving}
             onClick={() => onSubmit()}
             loadingLabel="Submitting…"
+            className="h-6 rounded-[4px] px-3 text-xs font-semibold"
           >
             {replenish ? "Request replenishment" : "Request transfer"}
           </ActionButton>

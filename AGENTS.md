@@ -64,8 +64,8 @@ npm run build
 
 1. **Inspection → AIR/IAR → stock**
    - `passed` is allowed only when every item's cumulative received quantity equals its PO quantity (`inspection-rules.ts`).
-   - Any shortfall is `partial`; re-inspection is additive.
-   - Stocking requires a passed/partial inspection **and** an AIR/IAR record.
+   - Verdicts are Passed or Return to Supplier only — Partial is retired. A short delivery stays pending until the balance arrives and can pass in full.
+   - Stocking is automatic on a passed inspection; an AIR/IAR is **not** required and must never gate the ledger. The personnel `/personnel/stocks` ledger only shows rows sourced from a passed inspection.
    - `stocked_qty` is a high-water mark: re-processing the same inspection must not double-stock (`stock.ts`).
    - Costs may be repaired later without changing quantities.
 
@@ -117,7 +117,7 @@ npm run build
 | Route gating, public paths, role cache | `middleware.ts` |
 | Server-side role assertions | `src/lib/auth-guard.ts` |
 | Ownership scope + memoized identity/profile | `src/lib/personnel-scope.ts` |
-| Inspection pass/partial and cumulative math | `src/lib/inspection-rules.ts` |
+| Inspection pass/return rules and cumulative math | `src/lib/inspection-rules.ts` |
 | PAR/ICS threshold and totals | `src/lib/issuance-rules.ts` |
 | Idempotent stocking | `src/lib/stock.ts` |
 | Duplicate-write protection | `src/lib/idempotency.ts` |

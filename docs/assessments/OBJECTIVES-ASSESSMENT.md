@@ -34,7 +34,7 @@
 | Delivery/receiving log | `Delivery` and `DeliveryItem` models in `prisma/schema.prisma`; UI under `src/app/personnel/deliveries/` |
 | Inspection and acceptance | `Inspection` and `IarRecord` models; `src/app/personnel/inspections/` including `[id]/inspection-form.tsx`; AIR generation |
 | Automatic inventory recording | `stockInspectionItems()` in `src/lib/stock.ts` moves received quantities into `inventory` for `passed` and `partial` inspections, but only when an AIR/IAR backs the inspection. `stocked_qty` prevents double-counting. |
-| Inventory management | `InventoryItem` model; `src/app/personnel/inventory/` with stock levels, thresholds, search, manual add/edit, and “Sync from inspections” |
+| Inventory management | `InventoryItem` model; `src/app/personnel/stocks/` with stock levels, thresholds, search, manual add/edit, and “Sync from inspections” |
 | Repair monitoring | `Repair` model; `src/app/personnel/repairs/` with ticket creation, status flow, technician, cost, receipt, and reopen |
 | Document processing | `Document` model plus dedicated views for delivery, inspection, stock, asset, repair, IAR, PAR, and ICS in `src/app/personnel/documents/page.tsx` |
 | Printable/exportable forms | Receipt components; PAR/ICS Excel endpoints under `src/app/api/personnel/issuances/[id]/`; Excel helpers `src/lib/air-excel.ts`, `par-excel.ts`, `ics-excel.ts`, `asset-excel.ts`; “Download Excel” in `src/app/personnel/issuances/page.tsx` |
@@ -107,7 +107,7 @@ The system records the who/what/when/cost/technician of every repair and preserv
 | Required analytic | Status | Evidence |
 |---|---|---|
 | Inventory status | Yes | Inventory page with SKUs, units on hand, low/critical/out counts; stock-level filters |
-| Available and low-stock supplies | Yes | Low-stock watchlist and “Replenishment needed” alert in `src/app/personnel/dashboard/page.tsx` and `src/app/personnel/inventory/page.tsx` |
+| Available and low-stock supplies | Yes | Low-stock watchlist and “Replenishment needed” alert in `src/app/personnel/dashboard/page.tsx` and `src/app/personnel/stocks/page.tsx` |
 | Workflow status | Yes | Pending inspections, pending requests, active repairs, open documents on the personnel dashboard; request/repair/document status breakdowns in `src/app/super-admin/dashboard/analytics.ts` |
 | Repair records | Yes | Repair counts by status and recent-repairs panels; repair list with filters |
 | Asset conditions | Yes | Condition distribution from the shared registry (`getAssetConditionReport`), normalized with an explicit **Unspecified** bucket; serviceable/unserviceable headline; card on both dashboards and a full `/reports` tab (`src/lib/reporting-queries.ts`, `src/components/reporting/ReportsWorkspace.tsx`) |
@@ -134,7 +134,7 @@ Scope is enforced consistently with the rest of the system: personnel see only t
 
 | Prescriptive capability | Status | Evidence |
 |---|---|---|
-| Recommend replenishment for low-stock items | Yes | `recommendationFor()` in `src/app/super-admin/inventory/page.tsx` returns “Replenish now / Restock soon / Plan reorder” with reasons; personnel inventory shows a replenishment alert and links to a `stock_replenishment` request (`src/app/personnel/requests/request-types.ts`). The Recommendations workspace adds a **suggested order quantity** derived from average monthly issuance over the consumption window × (lead time + safety days) − on-hand (`src/lib/prescriptive/replenishment.ts`) |
+| Recommend replenishment for low-stock items | Yes | `recommendationFor()` in `src/app/super-admin/stocks/page.tsx` returns “Replenish now / Restock soon / Plan reorder” with reasons; personnel inventory shows a replenishment alert and links to a `stock_replenishment` request (`src/app/personnel/requests/request-types.ts`). The Recommendations workspace adds a **suggested order quantity** derived from average monthly issuance over the consumption window × (lead time + safety days) − on-hand (`src/lib/prescriptive/replenishment.ts`) |
 | Suggested quantities for PPMP preparation | Yes | `buildPlanningForecasts()`, `projectQtyHistory()`, `buildPpmpDraft()` in `src/lib/ppmp/analytics/planning.ts` produce low/base/high quantities using average, trend/linear regression, growth, or **issuance history**; unit-cost escalation and multi-year horizon are applied |
 | Budget-aware selection | Yes | `fitDraftToCeilingGreedy()` and `fitDraftToCeilingLP()` (0/1 knapsack via `javascript-lp-solver`) select/defer PPMP lines under a ceiling |
 | Rule-based recommendations | Yes | `buildRecommendations()` in `src/lib/ppmp/analytics/rules.ts`: multi-year quantity change, above-average quantity, cost jumps, anomalies, low-confidence forecasts, and a `STOCK_COVER` rule using current inventory |

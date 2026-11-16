@@ -24,7 +24,7 @@ const ATTENTION = [
   { title: "Inspections awaiting review", cta: "Review", href: "/personnel/inspections" },
   { title: "Employee requests", cta: "Review", href: "/personnel/requests" },
   { title: "Repair tickets", cta: "Open", href: "/personnel/repairs" },
-  { title: "Stock reorders", cta: "Restock", href: "/personnel/inventory" },
+  { title: "Stock reorders", cta: "Restock", href: "/personnel/stocks" },
 ];
 
 const CHART_HEIGHTS = [42, 68, 55, 82, 60, 74];
@@ -79,7 +79,7 @@ export default function DashboardLoading() {
       {/* Stats — 5 cards per row on desktop, same grid as the real page */}
       <div className={styles.stats} aria-hidden="true">
         {STAT_LABELS.map((label) => (
-          <Card key={label} className={`${styles.statCard} p-4`}>
+          <Card key={label} className={`${styles.statCard} rounded-xl p-4`}>
             <span className={styles.statLabel}>{label}</span>
             <Pulse className="h-8 w-16" />
             <div className={styles.statFooter}>

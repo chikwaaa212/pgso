@@ -41,7 +41,7 @@ The app is not slow because of one bad query. It is slow because a single page l
 | `/personnel/assets` | 1,351 KB | 413 KB |
 | `/personnel/inspections` | 1,311 KB | 401 KB |
 | `/personnel/documents` | 1,235 KB | 369 KB |
-| `/personnel/inventory` | 1,229 KB | 378 KB |
+| `/personnel/stocks` | 1,229 KB | 378 KB |
 | `/employee/dashboard` | 1,193 KB | 367 KB |
 | `/scan` | 999 KB | 322 KB |
 | `/login` | 862 KB | 274 KB |
@@ -478,7 +478,7 @@ Suggested budgets to enforce in CI:
 - `src/app/personnel/requests/actions.ts:71-103,221,1287`
 - `src/lib/prescriptive-queries.ts:142,286,310,554-558`
 - `src/app/personnel/documents/actions.ts:249-285`
-- `src/app/personnel/inventory/actions.ts:71-129,140-192`
+- `src/app/personnel/stocks/actions.ts:71-129,140-192`
 - `src/app/super-admin/master-data/actions.ts:111-173`
 - `src/app/super-admin/dashboard/page.tsx:55-60`
 - `src/lib/reporting-queries.ts:182-203,539-658`
@@ -514,7 +514,7 @@ Measured first-load JS after the change (same build diagnostics, gzip level 9):
 | `/personnel/assets` | 413 KB | **301 KB** | −112 KB |
 | `/personnel/requests` | 412 KB | **300 KB** | −112 KB |
 | `/personnel/inspections` | 401 KB | **347 KB** | −54 KB |
-| `/personnel/inventory` | 378 KB | **266 KB** | −112 KB |
+| `/personnel/stocks` | 378 KB | **266 KB** | −112 KB |
 | `/personnel/documents` | 369 KB | **257 KB** | −112 KB |
 | `/employee/dashboard` | 367 KB | **255 KB** | −112 KB |
 | `/scan` | 322 KB | **269 KB** | −53 KB |

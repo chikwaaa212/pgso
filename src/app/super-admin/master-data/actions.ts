@@ -257,7 +257,7 @@ export async function createStockType(
     const name = field('name') || account_title
     const description = field('description') || null
     if (!account_code) throw new Error('Account code is required.')
-    if (!asset_type) throw new Error('Asset type is required.')
+    if (!asset_type) throw new Error('Stock type is required.')
     if (!name) throw new Error('Account title is required.')
     if (name.length > 120) throw new Error('Stock header name must be 120 characters or fewer.')
     const existing = await prisma.stockType.findFirst({

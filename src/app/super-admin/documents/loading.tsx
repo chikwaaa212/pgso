@@ -29,7 +29,7 @@ const HEADERS = [
   "Ref",
   "Supplier",
   "PO ref",
-  "Date delivered",
+  "Date inspected",
   "Items",
   "Logged By",
   "Delivery",

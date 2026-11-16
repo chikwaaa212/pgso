@@ -15,6 +15,7 @@ import { createClient } from '@/lib/supabase/server'
 import prisma from '@/lib/prisma'
 import { writeAuditLog } from '@/lib/audit'
 import { getPersonnelScope, requirePersonnelScope } from '@/lib/personnel-scope'
+import { normalizeCustomBag } from '@/lib/custom-bag'
 import { REPAIR_STATUSES, type RepairStatus } from './repair-types'
 
 export interface RepairRow {
@@ -43,6 +44,10 @@ export interface RepairAssetOption {
   asset_type: string | null
   location: string | null
   status: string | null
+  /** How the registry tracks the item — drives the picker grouping. */
+  kind?: 'asset' | 'stock'
+  /** Units on hand for stock lots (null for registered assets). */
+  quantity?: number | null
 }
 
 export interface RepairEmployeeOption {
@@ -60,6 +65,50 @@ function assetLabel(a: {
     Boolean
   ) as string[]
   return bits.length > 0 ? bits.join(' — ').slice(0, 80) : 'Asset'
+}
+
+/**
+ * Account titles for stock items. Inventory has no title/name columns: a
+ * passed inspection stores the delivery's catalog title in `custom_fields`,
+ * and older rows only resolve through Master Data by account code (exact
+ * code first, then the base of a generated `<base>-NNNN` sequence).
+ */
+async function accountTitleForCodes(
+  codes: (string | null | undefined)[]
+): Promise<Map<string, { title: string | null; assetType: string | null }>> {
+  const out = new Map<string, { title: string | null; assetType: string | null }>()
+  const clean = [...new Set(codes.map((c) => String(c ?? '').trim()).filter(Boolean))]
+  if (clean.length === 0) return out
+  const bases = new Set(clean)
+  for (const code of clean) {
+    const seq = /^(.+)-(\d{1,6})$/.exec(code)
+    if (seq) bases.add(seq[1])
+  }
+  const rows = await prisma.accountCatalog
+    .findMany({
+      where: {
+        status: 'active',
+        OR: [...bases].map((base) => ({
+          account_code: { equals: base, mode: 'insensitive' as const },
+        })),
+      },
+      select: { account_code: true, account_title: true, account_name: true, asset_type: true },
+    })
+    .catch(() => [])
+  const byCode = new Map(
+    rows.map((r) => [
+      r.account_code.trim().toLowerCase(),
+      { title: r.account_title ?? r.account_name ?? null, assetType: r.asset_type ?? null },
+    ])
+  )
+  for (const code of clean) {
+    const seq = /^(.+)-(\d{1,6})$/.exec(code)
+    const hit =
+      byCode.get(code.toLowerCase()) ??
+      (seq ? byCode.get(seq[1].toLowerCase()) : undefined)
+    if (hit) out.set(code, hit)
+  }
+  return out
 }
 
 /** Slim asset labels for the current window only (never full-table scans). */
@@ -120,9 +169,12 @@ export async function getRepairsPage(
 ): Promise<{ rows: RepairRow[]; total: number }> {
   const { withScopedCache } = await import('@/lib/personnel-cache')
   const page = Math.floor(Number(opts.page)) >= 1 ? Math.min(Math.floor(Number(opts.page)), 1000) : 1
+  // Up to 1000 so the Personnel list can load one window and search/filter
+  // instantly in memory (same pattern as assets/stocks). Admin callers still
+  // pass PAGE_SIZE for a normal server window.
   const pageSize = Number.isFinite(Number(opts.pageSize))
-    ? Math.min(Math.max(Math.floor(Number(opts.pageSize)), 1), 100)
-    : 20
+    ? Math.min(Math.max(Math.floor(Number(opts.pageSize)), 1), 1000)
+    : 10
   const q = (opts.q ?? '').trim().slice(0, 120)
   const status = (opts.status ?? 'all').trim()
   // v2 = strict owner filter (created_by = me). Bumps the cache key so the
@@ -341,67 +393,139 @@ export async function getRepairFormOptions(
   const q = String(opts.q ?? '').trim().slice(0, 60)
   const { withCache, cacheKey } = await import('@/lib/personnel-cache')
   const { PAGE_SIZE } = await import('@/lib/constants')
-  return withCache(cacheKey('personnel:repair-form-options', { q }), 60, async () => {
-  try {
-    // Server-searched PAGE_SIZE window (was a 500-row take per dialog open).
-    const assetWhere =
-      q !== ''
-        ? {
-            OR: [
-              { article: { contains: q, mode: 'insensitive' as const } },
-              { description: { contains: q, mode: 'insensitive' as const } },
-              { account_code: { contains: q, mode: 'insensitive' as const } },
-              { qr_code: { contains: q, mode: 'insensitive' as const } },
-            ],
-          }
-        : {}
-    const [profiles, assetRows] = await Promise.all([
-      prisma.profile.findMany({
-        where: { status: 'active', role: 'employee' },
-        orderBy: { full_name: 'asc' },
-        select: { id: true, full_name: true },
-      }),
-      // Slim pick-list: labels only, no QR / custom-bag fan-out.
-      prisma.asset
-        .findMany({
-          where: assetWhere,
-          orderBy: { created_at: 'desc' },
-          take: PAGE_SIZE,
-          select: {
-            id: true,
-            qr_code: true,
-            account_code: true,
-            article: true,
-            description: true,
-            account_title: true,
-            account_name: true,
-            category: true,
-            location: true,
-            status: true,
-          },
-        })
-        .catch(() => []),
-    ])
+  return withCache(cacheKey('personnel:repair-form-options:v3', { q }), 60, async () => {
+    try {
+      // Empty query returns the full picker window; typing narrows the DB
+      // search. Repairs can target either a registered asset or a stock item
+      // from the inventory, so both pick-lists must be searched.
+      const pickLimit = q === '' ? PAGE_SIZE * 50 : PAGE_SIZE
+      const assetWhere =
+        q !== ''
+          ? {
+              OR: [
+                { article: { contains: q, mode: 'insensitive' as const } },
+                { description: { contains: q, mode: 'insensitive' as const } },
+                { account_code: { contains: q, mode: 'insensitive' as const } },
+                { account_title: { contains: q, mode: 'insensitive' as const } },
+                { qr_code: { contains: q, mode: 'insensitive' as const } },
+              ],
+            }
+          : {}
+      const stockWhere =
+        q !== ''
+          ? {
+              OR: [
+                { item_name: { contains: q, mode: 'insensitive' as const } },
+                { account_code: { contains: q, mode: 'insensitive' as const } },
+                { category: { contains: q, mode: 'insensitive' as const } },
+                { location: { contains: q, mode: 'insensitive' as const } },
+              ],
+            }
+          : {}
+      const [profiles, assetRows, stockRows] = await Promise.all([
+        prisma.profile.findMany({
+          where: { status: 'active', role: 'employee' },
+          orderBy: { full_name: 'asc' },
+          select: { id: true, full_name: true },
+        }),
+        // Slim pick-list: labels only, no QR / custom-bag fan-out.
+        prisma.asset
+          .findMany({
+            where: assetWhere,
+            orderBy: { created_at: 'desc' },
+            take: pickLimit,
+            select: {
+              id: true,
+              qr_code: true,
+              account_code: true,
+              article: true,
+              description: true,
+              account_title: true,
+              account_name: true,
+              category: true,
+              location: true,
+              status: true,
+            },
+          })
+          .catch(() => []),
+        // Stock items live in `inventory`, not `assets` — this is why the
+        // pick-list previously looked empty when the registry was stocked
+        // from passed inspections.
+        prisma.inventoryItem
+          .findMany({
+            where: stockWhere,
+            orderBy: { item_name: 'asc' },
+            take: pickLimit,
+            select: {
+              id: true,
+              item_name: true,
+              account_code: true,
+              category: true,
+              location: true,
+              quantity: true,
+              custom_fields: true,
+            },
+          })
+          .catch(() => []),
+      ])
 
-    return {
-      employees: profiles.map((p) => ({
-        id: p.id,
-        full_name: p.full_name ?? 'Unnamed',
-      })),
-      assets: assetRows.map((a) => ({
-        id: a.id,
-        label: assetLabel(a),
-        account_code: a.account_code,
-        account_title: a.account_title ?? a.account_name,
-        asset_type: a.category,
-        location: a.location,
-        status: a.status,
-      })),
+      // Only lots with units on hand can be sent for repair — depleted
+      // stock rows (0 on hand) are hidden from the pick list.
+      const inStockRows = stockRows.filter((s) => s.quantity > 0)
+
+      // Stock rows carry no title/name columns — resolve them from the
+      // inspection's custom-field bag, then Master Data by account code.
+      const stockTitles = await accountTitleForCodes(
+        inStockRows.map((s) => s.account_code)
+      )
+
+      return {
+        employees: profiles.map((p) => ({
+          id: p.id,
+          full_name: p.full_name ?? 'Unnamed',
+        })),
+        assets: [
+          ...assetRows.map((a) => ({
+            id: a.id,
+            label: assetLabel(a),
+            account_code: a.account_code,
+            account_title: a.account_title ?? a.account_name,
+            asset_type: a.category,
+            location: a.location,
+            status: a.status,
+            kind: 'asset' as const,
+            quantity: null,
+          })),
+          ...inStockRows.map((s) => {
+            const bag = normalizeCustomBag(s.custom_fields)
+            const catalog = s.account_code
+              ? stockTitles.get(String(s.account_code).trim())
+              : undefined
+            const bagTitle =
+              bag.account_title?.trim() || bag.account_name?.trim() || null
+            return {
+              id: s.id,
+              label: assetLabel({
+                qr_code: null,
+                account_code: s.account_code,
+                article: s.item_name,
+                description: null,
+              }),
+              account_code: s.account_code,
+              account_title: bagTitle ?? catalog?.title ?? null,
+              asset_type: s.category ?? catalog?.assetType ?? null,
+              location: s.location,
+              status: s.quantity > 0 ? 'available' : 'out of stock',
+              kind: 'stock' as const,
+              quantity: s.quantity,
+            }
+          }),
+        ],
+      }
+    } catch (e) {
+      console.error('[getRepairFormOptions]', e)
+      return { assets: [], employees: [] }
     }
-  } catch (e) {
-    console.error('[getRepairFormOptions]', e)
-    return { assets: [], employees: [] }
-  }
   })
 }
 
@@ -452,15 +576,26 @@ export async function createRepair(
     const actorId = scope.userId
     if (!actorId) return { error: 'You must be signed in to log a repair.' }
 
-    const [asset, employee] = await Promise.all([
-      prisma.asset.findUnique({ where: { id: assetId }, select: { id: true } }),
+    // `repairs.asset_id` may point at a registered asset OR a stock item
+    // from the inventory (inspected/stocked deliveries live in `inventory`,
+    // not `assets`). Accept either so the picker's stock entries can be
+    // logged. Non-UUID input throws inside Prisma — treat as "not found".
+    const [asset, stockItem, employee] = await Promise.all([
+      prisma.asset
+        .findUnique({ where: { id: assetId }, select: { id: true } })
+        .catch(() => null),
+      prisma.inventoryItem
+        .findUnique({ where: { id: assetId }, select: { id: true } })
+        .catch(() => null),
       prisma.profile.findUnique({
         where: { id: employeeId },
         select: { id: true, role: true, status: true },
       }),
     ])
-    if (!asset) return { error: 'Selected asset no longer exists.' }
-    if (!employee) return { error: 'Selected employee no longer exists.' }
+    if (!asset && !stockItem)
+      return { error: 'That item is no longer available. Pick another one.' }
+    if (!employee)
+      return { error: 'That employee is no longer available. Pick another one.' }
 
     // Raw insert carries created_by even when the generated client predates migration 16.
     try {

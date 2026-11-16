@@ -80,8 +80,8 @@ function SuperAdminAssetsContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const pathname = usePathname();
-  // Server-paginated registry window (PAGE_SIZE = 15): search + all filters
-  // run in the DB via getUnifiedAssetsPage — one 15-row window per visit,
+  // Server-paginated registry window (PAGE_SIZE = 10): search + all filters
+  // run in the DB via getUnifiedAssetsPage — one 10-row window per visit,
   // never the full browseAssets list. Same SWR pattern as personnel assets.
   const [query, setQuery] = useState(searchParams.get("q") ?? "");
   const debouncedQuery = useDebouncedValue(query, 300);

@@ -41,7 +41,7 @@ Key files:
 | Server Redis cache + bust | `src/lib/personnel-cache.ts`, `src/lib/redis.ts` |
 | Realtime hook | `src/hooks/use-admin-realtime.ts` |
 | Read layer | `src/app/super-admin/browse/actions.ts` |
-| Mutations | `src/app/super-admin/requests/actions.ts`, `src/app/super-admin/users/actions.ts`, `src/app/super-admin/dashboard/actions.ts`, `src/app/super-admin/master-data/actions.ts`, `src/app/super-admin/inventory/actions.ts` |
+| Mutations | `src/app/super-admin/requests/actions.ts`, `src/app/super-admin/users/actions.ts`, `src/app/super-admin/dashboard/actions.ts`, `src/app/super-admin/master-data/actions.ts`, `src/app/super-admin/stocks/actions.ts` |
 | Representative pages | `src/app/super-admin/requests/page.tsx`, `src/app/super-admin/assets/page.tsx`, `src/app/super-admin/users/page.tsx` + `user-actions.tsx`, `src/app/super-admin/dashboard/page.tsx` + `stats.ts` + `analytics.ts`, `src/app/super-admin/deliveries/page.tsx` |
 | Auth/scope | `src/lib/auth-guard.ts`, `src/lib/personnel-scope.ts`, `middleware.ts` |
 
@@ -475,7 +475,7 @@ model AuditLog { ... @@index([action, created_at])  @@index([module]) }
 - Client pagination: `src/components/super-admin/BrowseTable.tsx:69-71`, `src/app/super-admin/assets/page.tsx:185-188`
 - Double TTL: `src/hooks/use-cached-action.ts:54,85-99`, `src/lib/client-cache.ts:21-59`, `src/app/super-admin/browse/actions.ts:87`, `src/app/super-admin/dashboard/stats.ts:64`, `analytics.ts:87`
 - Realtime hook + wrong-table-name bug: `src/hooks/use-admin-realtime.ts:31-93`, `src/app/super-admin/requests/page.tsx:62-66`, `users/page.tsx:62-66`, `repairs/page.tsx:40-44` vs `prisma/schema.prisma:31,208,248` (`@@map` plural); missing entirely on assets/deliveries/inventory/inspections/issuances/documents/issues/logs/records/transactions/master-data/dashboard; deliveries page lacks `refresh` (`deliveries/page.tsx:23-27`)
-- Cross-role bust gap: `src/lib/personnel-cache.ts:242-330`, `src/app/personnel/assets/actions.ts:578-579`, `src/app/personnel/inventory/actions.ts:313,346`, `src/app/super-admin/requests/actions.ts:79-83`
+- Cross-role bust gap: `src/lib/personnel-cache.ts:242-330`, `src/app/personnel/assets/actions.ts:578-579`, `src/app/personnel/stocks/actions.ts:313,346`, `src/app/super-admin/requests/actions.ts:79-83`
 - Fire-and-forget bust: `src/app/super-admin/master-data/actions.ts:44-54`
 - Heavy dashboard: `src/app/super-admin/dashboard/page.tsx:50-56`, `stats.ts:69-145`, `analytics.ts:98-126`
 - Transactions page with no refresh: `src/app/super-admin/transactions/page.tsx:59-76`

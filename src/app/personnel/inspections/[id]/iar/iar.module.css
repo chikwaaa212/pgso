@@ -428,12 +428,39 @@
 
 @media print {
   .airSheet {
+    width: 100%;
+    max-width: none;
+    border-width: 2px;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+
+  .scanWrap {
     max-width: none;
     border-width: 2px;
   }
 
+  .unsavedBanner {
+    display: none;
+  }
+
+  .itemsTable thead {
+    display: table-header-group;
+  }
+
+  .itemsTable tbody tr {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
   .itemsTable tbody td {
     height: 24px;
+  }
+
+  .bottomGrid,
+  .sig {
+    break-inside: avoid;
+    page-break-inside: avoid;
   }
 
   .pageMark {

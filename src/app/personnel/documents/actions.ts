@@ -78,6 +78,8 @@ export interface DeliveryDocumentRow {
   supplier: string | null
   po_reference: string | null
   date_delivered: string | null
+  /** Date of the latest inspection for this delivery (null while pending). */
+  inspection_date: string | null
   delivery_status: string | null
   inspection_status: string | null
   item_count: number
@@ -129,6 +131,11 @@ export async function getDeliveryDocumentsPage(
             inspection_status: true,
             created_at: true,
             _count: { select: { items: true } },
+            inspections: {
+              orderBy: { created_at: 'desc' },
+              take: 1,
+              select: { inspection_date: true },
+            },
           },
         }),
       ])
@@ -139,6 +146,7 @@ export async function getDeliveryDocumentsPage(
           supplier: d.supplier,
           po_reference: d.po_reference,
           date_delivered: d.date_delivered?.toISOString().slice(0, 10) ?? null,
+          inspection_date: d.inspections[0]?.inspection_date?.toISOString().slice(0, 10) ?? null,
           delivery_status: d.delivery_status,
           inspection_status: d.inspection_status,
           item_count: d._count.items,
@@ -188,58 +196,60 @@ export type DocumentsTab =
   | 'ics'
 
 /**
- * Per-tab page window (PAGE_SIZE = 15): only the ACTIVE tab fetches.
+ * Per-tab page window (PAGE_SIZE = 10): only the ACTIVE tab fetches.
  * Each tab reuses its list page's server-paged reader; `total` drives the pager.
  */
 export async function getDocumentsTabPage(
   tab: DocumentsTab,
-  opts: { page?: number; q?: string } = {}
+  opts: { page?: number; pageSize?: number; q?: string } = {}
 ): Promise<{ rows: unknown[]; data: unknown[]; total: number; page: number; pageSize: number; totalPages: number }> {
   const { parsePage, parseQuery } = await import('@/lib/paged')
   const { PAGE_SIZE } = await import('@/lib/constants')
   const page = parsePage(opts.page)
+  const rawSize = Math.floor(Number(opts.pageSize))
+  const pageSize = Number.isFinite(rawSize) ? Math.min(Math.max(rawSize, 1), 1000) : PAGE_SIZE
   const q = parseQuery(opts.q)
   const passthrough = (r: { rows: unknown[]; total: number; page?: number; totalPages?: number }) => ({
     rows: r.rows,
     data: (r as { data?: unknown[] }).data ?? r.rows,
     total: r.total,
     page: r.page ?? page,
-    pageSize: PAGE_SIZE,
-    totalPages: r.totalPages ?? Math.max(1, Math.ceil(r.total / PAGE_SIZE)),
+    pageSize,
+    totalPages: r.totalPages ?? Math.max(1, Math.ceil(r.total / pageSize)),
   })
   switch (tab) {
     case 'delivery': {
-      return getDeliveryDocumentsPage({ page, q })
+      return getDeliveryDocumentsPage({ page, pageSize, q })
     }
     case 'inspection': {
       // Documents shows only inspected deliveries (history receipts exist).
       const { getInspectionsPage } = await import('../inspections/actions')
-      return passthrough(await getInspectionsPage({ page, pageSize: PAGE_SIZE, q, status: 'inspected' }))
+      return passthrough(await getInspectionsPage({ page, pageSize, q, status: 'inspected' }))
     }
     case 'stocks': {
-      const { getInventoryPage } = await import('../inventory/actions')
-      return passthrough(await getInventoryPage({ page, pageSize: PAGE_SIZE, q }))
+      const { getInventoryPage } = await import('../stocks/actions')
+      return passthrough(await getInventoryPage({ page, pageSize, q }))
     }
     case 'assets': {
       const { getUnifiedAssetsPage } = await import('../assets/actions')
-      return getUnifiedAssetsPage({ page, q, slim: true })
+      return getUnifiedAssetsPage({ page, pageSize, q, slim: true })
     }
     case 'repairs': {
       // Documents shows completed repairs only (same as before).
       const { getRepairsPage } = await import('../repairs/actions')
-      return passthrough(await getRepairsPage({ page, pageSize: PAGE_SIZE, q, status: 'completed' }))
+      return passthrough(await getRepairsPage({ page, pageSize, q, status: 'completed' }))
     }
     case 'iar': {
-      return getIarReportsPage({ page, q })
+      return getIarReportsPage({ page, pageSize, q })
     }
     case 'par': {
       const { getIssuancesPage } = await import('../issuances/actions')
-      const r = await getIssuancesPage({ page, pageSize: PAGE_SIZE, q, docType: 'PAR' })
+      const r = await getIssuancesPage({ page, pageSize, q, docType: 'PAR' })
       return passthrough(r)
     }
     case 'ics': {
       const { getIssuancesPage } = await import('../issuances/actions')
-      const r = await getIssuancesPage({ page, pageSize: PAGE_SIZE, q, docType: 'ICS' })
+      const r = await getIssuancesPage({ page, pageSize, q, docType: 'ICS' })
       return passthrough(r)
     }
   }

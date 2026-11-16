@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { cn } from "@/lib/utils";
 import { useCachedAction } from "@/hooks/use-cached-action";
 import { buildQueryKey } from "@/lib/query-keys";
@@ -9,6 +9,7 @@ import {
   PagerSkeleton,
 } from "@/components/personnel/skeletons";
 import { getDeliveriesPage } from "./actions";
+import { EmptySearchState } from "@/components/personnel/EmptySearchState";
 import { EditDeliveryModal } from "./edit-delivery-modal";
 import { LogDeliveryModal } from "./log-delivery-modal";
 import { ViewDeliveryDialog } from "./view-delivery-dialog";
@@ -41,7 +42,7 @@ export interface DeliveryRow {
   /** YYYY-MM-DD in Manila — used to gate inspection until arrival day. */
   arrivalKey: string | null;
   kind: string;
-  status: "Waiting for arrival" | "Delivered";
+  status: "Arrival" | "Waiting for arrival" | "Delivered";
   itemCount: number;
   inspectionStatus: "pending" | "passed" | "failed" | "partial";
   inspectionRef: string;
@@ -93,7 +94,20 @@ const inspectionTone = (s: DeliveryRow["inspectionStatus"]) => {
   return "warn";
 };
 
-export function DeliveryTable({ readOnly = false }: { readOnly?: boolean }) {
+export interface DeliveryStats {
+  total: number;
+  pending: number;
+  passed: number;
+  returned: number;
+}
+
+export function DeliveryTable({
+  readOnly = false,
+  onStatsChange,
+}: {
+  readOnly?: boolean;
+  onStatsChange?: (stats: DeliveryStats) => void;
+}) {
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
   const q = query.trim().toLowerCase();
@@ -148,19 +162,32 @@ export function DeliveryTable({ readOnly = false }: { readOnly?: boolean }) {
               ? "Assets"
               : "—",
         // A passed inspection marks the delivery as delivered; otherwise the
-        // log-time state (waiting for arrival / delivered) still applies.
+        // log-time state (arrival / legacy waiting for arrival) still applies.
         status:
           d.inspection_status === "passed"
             ? "Delivered"
             : d.delivery_status === "awaiting"
               ? "Waiting for arrival"
-              : "Delivered",
+              : d.delivery_status === "arrival"
+                ? "Arrival"
+                : "Delivered",
         itemCount: edit ? edit.itemCount : d.item_count,
         inspectionStatus: (d.inspection_status as DeliveryRow["inspectionStatus"]) ?? "pending",
         inspectionRef: d.id.slice(0, 8).toUpperCase(),
       };
     });
   }, [data, editsById]);
+
+  // Summary tiles are driven by the loaded window (newest rows).
+  useEffect(() => {
+    if (!onStatsChange) return;
+    onStatsChange({
+      total: rows.length,
+      pending: rows.filter((r) => r.inspectionStatus === "pending").length,
+      passed: rows.filter((r) => r.inspectionStatus === "passed").length,
+      returned: rows.filter((r) => r.inspectionStatus === "failed").length,
+    });
+  }, [rows, onStatsChange]);
 
   // Rows submitted from the Log-delivery dialog but not yet acknowledged by
   // the server. They paint instantly; a row disappears as soon as the
@@ -186,7 +213,7 @@ export function DeliveryTable({ readOnly = false }: { readOnly?: boolean }) {
         arrival: formatDateISO(p.arrival || null),
         arrivalKey: p.arrival || null,
         kind: p.kind,
-        status: "Waiting for arrival" as const,
+        status: "Arrival" as const,
         itemCount: p.itemCount,
         inspectionStatus: "pending" as const,
         inspectionRef: "",
@@ -229,7 +256,7 @@ export function DeliveryTable({ readOnly = false }: { readOnly?: boolean }) {
             "Type",
             "Delivery",
             "Inspection",
-            "Target arrival",
+            "Arrival date",
             "Logged by",
             "Action",
           ]}
@@ -259,18 +286,22 @@ export function DeliveryTable({ readOnly = false }: { readOnly?: boolean }) {
       </div>
 
       {visibleRows.length === 0 ? (
-        <div className={cn(styles.emptyState, "flex-1")}>
-          <div className={styles.emptyCard}>
-            <p className={styles.emptyCardText}>
-              {rows.length === 0 && pendingRows.length === 0
-                ? "No deliveries logged yet."
-                : "No deliveries match your search."}
-            </p>
-            {!readOnly && rows.length === 0 && pendingRows.length === 0 ? (
-              <LogDeliveryModal />
-            ) : null}
+        rows.length === 0 && pendingRows.length === 0 && !q ? (
+          <div className={cn(styles.emptyState, "flex-1")}>
+            <div className={styles.emptyCard}>
+              <p className={styles.emptyCardText}>No deliveries logged yet.</p>
+              {!readOnly ? <LogDeliveryModal /> : null}
+            </div>
           </div>
-        </div>
+        ) : (
+          <EmptySearchState
+            description="Try a different supplier, PO reference, or delivery ID."
+            onClear={() => {
+              setQuery("");
+              setPage(1);
+            }}
+          />
+        )
       ) : (
         <>
           <div className={styles.tableWrap}>
@@ -281,7 +312,7 @@ export function DeliveryTable({ readOnly = false }: { readOnly?: boolean }) {
                   <th>Type</th>
                   <th>Delivery</th>
                   <th>Inspection</th>
-                  <th>Target Arrival</th>
+                  <th>Arrival Date</th>
                   <th>Logged By</th>
                   <th style={{ textAlign: "right" }}>Action</th>
                 </tr>

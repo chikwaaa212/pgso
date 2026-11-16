@@ -483,19 +483,27 @@ export function CustomDetailSection({
   row,
   readOnly = false,
   editMode = false,
+  searchNeedle = "",
 }: {
   row: UnifiedAssetRow;
   readOnly?: boolean;
   /** Renders every field as a direct input (used in Edit mode). */
   editMode?: boolean;
+  /** Filters the labelled fields by this query (instant, client-only). */
+  searchNeedle?: string;
 }) {
   const { fields, refreshFields } = useCustomFields();
   if (fields.length === 0) return null;
+  const needle = searchNeedle.trim().toLowerCase();
+  const shown = needle
+    ? fields.filter((f) => f.label.toLowerCase().includes(needle))
+    : fields;
+  if (shown.length === 0) return null;
   return (
     <div className="mb-6 last:mb-0">
       <h3 className={assetStyles.sectionTitle}>Additional Details</h3>
       <div className={assetStyles.detailFields}>
-        {fields.map((f) => (
+        {shown.map((f) => (
           <div key={f.key} className={assetStyles.detailField}>
             <span className={assetStyles.detailLabel}>{f.label}</span>
             <span className={assetStyles.detailValue}>

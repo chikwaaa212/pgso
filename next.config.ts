@@ -19,6 +19,14 @@ const nextConfig: NextConfig = {
       },
     ],
   },
+  // The stock ledger moved from /inventory to /stocks in both portals.
+  // Keep old links (bookmarks, printed QR labels, cached emails) working.
+  async redirects() {
+    return [
+      { source: "/personnel/inventory", destination: "/personnel/stocks", permanent: true },
+      { source: "/super-admin/inventory", destination: "/super-admin/stocks", permanent: true },
+    ];
+  },
 };
 
 export default nextConfig;

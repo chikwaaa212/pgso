@@ -16,6 +16,17 @@ import { stockInspectionItems } from '@/lib/stock'
 import { findCatalogEntry, resolveUnitName } from '@/lib/master-data'
 import prisma from '@/lib/prisma'
 
+/** One employee a stock item was issued to (PAR/ICS), newest first. */
+export interface InventoryAssignee {
+  id: string
+  name: string
+  doc_type: string | null
+  doc_no: string | null
+  date: string | null
+  /** Stock has no single holder flag — always false, kept for parity. */
+  current: boolean
+}
+
 export interface InventoryRow {
   id: string
   item_name: string
@@ -26,11 +37,15 @@ export interface InventoryRow {
   category: string | null
   /** Account title auto-filled from the account code (display-only; no column). */
   account_title: string | null
+  /** Account name auto-filled from the account code (display-only; no column). */
+  account_name: string | null
   quantity: number
   unit: string | null
   unit_cost: number | null
   reorder_threshold: number | null
   location: string | null
+  /** Employees this stock item was issued to (from issuance records). */
+  assignees?: InventoryAssignee[]
 }
 
 export interface InventoryState {
@@ -57,6 +72,28 @@ export interface InventoryPageOpts {
   kind?: string
   accountCode?: string
   level?: string
+  /**
+   * Personnel stock ledger: only rows that a passed inspection feeds.
+   * Super Admin keeps the full ledger (oversight), so this defaults to false.
+   */
+  passedOnly?: boolean
+}
+
+/**
+ * Restricts inventory rows to items a passed inspection moved into stocks.
+ * Inventory is an aggregated ledger keyed by (item_name, unit) — the same
+ * pair `stockInspectionItems` matches on — so an EXISTS over the delivery
+ * items of passed inspections identifies exactly the rows stocking created.
+ */
+function passedSourceSql(Prisma: typeof import('@prisma/client').Prisma) {
+  return Prisma.sql`EXISTS (
+    SELECT 1
+    FROM delivery_items di
+    JOIN inspections i ON i.delivery_id = di.delivery_id
+    WHERE i.result = 'passed'
+      AND lower(di.item_name) = lower(inventory.item_name)
+      AND di.unit IS NOT DISTINCT FROM inventory.unit
+  )`
 }
 
 const LEVEL_SQL: Record<string, string> = {
@@ -67,8 +104,63 @@ const LEVEL_SQL: Record<string, string> = {
   none: `quantity > 0 AND reorder_threshold IS NULL`,
 }
 
+/**
+ * Self-healing read path: passed inspections that were recorded before
+ * automatic stocking existed (or whose stocking failed) are moved into
+ * inventory on the next Stocks read, so the ledger never needs a manual
+ * sync. Throttled + per-user single-flight; idempotent via `stocked_qty`.
+ */
+const AUTO_STOCK_THROTTLE_MS = 15_000
+const autoStockRuns = new Map<string, { at: number; done: Promise<void> }>()
+
+async function autoStockPassedInspections(userId: string): Promise<void> {
+  const now = Date.now()
+  const prev = autoStockRuns.get(userId)
+  if (prev && now - prev.at < AUTO_STOCK_THROTTLE_MS) return prev.done
+  const done = (async () => {
+    try {
+      const pending = await prisma.inspection.findMany({
+        where: {
+          result: 'passed',
+          stocked_at: null,
+          OR: [
+            { inspector_id: userId },
+            { delivery: { received_by: userId } },
+          ],
+        },
+        select: { id: true },
+        take: 50,
+      })
+      if (pending.length === 0) return
+      let stocked = 0
+      for (let i = 0; i < pending.length; i += 5) {
+        const chunk = pending.slice(i, i + 5)
+        const results = await Promise.all(
+          chunk.map((p) =>
+            stockInspectionItems(p.id).catch((e) => {
+              console.error('[autoStockPassedInspections]', p.id, e)
+              return null
+            })
+          )
+        )
+        for (const res of results) if (res?.stocked) stocked += 1
+      }
+      if (stocked > 0) {
+        const { bustPersonnelScopes } = await import('@/lib/personnel-cache')
+        await bustPersonnelScopes(['inventory', 'dashboard'])
+      }
+    } catch (e) {
+      console.error('[autoStockPassedInspections]', e)
+    }
+  })()
+  autoStockRuns.set(userId, { at: now, done })
+  return done
+}
+
 /** Global stock stats for the header cards (no row payload). */
-export async function getInventoryStats(): Promise<{
+export async function getInventoryStats(
+  opts: { passedOnly?: boolean; kind?: string } = {}
+): Promise<{
   skus: number
   units: number
   low: number
@@ -78,29 +170,63 @@ export async function getInventoryStats(): Promise<{
   none: number
 }> {
   const { withCache, cacheKey } = await import('@/lib/personnel-cache')
-  return withCache(cacheKey('personnel:inventory-stats'), 60, async () => {
+  const passedOnly = opts.passedOnly === true
+  const kind = (opts.kind ?? 'all').trim() || 'all'
+  if (passedOnly) {
+    try {
+      const { getPersonnelScope } = await import('@/lib/personnel-scope')
+      const scope = await getPersonnelScope()
+      if (scope.userId && !scope.isSuperAdmin) {
+        await autoStockPassedInspections(scope.userId)
+      }
+    } catch {
+      /* best-effort self-heal */
+    }
+  }
+  return withCache(cacheKey('personnel:inventory-stats', { passedOnly, kind }), 60, async () => {
     const zeros = { skus: 0, units: 0, low: 0, critical: 0, out: 0, none: 0 }
     try {
-      const [skus, units, low, critical, out, none] = await Promise.all([
-        prisma.inventoryItem.count().catch(() => 0),
-        prisma.inventoryItem
-          .aggregate({ _sum: { quantity: true } })
-          .then((r) => r._sum.quantity ?? 0)
-          .catch(() => 0),
-        prisma.$queryRaw<Array<{ count: bigint }>>`
-          SELECT COUNT(*)::bigint AS count FROM inventory
-          WHERE quantity > 0 AND reorder_threshold IS NOT NULL AND quantity <= reorder_threshold`
-          .then((r) => Number(r[0]?.count ?? 0))
-          .catch(() => 0),
-        prisma.$queryRaw<Array<{ count: bigint }>>`
-          SELECT COUNT(*)::bigint AS count FROM inventory
-          WHERE quantity > 0 AND reorder_threshold IS NOT NULL AND quantity <= FLOOR(reorder_threshold / 2)`
-          .then((r) => Number(r[0]?.count ?? 0))
-          .catch(() => 0),
-        prisma.inventoryItem.count({ where: { quantity: { lte: 0 } } }).catch(() => 0),
-        prisma.inventoryItem.count({ where: { quantity: { gt: 0 }, reorder_threshold: null } }).catch(() => 0),
-      ])
-      return { skus, units, low, critical, out, none }
+      const { Prisma } = await import('@prisma/client')
+      const conds: InstanceType<typeof Prisma.Sql>[] = []
+      if (passedOnly) conds.push(passedSourceSql(Prisma))
+      if (kind !== 'all') conds.push(Prisma.sql`delivery_kind = ${kind}`)
+      const where =
+        conds.length > 0 ? Prisma.sql`WHERE ${Prisma.join(conds, ' AND ')}` : Prisma.empty
+      const rows = await prisma.$queryRaw<
+        Array<{
+          skus: bigint
+          units: bigint | null
+          low: bigint
+          critical: bigint
+          out: bigint
+          none: bigint
+        }>
+      >`
+        SELECT
+          COUNT(*)::bigint AS skus,
+          COALESCE(SUM(quantity), 0)::bigint AS units,
+          COUNT(*) FILTER (
+            WHERE quantity > 0 AND reorder_threshold IS NOT NULL
+              AND quantity <= reorder_threshold
+          )::bigint AS low,
+          COUNT(*) FILTER (
+            WHERE quantity > 0 AND reorder_threshold IS NOT NULL
+              AND quantity <= FLOOR(reorder_threshold / 2)
+          )::bigint AS critical,
+          COUNT(*) FILTER (WHERE quantity <= 0)::bigint AS out,
+          COUNT(*) FILTER (
+            WHERE quantity > 0 AND reorder_threshold IS NULL
+          )::bigint AS none
+        FROM inventory ${where}`
+      const r = rows[0]
+      return {
+        skus: Number(r?.skus ?? 0),
+        units: Number(r?.units ?? 0),
+        low: Number(r?.low ?? 0),
+        critical: Number(r?.critical ?? 0),
+        out: Number(r?.out ?? 0),
+        none: Number(r?.none ?? 0),
+      }
     } catch (e) {
       console.error('[getInventoryStats]', e)
       return zeros
@@ -144,28 +270,38 @@ export async function getInventoryPage(
   const { PAGE_SIZE } = await import('@/lib/constants')
   const { parsePage, parseQuery, clampPage, totalPagesFor } = await import('@/lib/paged')
   const page = parsePage(opts.page)
-  // Honor caller pageSize (legacy full-list wrappers pass 500); UI lists
+  // Honor caller pageSize (legacy full-list wrappers pass 500, the personnel
+  // ledger loads its whole stock window for instant local search); UI lists
   // pass/omit to PAGE_SIZE. Clamped to keep windows bounded.
   const rawSize = Math.floor(Number(opts.pageSize))
-  const pageSize = Number.isFinite(rawSize) ? Math.min(Math.max(rawSize, 1), 100) : PAGE_SIZE
+  const pageSize = Number.isFinite(rawSize) ? Math.min(Math.max(rawSize, 1), 1000) : PAGE_SIZE
   const q = parseQuery(opts.q)
   const kind = (opts.kind ?? 'all').trim()
   const accountCode = (opts.accountCode ?? 'all').trim()
   const level = (opts.level ?? 'all').trim()
+  const passedOnly = opts.passedOnly === true
   // Fail-closed before cache so employee/anon never hit the shared pool cache.
+  let scopeForHeal: { userId: string | null; isSuperAdmin: boolean } | null = null
   try {
     const { getPersonnelScope } = await import('@/lib/personnel-scope')
     const scope = await getPersonnelScope()
     if (scope.isEmpty || !scope.isPersonnel) return { rows: [], data: [], total: 0, page: 1, pageSize, totalPages: 1 }
+    scopeForHeal = { userId: scope.userId, isSuperAdmin: scope.isSuperAdmin }
   } catch {
     return { rows: [], data: [], total: 0, page: 1, pageSize, totalPages: 1 }
   }
+  // Passed inspections feed stocks on their own — heal any that were never
+  // stocked before querying so the ledger is complete without a manual sync.
+  if (passedOnly && scopeForHeal?.userId && !scopeForHeal.isSuperAdmin) {
+    await autoStockPassedInspections(scopeForHeal.userId)
+  }
   // Shared stock pool — global key (same data for all personnel).
-  return withCache(cacheKey('personnel:inventory-items', { page, pageSize, q, kind, accountCode, level }), 60, async () => {
+  return withCache(cacheKey('personnel:inventory-items', { page, pageSize, q, kind, accountCode, level, passedOnly }), 60, async () => {
   try {
     const { Prisma } = await import('@prisma/client')
     const like = q ? `%${q}%` : null
     const conds: InstanceType<typeof Prisma.Sql>[] = []
+    if (passedOnly) conds.push(passedSourceSql(Prisma))
     if (kind !== 'all') conds.push(Prisma.sql`delivery_kind = ${kind}`)
     if (accountCode !== 'all') conds.push(Prisma.sql`account_code = ${accountCode}`)
     if (like) {
@@ -201,27 +337,87 @@ export async function getInventoryPage(
     const total = Number(countRows[0]?.count ?? 0)
     const safePage = clampPage(page, Math.max(1, total))
     if (rows.length === 0) return { rows: [], data: [], total, page: safePage, pageSize, totalPages: totalPagesFor(total, pageSize) }
-    // Account title is display-only (no inventory column) — resolve it from
-    // the active catalog so the UI can show it next to the code.
-    let titleByCode = new Map<string, string>()
+    // Account title/name are display-only (no inventory columns) — resolve
+    // them from the active catalog so the UI can show them next to the code.
+    let labelsByCode = new Map<string, { title: string; name: string | null }>()
     try {
       const { getActiveCatalogEntries } = await import('@/lib/master-data')
       const entries = await getActiveCatalogEntries()
-      titleByCode = new Map(entries.map((e) => [e.code, e.title]))
+      labelsByCode = new Map(
+        entries.map((e) => [e.code, { title: e.title, name: e.name ?? null }])
+      )
     } catch {
-      titleByCode = new Map()
+      labelsByCode = new Map()
     }
-    const mapped = rows.map((r) => ({
+    const mapped: InventoryRow[] = rows.map((r) => {
+      const label = r.account_code ? labelsByCode.get(r.account_code) : undefined
+      return {
         ...r,
-        account_title: r.account_code
-          ? (titleByCode.get(r.account_code) ?? null)
-          : null,
+        account_title: label?.title ?? null,
+        account_name: label?.name ?? null,
         unit_cost: r.unit_cost != null ? Number(r.unit_cost) : null,
-      }))
+      }
+    })
+    // Assigned employees — everyone a PAR/ICS was issued this stock item to.
+    // Two extra queries for the whole window (same pattern as the assets
+    // registry), so the list can show and open the assignment history.
+    let enriched = mapped
+    try {
+      const ids = mapped.map((row) => row.id)
+      const idList = Prisma.join(ids.map((id) => Prisma.sql`${id}::uuid`))
+      const issued = await prisma.$queryRaw<
+        Array<{
+          inventory_id: string | null
+          employee_id: string
+          doc_type: string | null
+          doc_no: string | null
+          doc_date: Date | string | null
+        }>
+      >`SELECT inventory_id::text AS inventory_id, employee_id::text AS employee_id,
+               doc_type, doc_no, doc_date
+          FROM issuance_records
+          WHERE inventory_id IN (${idList})
+          ORDER BY created_at DESC`.catch(() => [])
+      const need = new Set<string>()
+      for (const r of issued) if (r.employee_id) need.add(r.employee_id)
+      const names = new Map<string, string>()
+      if (need.size > 0) {
+        const profiles = await prisma.profile
+          .findMany({
+            where: { id: { in: [...need] } },
+            select: { id: true, full_name: true },
+          })
+          .catch(() => [])
+        for (const p of profiles) names.set(p.id, p.full_name ?? 'Unknown employee')
+      }
+      const isoDay = (v: Date | string | null): string | null => {
+        if (!v) return null
+        const d = v instanceof Date ? v : new Date(v)
+        return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10)
+      }
+      const byItem = new Map<string, InventoryAssignee[]>()
+      for (const r of issued) {
+        if (!r.inventory_id) continue
+        const list = byItem.get(r.inventory_id) ?? []
+        if (list.some((a) => a.id === r.employee_id)) continue
+        list.push({
+          id: r.employee_id,
+          name: names.get(r.employee_id) ?? 'Unknown employee',
+          doc_type: r.doc_type,
+          doc_no: r.doc_no,
+          date: isoDay(r.doc_date),
+          current: false,
+        })
+        byItem.set(r.inventory_id, list)
+      }
+      enriched = mapped.map((row) => ({ ...row, assignees: byItem.get(row.id) ?? [] }))
+    } catch {
+      /* keep rows without assignee detail */
+    }
     return {
       total,
-      rows: mapped,
-      data: mapped,
+      rows: enriched,
+      data: enriched,
       page: safePage,
       pageSize,
       totalPages: totalPagesFor(total, pageSize),
@@ -367,7 +563,7 @@ export async function saveInventoryItem(
         after: record,
       },
     })
-    revalidatePath('/personnel/inventory')
+    revalidatePath('/personnel/stocks')
     return { success: true, record }
   } catch (e) {
     console.error('[saveInventoryItem]', e)
@@ -382,11 +578,10 @@ export interface SyncState extends InventoryState {
 }
 
 /**
- * Stocks every passed/partial inspection that has an AIR but still has
- * unstocked received quantities (e.g. completed before auto-stocking),
- * and backfills stock unit costs from delivery items for rows that were
- * stocked before costs were copied over. Idempotent — quantities are
- * never counted twice.
+ * Stocks every passed inspection that still has unstocked received
+ * quantities (e.g. completed before auto-stocking existed), and backfills
+ * stock unit costs from delivery items for rows that were stocked before
+ * costs were copied over. Idempotent — quantities are never counted twice.
  */
 export async function syncUnstockedInspections(): Promise<SyncState> {
   const user = await requireUser()
@@ -399,12 +594,10 @@ export async function syncUnstockedInspections(): Promise<SyncState> {
     const pending = await prisma.inspection.findMany({
       where: scope.isSuperAdmin
         ? {
-            result: { in: ['passed', 'partial'] },
-            iar_records: { some: {} },
+            result: { in: ['passed'] },
           }
         : {
-            result: { in: ['passed', 'partial'] },
-            iar_records: { some: {} },
+            result: { in: ['passed'] },
             OR: [
               { inspector_id: user.id },
               { delivery: { received_by: user.id } },
@@ -436,7 +629,7 @@ export async function syncUnstockedInspections(): Promise<SyncState> {
       }
     }
 
-    revalidatePath('/personnel/inventory')
+    revalidatePath('/personnel/stocks')
     revalidatePath('/personnel/inspections')
     return { success: true, stocked, skipped: pending.length - stocked, costsFixed }
   } catch (e) {

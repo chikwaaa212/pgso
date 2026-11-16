@@ -140,7 +140,10 @@ export function BrowseTable<T>({
 /** Read-only detail toolbar: back to the module list + print. No mutations. */
 export function AdminToolbar({ backHref, backLabel }: { backHref: string; backLabel: string }) {
   return (
-    <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1rem" }}>
+    <div
+      data-print-hide
+      style={{ display: "flex", gap: "0.5rem", marginBottom: "1rem" }}
+    >
       <Link
         href={backHref}
         style={{

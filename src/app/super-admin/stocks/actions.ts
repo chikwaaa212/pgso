@@ -65,8 +65,8 @@ export async function setReorderThreshold(
     const { bustSuperAdminScopes } = await import('@/lib/personnel-cache')
     await bustSuperAdminScopes(['inventory'])
 
-    revalidatePath('/super-admin/inventory')
-    revalidatePath('/personnel/inventory')
+    revalidatePath('/super-admin/stocks')
+    revalidatePath('/personnel/stocks')
     revalidatePath('/personnel/dashboard')
     return { success: true, record: { id: itemId, reorder_threshold: threshold } }
   } catch (e) {

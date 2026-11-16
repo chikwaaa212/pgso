@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
-export const PAGE_SIZE_OPTIONS = [10, 20, 50, 100] as const;
+/** Every list is fixed at 10 rows per page — no larger sizes are offered. */
+export const PAGE_SIZE_OPTIONS = [10] as const;
 
 function readStoredPageSize(key: string, fallback: number): number {
   if (typeof window === "undefined") return fallback;

@@ -2,6 +2,14 @@
   white-space: nowrap;
 }
 
+/* Origin tabs (From inspected / From added) above the registry card. */
+.originTabsRow {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  margin-bottom: 0.75rem;
+}
+
 /* Compact icon actions in the Details column (view / issue / QR). */
 .iconBtn {
   display: inline-flex;
@@ -379,6 +387,671 @@
   image-rendering: pixelated;
 }
 
+/* ─── Detail page: identity header, tabs, information layout ───────────── */
+
+.detailHero {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 1rem 1.5rem;
+  padding: 1rem 1.25rem;
+  border: 1px solid var(--color-navy-200);
+  border-radius: 0.5rem;
+  background:
+    linear-gradient(180deg, #fff 0%, #fbfcfe 100%);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.05);
+}
+
+.detailHeroMain {
+  display: flex;
+  align-items: center;
+  gap: 0.875rem;
+  min-width: 0;
+  flex: 1 1 16rem;
+}
+
+.detailHeroIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 2.75rem;
+  height: 2.75rem;
+  border: 1px solid var(--color-navy-200);
+  border-radius: 0.5rem;
+  background-color: var(--color-yellow-500);
+  color: var(--color-navy-900);
+}
+
+.detailHeroText {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.detailHeroTitleRow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.detailHeroTitle {
+  margin: 0;
+  font-size: 1.0625rem;
+  font-weight: 700;
+  line-height: 1.3;
+  color: var(--color-navy-900);
+  overflow-wrap: anywhere;
+}
+
+/* Key facts rendered as a compact stat strip on the right of the header. */
+.detailStats {
+  display: grid;
+  flex: 0 1 32rem;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.5rem;
+  margin: 0;
+  min-width: 0;
+}
+
+.detailStat {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  min-width: 0;
+  padding: 0.4375rem 0.625rem 0.5rem;
+  border: 1px solid var(--color-navy-200);
+  border-radius: 0.75rem;
+  background-color: #fff;
+}
+
+.detailStatLabel {
+  font-size: 0.625rem;
+  font-weight: 700;
+  line-height: 1.2;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-navy-400);
+}
+
+.detailStatValue {
+  margin: 0;
+  font-size: 0.9375rem;
+  font-weight: 700;
+  line-height: 1.3;
+  color: var(--color-navy-900);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@media (max-width: 1023px) {
+  .detailStats {
+    flex-basis: 100%;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 479px) {
+  .detailStats {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.detailHeroActions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+  flex-shrink: 0;
+}
+
+.detailTabsBar {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.75rem 1rem;
+  margin-top: 1rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--color-navy-200);
+}
+
+.detailTabsBar button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.tabCount {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.125rem;
+  height: 1rem;
+  margin-left: 0.375rem;
+  padding-inline: 0.3125rem;
+  border-radius: 9999px;
+  background-color: rgba(15, 23, 42, 0.1);
+  font-size: 0.625rem;
+  font-weight: 700;
+  color: var(--color-navy-700);
+}
+
+.tabMeta {
+  font-size: 0.6875rem;
+  color: var(--color-navy-400);
+  white-space: nowrap;
+}
+
+/* Field-label search + right-side tools on the detail tabs bar. */
+.tabTools {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: flex-end;
+  gap: 0.375rem;
+  margin-left: auto;
+  min-width: 0;
+}
+
+.fieldSearch {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 17rem;
+  max-width: 100%;
+}
+
+.fieldSearchIcon {
+  position: absolute;
+  left: 0.5rem;
+  color: var(--color-navy-400);
+  pointer-events: none;
+}
+
+.fieldSearch .fieldSearchInput {
+  height: 2rem;
+  padding-left: 1.75rem;
+  padding-right: 1.75rem;
+  font-size: 0.75rem;
+}
+
+.fieldSearch .fieldSearchClear {
+  position: absolute;
+  right: 0.375rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.125rem;
+  height: 1.125rem;
+  border-radius: 9999px;
+  border: 0;
+  background-color: var(--color-navy-100);
+  color: var(--color-navy-600);
+  cursor: pointer;
+}
+
+.fieldSearchClear:hover {
+  background-color: var(--color-navy-200);
+}
+
+.fieldSearchEmpty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 1.5rem 1rem;
+  margin-bottom: 1rem;
+  border: 1px dashed var(--color-navy-200);
+  border-radius: 0.75rem;
+  background-color: var(--color-muted);
+  text-align: center;
+}
+
+.fieldSearchEmptyText {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--color-navy-600);
+}
+
+.fieldSearchEmptyClear {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-navy-800);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+@media (max-width: 900px) {
+  .detailTabsBar {
+    flex-wrap: wrap;
+  }
+
+  .tabTools {
+    width: 100%;
+    justify-content: space-between;
+    flex-wrap: wrap;
+  }
+
+  .fieldSearch {
+    width: 100%;
+  }
+}
+
+.tabPanel {
+  margin-top: 1rem;
+}
+
+.detailPanel {
+  margin-top: 1rem;
+}
+
+.infoLayout {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+@media (min-width: 1024px) {
+  .infoLayout {
+    flex-direction: row;
+    align-items: flex-start;
+    gap: 2rem;
+  }
+  .infoAside {
+    width: 16rem;
+    flex-shrink: 0;
+    position: sticky;
+    top: 1rem;
+  }
+}
+
+.infoAside {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.qrCardHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  width: 100%;
+}
+
+.facts {
+  padding: 0.875rem 1rem;
+  border: 1px solid var(--color-navy-200);
+  border-radius: 0.5rem;
+  background-color: #fff;
+}
+
+.factsTitle {
+  margin: 0 0 0.5rem;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-navy-500);
+}
+
+.factRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding-block: 0.375rem;
+  border-top: 1px solid var(--color-navy-100);
+  font-size: 0.8125rem;
+}
+
+.factRow:first-of-type {
+  border-top: 0;
+}
+
+.factLabel {
+  color: var(--color-navy-500);
+  font-size: 0.75rem;
+}
+
+.factValue {
+  color: var(--color-navy-900);
+  font-weight: 600;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+/* ─── Accountability banner (opens the History tab) ────────────────────── */
+
+.factsBanner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.875rem 1.5rem;
+  width: 100%;
+  margin-bottom: 1.25rem;
+  padding: 0.875rem 1rem;
+  border: 1px solid var(--color-navy-800);
+  border-radius: 0.5rem;
+  background: linear-gradient(135deg, #16294a 0%, #22406e 100%);
+  color: #fff;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: box-shadow 0.15s ease, border-color 0.15s ease;
+}
+
+.factsBanner:hover {
+  border-color: var(--color-yellow-600);
+  box-shadow: 0 6px 18px rgba(16, 36, 71, 0.22);
+}
+
+.factsBanner:focus-visible {
+  outline: 2px solid var(--color-yellow-500);
+  outline-offset: 2px;
+}
+
+.factsBannerMain {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  flex: 1 1 13rem;
+  min-width: 0;
+}
+
+.factsKicker {
+  font-size: 0.5625rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--color-yellow-500);
+}
+
+.factsHolder {
+  font-size: 1rem;
+  font-weight: 700;
+  line-height: 1.25;
+  color: #fff;
+  overflow-wrap: anywhere;
+}
+
+.factsHolderNote {
+  font-size: 0.6875rem;
+  color: #9fb2cf;
+}
+
+.factsBannerMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.5rem;
+}
+
+.factsMetaItem {
+  display: flex;
+  flex-direction: column;
+  gap: 0.0625rem;
+  min-width: 0;
+}
+
+.factsMetaLabel {
+  font-size: 0.5625rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #93a4bf;
+}
+
+.factsMetaValue {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #e8eef8;
+  overflow-wrap: anywhere;
+}
+
+.factsBannerCta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  height: 24px;
+  padding: 0 0.625rem;
+  border: 1px solid var(--color-yellow-600);
+  border-radius: 0.375rem;
+  background: var(--color-yellow-500);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  color: var(--color-navy-900);
+  white-space: nowrap;
+  margin-left: auto;
+}
+
+.factsBanner:hover .factsBannerCta {
+  background: var(--color-yellow-600);
+}
+
+.factsCtaCount {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.125rem;
+  height: 1rem;
+  padding: 0 0.25rem;
+  border-radius: 9999px;
+  background: var(--color-navy-900);
+  color: var(--color-yellow-500);
+  font-size: 0.5625rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ─── Assigned employee cell + overlay ────────────────────────────────── */
+
+.assigneeEmpty {
+  color: var(--color-navy-300);
+}
+
+/* One name, ellipsized, plus a `+N` count when more people hold units. */
+.assigneeBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  max-width: 100%;
+  padding: 0.125rem 0.25rem;
+  border: 0;
+  border-radius: 0.25rem;
+  background: transparent;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-navy-900);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.assigneeBtn:hover {
+  background-color: var(--color-navy-100);
+}
+
+.assigneeBtn:focus-visible {
+  outline: 2px solid var(--color-navy-400);
+  outline-offset: 2px;
+}
+
+.assigneeName {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.assigneeMore {
+  flex-shrink: 0;
+  padding: 0 0.25rem;
+  border-radius: 9999px;
+  background-color: var(--color-navy-100);
+  font-size: 0.625rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-navy-600);
+}
+
+.assigneeList {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 22rem;
+  overflow-y: auto;
+  border: 1px solid var(--color-navy-200);
+  border-radius: 0.5rem;
+}
+
+.assigneeItem {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  padding: 0.5625rem 0.75rem;
+  border-top: 1px solid var(--color-navy-100);
+}
+
+.assigneeItem:first-child {
+  border-top: 0;
+}
+
+.assigneeAvatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 1.875rem;
+  height: 1.875rem;
+  border-radius: 9999px;
+  background-color: var(--color-navy-100);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  color: var(--color-navy-700);
+}
+
+.assigneeInfo {
+  display: flex;
+  flex-direction: column;
+  gap: 0.0625rem;
+  min-width: 0;
+}
+
+.assigneeItemName {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  color: var(--color-navy-900);
+  overflow-wrap: anywhere;
+}
+
+.assigneeCurrent {
+  padding: 0.0625rem 0.375rem;
+  border-radius: 9999px;
+  background-color: #dcfce7;
+  font-size: 0.5625rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #166534;
+}
+
+.assigneeItemMeta {
+  font-family: var(--font-mono);
+  font-size: 0.625rem;
+  letter-spacing: 0.02em;
+  color: var(--color-navy-500);
+  overflow-wrap: anywhere;
+}
+
+/* ─── Assigned-record lock notice ──────────────────────────────────────── */
+
+.lockNotice {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin: 0 0 1rem;
+  padding: 0.5625rem 0.75rem;
+  border: 1px solid var(--color-yellow-600);
+  border-radius: 0.375rem;
+  background-color: #fffbeb;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  color: var(--color-navy-800);
+}
+
+.lockNotice svg {
+  flex-shrink: 0;
+  margin-top: 0.125rem;
+  color: var(--color-navy-700);
+}
+
+.lockNotice strong {
+  font-weight: 700;
+  color: var(--color-navy-900);
+}
+
+.infoMain {
+  flex: 1;
+  min-width: 0;
+}
+
+.infoSection {
+  padding-block: 0.875rem;
+  border-top: 1px solid var(--color-navy-100);
+}
+
+.infoSection:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.infoSectionHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.625rem;
+}
+
+.infoSectionTitle {
+  margin: 0;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-navy-700);
+}
+
+.infoSectionCount {
+  font-size: 0.625rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-navy-400);
+}
+
+.editActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--color-navy-100);
+}
+
 .detailGrid {
   display: flex;
   flex-direction: column;
@@ -503,16 +1176,13 @@
 /* Lean registry table — 8 essential columns, rest lives on the detail
    page. Stacked cells carry two values without adding columns. */
 .tableLean table {
-  table-layout: fixed;
   width: 100%;
 }
 
 .tableLean thead th,
 .tableLean tbody td {
   min-width: 0;
-  white-space: normal;
   vertical-align: middle;
-  text-align: left;
 }
 
 .cellMain {
@@ -563,6 +1233,252 @@
 .colLeanDetails {
   width: 7.5rem;
   min-width: 7.5rem !important;
+}
+
+/* ─── Registry table: columns share the full row width ──────────────────
+   Percentages spread the data across the row (no single slack gap in front
+   of Actions) and always fit the card width without a scrollbar. */
+.tableFit {
+  width: 100%;
+  overflow: hidden;
+}
+
+.tableFit table {
+  table-layout: fixed;
+  width: 100%;
+}
+
+.tableFit thead th,
+.tableFit tbody td {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+}
+
+.tableFit thead th {
+  padding: 0.5rem 0.5rem;
+}
+
+.tableFit tbody td {
+  padding: 0.5rem 0.5rem;
+}
+
+.cCode {
+  width: 12%;
+  text-align: left;
+}
+
+.cType {
+  width: 8%;
+  text-align: left;
+}
+
+/* Asset Title takes the widest data share and truncates with an ellipsis. */
+.cTitle {
+  width: 17%;
+  text-align: left;
+}
+
+.cQty {
+  width: 8%;
+  text-align: left;
+}
+
+.cAvailability {
+  width: 11%;
+  text-align: left;
+}
+
+.cAssignee {
+  width: 14%;
+  text-align: left;
+}
+
+.cStatus {
+  width: 9%;
+  text-align: left;
+}
+
+/* Actions takes the last share and pins its buttons to the right edge.
+   25% keeps View + Assign + QR on ONE line without clipping. */
+.cActions {
+  width: 21%;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.tableFit thead th.cActions,
+.tableFit tbody td.cActions {
+  text-align: right;
+  overflow: visible;
+}
+
+/* Narrow screens: give Actions enough room for the three buttons while the
+   data columns keep an even share. */
+@media (max-width: 1100px) {
+  .cCode {
+    width: 11%;
+  }
+  .cType {
+    width: 7%;
+  }
+  .cTitle {
+    width: 14%;
+  }
+  .cQty {
+    width: 8%;
+  }
+  .cAvailability {
+    width: 10%;
+  }
+  .cAssignee {
+    width: 12%;
+  }
+  .cStatus {
+    width: 9%;
+  }
+  .cActions {
+    width: 29%;
+  }
+}
+
+/* Asset Title: one line each, ellipsis when long. */
+.titleCell {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.titleMain {
+  display: block;
+  font-weight: 700;
+  font-size: 0.8125rem;
+  color: var(--color-navy-900);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.titleDesc {
+  display: block;
+  margin-top: 0.0625rem;
+  font-size: 0.75rem;
+  color: var(--color-navy-500);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Yellow 24px row buttons — View is the muted (secondary) action, Assign is
+   the primary one, QR is the only icon button. Mirrors the inspections page
+   and never shrinks, so all three always stay on one horizontal line. */
+.rowAction {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.3125rem;
+  flex-shrink: 0;
+  height: 1.5rem;
+  padding-inline: 0.625rem;
+  border: 1px solid var(--color-yellow-600);
+  border-radius: 4px;
+  background-color: var(--color-yellow-500);
+  color: var(--color-navy-900);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+  opacity: 0.9;
+  transition: background-color 0.15s, border-color 0.15s, opacity 0.15s;
+}
+
+.rowAction:hover:not(:disabled) {
+  background-color: var(--color-yellow-400);
+  border-color: var(--color-yellow-500);
+  opacity: 1;
+}
+
+/* Secondary row action — pale amber tint, same as the inspections list. */
+.rowActionMuted {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.3125rem;
+  flex-shrink: 0;
+  height: 1.5rem;
+  padding-inline: 0.625rem;
+  border: 1px solid rgba(234, 179, 8, 0.4);
+  border-radius: 4px;
+  background-color: rgba(234, 179, 8, 0.2);
+  color: var(--color-navy-900);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 0.15s, border-color 0.15s, opacity 0.15s;
+}
+
+.rowActionMuted:hover:not(:disabled) {
+  background-color: rgba(234, 179, 8, 0.3);
+  border-color: rgba(234, 179, 8, 0.5);
+}
+
+.rowActionMuted:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.rowActionMuted:focus-visible {
+  outline: 2px solid var(--color-navy-900);
+  outline-offset: 2px;
+}
+
+.rowAction:focus-visible,
+.rowIconAction:focus-visible {
+  outline: 2px solid var(--color-navy-900);
+  outline-offset: 2px;
+}
+
+.rowAction:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.rowIconAction {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 1.5rem;
+  height: 1.5rem;
+  padding: 0;
+  border: 1px solid var(--color-yellow-600);
+  border-radius: 4px;
+  background-color: var(--color-yellow-500);
+  color: var(--color-navy-900);
+  cursor: pointer;
+  opacity: 0.8;
+  transition: background-color 0.15s, border-color 0.15s, opacity 0.15s;
+}
+
+.rowIconAction:hover {
+  background-color: var(--color-yellow-400);
+  border-color: var(--color-yellow-500);
+  opacity: 1;
+}
+
+.actionsCell {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.375rem;
+  width: 100%;
 }
 
 .colLeanProp {

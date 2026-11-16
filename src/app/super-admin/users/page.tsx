@@ -41,7 +41,7 @@ function statusTone(status: string) {
 }
 
 export default function SuperAdminUsersPage() {
-  // Server-paged roster window (PAGE_SIZE = 15): the DB returns only the
+  // Server-paged roster window (PAGE_SIZE = 10): the DB returns only the
   // window + exact total per filter set (30s, busted by user writes).
   const [query, setQuery] = useState("");
   const debouncedQuery = useDebouncedValue(query, 300);

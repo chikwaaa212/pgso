@@ -83,8 +83,8 @@ function loadPageWindow(): (current: number, total: number) => number[] {
 
 const pageWindow = loadPageWindow();
 
-test("PAGE_SIZE is the single source of truth (15)", () => {
-  assert.strictEqual(PAGE_SIZE, 15);
+test("PAGE_SIZE is the single source of truth (10)", () => {
+  assert.strictEqual(PAGE_SIZE, 10);
 });
 
 test("parsePage clamps into 1..1000", () => {
@@ -108,10 +108,10 @@ test("parsePage clamps into 1..1000", () => {
 test("totalPagesFor honors PAGE_SIZE math", () => {
   assert.strictEqual(totalPagesFor(0), 1);
   assert.strictEqual(totalPagesFor(1), 1);
-  assert.strictEqual(totalPagesFor(15), 1);
-  assert.strictEqual(totalPagesFor(16), 2);
-  assert.strictEqual(totalPagesFor(30), 2);
-  assert.strictEqual(totalPagesFor(31), 3);
+  assert.strictEqual(totalPagesFor(10), 1);
+  assert.strictEqual(totalPagesFor(11), 2);
+  assert.strictEqual(totalPagesFor(20), 2);
+  assert.strictEqual(totalPagesFor(21), 3);
   assert.strictEqual(totalPagesFor(100, 10), 10);
 });
 
@@ -119,12 +119,12 @@ test("clampPage pins into 1..totalPages", () => {
   assert.strictEqual(clampPage(0, 100), 1);
   assert.strictEqual(clampPage(-4, 100), 1);
   assert.strictEqual(clampPage(5, 100), 5);
-  assert.strictEqual(clampPage(9999, 100), 7);
+  assert.strictEqual(clampPage(9999, 100), 10);
   assert.strictEqual(clampPage(3, 0), 1);
 });
 
 test("pageResponse returns the canonical envelope", () => {
-  const res = pageResponse([1, 2], 30, 2);
+  const res = pageResponse([1, 2], 20, 2);
   assert.deepStrictEqual(Object.keys(res).sort(), [
     "data",
     "page",
@@ -135,24 +135,24 @@ test("pageResponse returns the canonical envelope", () => {
   ]);
   assert.deepStrictEqual(res.data, [1, 2]);
   assert.deepStrictEqual(res.rows, [1, 2]);
-  assert.strictEqual(res.total, 30);
+  assert.strictEqual(res.total, 20);
   assert.strictEqual(res.page, 2);
-  assert.strictEqual(res.pageSize, 15);
+  assert.strictEqual(res.pageSize, 10);
   assert.strictEqual(res.totalPages, 2);
 });
 
 test("pageResponse clamps out-of-range pages", () => {
-  assert.strictEqual(pageResponse([], 30, 999).page, 2);
-  assert.strictEqual(pageResponse([], 30, 0).page, 1);
+  assert.strictEqual(pageResponse([], 20, 999).page, 2);
+  assert.strictEqual(pageResponse([], 20, 0).page, 1);
   assert.strictEqual(pageResponse([], 0, 5).page, 1);
 });
 
-test("pagination hides on a single page (total <= 15)", () => {
+test("pagination hides on a single page (total <= 10)", () => {
   // Pagination renders NOTHING when total <= PAGE_SIZE: exactly when there
   // is a single page.
   assert.strictEqual(totalPagesFor(0), 1);
-  assert.strictEqual(totalPagesFor(15), 1);
-  assert.strictEqual(totalPagesFor(16), 2);
+  assert.strictEqual(totalPagesFor(10), 1);
+  assert.strictEqual(totalPagesFor(11), 2);
   assert.ok(
     paginationSrc.includes("if (total <= pageSize) return null"),
     "Pagination must return null when total <= pageSize"

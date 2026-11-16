@@ -53,7 +53,7 @@ export async function getAdminLogModules(): Promise<string[]> {
 }
 
 /**
- * Server-paged audit window (PAGE_SIZE = 15) replacing the legacy take-500
+ * Server-paged audit window (PAGE_SIZE = 10) replacing the legacy take-500
  * snapshot + client slice: the DB returns only the window (+ exact total per
  * filter set, cached 30s). Search spans action/module/jsonb detail text plus
  * user names (bounded profile pre-lookup); module filters exactly.
@@ -66,7 +66,7 @@ export async function getLogsPage(
   try {
     await requireSuperAdmin()
   } catch {
-    return { rows: [], data: [], total: 0, page: 1, pageSize: 15, totalPages: 1 }
+    return { rows: [], data: [], total: 0, page: 1, pageSize: 10, totalPages: 1 }
   }
   const { withScopedCache } = await import('@/lib/personnel-cache')
   const { PAGE_SIZE } = await import('@/lib/constants')

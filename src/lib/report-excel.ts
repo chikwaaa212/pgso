@@ -3,11 +3,13 @@ import ExcelJS from 'exceljs'
 import {
   AGING_BUCKETS,
   DELAYED_THRESHOLD_DAYS,
-  conditionLabel,
+  assetStatusLabel,
+  availabilityLabel,
+  percentage,
 } from '@/lib/reporting'
 import type {
   AgingReport,
-  AssetConditionReport,
+  AssetAvailabilityReport,
   QuarterlyIssuanceReport,
   ReportPortal,
 } from '@/lib/reporting-queries'
@@ -368,70 +370,65 @@ export function buildQuarterlyWorkbook(
   return wb
 }
 
-// ─── Asset conditions ──────────────────────────────────────────────────────
+// ─── Asset availability & status ───────────────────────────────────────────
 
-export function buildConditionWorkbook(
-  report: AssetConditionReport,
+export function buildAvailabilityWorkbook(
+  report: AssetAvailabilityReport,
   portal: ReportPortal
 ): Workbook {
   const wb = createWorkbook()
-  const ws = wb.addWorksheet('Asset conditions', {
+  const ws = wb.addWorksheet('Asset availability', {
     views: [{ state: 'frozen', ySplit: 1 }],
   })
-  const columns = 5
-  setWidths(ws, [28, 20, 14, 12, 24])
+  const columns = 6
+  setWidths(ws, [28, 20, 14, 12, 12, 28])
 
-  addTitle(ws, 'Asset Condition Breakdown', columns)
+  addTitle(ws, 'Asset Availability & Status', columns)
   let row = addMeta(ws, 2, [
     `Scope: ${portalLabel(portal)} — shared asset registry`,
     `Generated: ${fmtDateTime(report.generatedAt)} (Asia/Manila)`,
-    'Condition distribution only: the registry stores the current condition, so a historical trend is not available.',
+    'Status distribution only: the registry stores the current status, so a historical trend is not available.',
   ], columns)
 
   row = addSection(ws, row, 'Headline', columns)
-  row = addTableHeader(ws, row, ['Measure', 'Assets', 'Share', '', ''])
-  row = addTableRow(ws, row, ['Total assets', report.total, 100, '', ''], [undefined, 'number', 'number'])
-  row = addTableRow(ws, row, ['Serviceable', report.serviceable, report.serviceablePct, '', ''], [undefined, 'number', 'number'])
+  row = addTableHeader(ws, row, ['Measure', 'Items', 'Units', 'Share', ''])
+  row = addTableRow(ws, row, ['Total assets', report.total, report.totalUnits, 100, ''], [undefined, 'number', 'number', 'number'])
+  row = addTableRow(ws, row, ['Available', report.available, '', report.availablePct, ''], [undefined, 'number', 'number'])
   row = addTableRow(
     ws,
     row,
-    [
-      'Unserviceable',
-      report.unserviceable,
-      report.total > 0 ? Math.round((report.unserviceable / report.total) * 100) : 0,
-      '',
-      '',
-    ],
+    ['In use', report.inUse, '', percentage(report.inUse, report.total), ''],
     [undefined, 'number', 'number']
   )
   row = addTableRow(
     ws,
     row,
     [
-      'Unspecified',
-      report.unspecified,
-      report.total > 0 ? Math.round((report.unspecified / report.total) * 100) : 0,
+      'Unavailable',
+      report.unavailable,
       '',
-      '',
+      percentage(report.unavailable, report.total),
+      'Out of stock, maintenance, retired, lost/disposed, or not recorded',
     ],
     [undefined, 'number', 'number']
   )
 
   row += 1
-  row = addSection(ws, row, 'Condition distribution', columns)
-  row = addTableHeader(ws, row, ['Condition', 'Classification', 'Assets', 'Share', 'Notes'])
+  row = addSection(ws, row, 'Status distribution', columns)
+  row = addTableHeader(ws, row, ['Status', 'Availability', 'Items', 'Units', 'Share', 'Notes'])
   for (const item of report.rows) {
     row = addTableRow(
       ws,
       row,
       [
-        item.label || conditionLabel(item.condition),
-        item.cls === 'unspecified' ? 'Unspecified' : item.cls,
-        item.count,
+        item.label || assetStatusLabel(item.status),
+        availabilityLabel(item.cls),
+        item.items,
+        item.units,
         item.pct,
-        item.cls === 'unspecified' ? 'Condition not recorded or not recognized' : '',
+        item.cls === 'unspecified' ? 'Status not recorded or not recognized' : '',
       ],
-      [undefined, undefined, 'number', 'number']
+      [undefined, undefined, 'number', 'number', 'number']
     )
   }
 

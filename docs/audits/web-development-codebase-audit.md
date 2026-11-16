@@ -205,7 +205,7 @@ Website (PGSO-PSMS)
 ├── /personnel (role: pgso_personnel; /personnel → index/redirect)
 │   ├── /personnel/dashboard
 │   ├── /personnel/assets + /[id] + /stock/[id]
-│   ├── /personnel/inventory
+│   ├── /personnel/stocks
 │   ├── /personnel/deliveries + /[id]
 │   ├── /personnel/inspections + /[id] + /[id]/iar + /[id]/receipt + /[id]/receipts
 │   ├── /personnel/issuances + /[id]
@@ -215,7 +215,7 @@ Website (PGSO-PSMS)
 ├── /super-admin (role: super_admin)
 │   ├── /super-admin/dashboard (+ analytics/stats actions)
 │   ├── /super-admin/assets + /[id] + /stock/[id]
-│   ├── /super-admin/inventory · deliveries[+id] · inspections[+id]
+│   ├── /super-admin/stocks · deliveries[+id] · inspections[+id]
 │   ├── /super-admin/issuances[+id] · repairs[+id] · requests
 │   ├── /super-admin/issues · documents · logs
 │   ├── /super-admin/records · transactions
@@ -240,7 +240,7 @@ flowchart TD
     EmpD --> EmpA[/employee/assets]
     EmpD --> EmpR[/employee/requests]
     PerD --> PAssets[/personnel/assets]
-    PerD --> PInv[/personnel/inventory]
+    PerD --> PInv[/personnel/stocks]
     PerD --> PDel[/personnel/deliveries]
     PerD --> PIns[/personnel/inspections]
     PerD --> PIss[/personnel/issuances]
