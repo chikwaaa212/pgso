@@ -61,10 +61,12 @@ import { ParReportSheet } from "@/app/personnel/documents/par-report";
 import { IcsReportSheet } from "@/app/personnel/documents/ics-report";
 import { ReceiptOverlay } from "@/app/personnel/documents/receipt-overlay";
 import receipt from "@/app/personnel/inspections/components/receipt.module.css";
-import { TablePager } from "@/components/personnel/TablePager";
+import { Pagination } from "@/components/ui/pagination";
+import {
+  DataTableSkeleton,
+  PagerSkeleton,
+} from "@/components/personnel/skeletons";
 import { ReceiptLoading } from "@/components/personnel/ReceiptLoading";
-import { EmptySearchState } from "@/components/personnel/EmptySearchState";
-import { DocumentsTableSkeleton } from "@/components/personnel/DocumentsTableSkeleton";
 import { useCachedAction } from "@/hooks/use-cached-action";
 import { buildQueryKey } from "@/lib/query-keys";
 import {
@@ -73,7 +75,8 @@ import {
 } from "@/lib/client-cache";
 import { useReceipt } from "@/hooks/use-receipt";
 import DocumentsLoading from "./loading";
-import stockStyles from "@/app/personnel/stocks/page.module.css";
+import styles from "@/app/personnel/dashboard/page.module.css";
+import air from "@/app/personnel/inspections/air-section.module.css";
 import docs from "@/app/personnel/documents/page.module.css";
 
 const TABS = [
