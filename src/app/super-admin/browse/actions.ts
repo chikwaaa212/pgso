@@ -576,7 +576,7 @@ export interface AdminDocumentsTabPage {
 
 export async function getAdminDocumentsTabPage(
   tab: AdminDocumentsTab,
-  opts: { page?: number; q?: string } = {}
+  opts: { page?: number; q?: string; pageSize?: number } = {}
 ): Promise<AdminDocumentsTabPage> {
   if (!(await allowed())) {
     return { rows: [], data: [], total: 0, page: 1, pageSize: 10, totalPages: 1 }
@@ -586,9 +586,12 @@ export async function getAdminDocumentsTabPage(
   const { parsePage, parseQuery, pageResponse } = await import('@/lib/paged')
   const page = parsePage(opts.page)
   const q = parseQuery(opts.q)
-  const pageSize = PAGE_SIZE
+  const rawSize = Math.floor(Number(opts.pageSize))
+  const pageSize = Number.isFinite(rawSize)
+    ? Math.min(Math.max(rawSize, 1), 1000)
+    : PAGE_SIZE
   const envelope = <T>(rows: T[], total: number): AdminDocumentsTabPage => {
-    const e = pageResponse(rows, total, page)
+    const e = pageResponse(rows, total, page, pageSize)
     return { rows: e.rows, data: e.data, total: e.total, page: e.page, pageSize: e.pageSize, totalPages: e.totalPages }
   }
   return withScopedCache('super-admin:documents-tab', 30, async () => {
@@ -631,7 +634,7 @@ export async function getAdminDocumentsTabPage(
           return envelope(r.rows, r.total)
         }
         case 'assets': {
-          const r = await getUnifiedAssetsPage({ page, q, slim: true })
+          const r = await getUnifiedAssetsPage({ page, pageSize, q, slim: true })
           return envelope(r.rows, r.total)
         }
         case 'repairs': {
@@ -782,7 +785,7 @@ export interface BrowseIssuancesPage {
 }
 
 export async function browseIssuancesPage(
-  opts: { page?: number; q?: string } = {}
+  opts: { page?: number; q?: string; docType?: string } = {}
 ): Promise<BrowseIssuancesPage> {
   const { PAGE_SIZE } = await import('@/lib/constants')
   const empty: BrowseIssuancesPage = { rows: [], data: [], total: 0, page: 1, pageSize: PAGE_SIZE, totalPages: 1 }
@@ -791,11 +794,12 @@ export async function browseIssuancesPage(
   const { parsePage, parseQuery, pageResponse } = await import('@/lib/paged')
   const page = parsePage(opts.page)
   const q = parseQuery(opts.q)
+  const docType = (opts.docType ?? 'all').trim() || 'all'
   const pageSize = PAGE_SIZE
   return withScopedCache('super-admin:issuances-page', 30, async () => {
   try {
     const { getIssuancesPage } = await import('@/app/personnel/issuances/actions')
-    const r = await getIssuancesPage({ page, pageSize, q })
+    const r = await getIssuancesPage({ page, pageSize, q, docType })
     const rows = await withIssuanceLoggers(r.rows)
     const e = pageResponse(rows, r.total, page, pageSize)
     return { rows: e.rows, data: e.data, total: e.total, page: e.page, pageSize: e.pageSize, totalPages: e.totalPages }
@@ -803,7 +807,29 @@ export async function browseIssuancesPage(
     console.error('[browseIssuancesPage]', e)
     return { rows: [], data: [], total: 0, page: 1, pageSize, totalPages: 1 }
   }
-  }, { page, pageSize, q })
+  }, { page, pageSize, q, docType })
+}
+
+/** System-wide PAR/ICS totals for the header summary tiles (cached reads). */
+export async function browseIssuanceTotals(): Promise<{
+  all: number
+  par: number
+  ics: number
+}> {
+  const empty = { all: 0, par: 0, ics: 0 }
+  if (!(await allowed())) return empty
+  try {
+    const { getIssuancesPage } = await import('@/app/personnel/issuances/actions')
+    const [all, par, ics] = await Promise.all([
+      getIssuancesPage({ page: 1, pageSize: 1 }),
+      getIssuancesPage({ page: 1, pageSize: 1, docType: 'PAR' }),
+      getIssuancesPage({ page: 1, pageSize: 1, docType: 'ICS' }),
+    ])
+    return { all: all.total, par: par.total, ics: ics.total }
+  } catch (e) {
+    console.error('[browseIssuanceTotals]', e)
+    return empty
+  }
 }
 
 export interface BrowseRequestsPage {

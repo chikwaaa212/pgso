@@ -4,9 +4,8 @@ import styles from "./page.module.css";
 /**
  * Super-admin dashboard skeleton — mirrors the real dashboard section
  * order and grid positions 1:1 so content swaps in without layout shift:
- * header + actions → 13 stat cards → Deliveries vs inspections combo card
- * (bars + line + insight + buttons) → Analytics (8 cards) → Recent
- * activity + Add Personnel form.
+ * header + actions → 13 stat cards → Deliveries vs inspections grouped-bar
+ * card → Analytics (11 cards in 3 · 2 · 1 · 3 · 2 rows).
  *
  * Static chrome (titles, labels, buttons) renders as real text with the
  * real classes; only live values are pulse placeholders sized to the
@@ -37,17 +36,26 @@ const ANALYTICS_CARDS = [
   { title: "Stock health gauge", sub: "Share of stock lines above reorder threshold" },
   { title: "Repairs by status", sub: "Repair tickets — all time" },
   { title: "Assets by status", sub: "Registered fleet composition — all time" },
-  { title: "Issuances by type", sub: "PAR vs ICS accountability documents" },
   { title: "Issuance trend", sub: "PAR / ICS documents issued per month — last 6 months" },
+  { title: "Issuances by type", sub: "PAR vs ICS accountability documents" },
   { title: "Documents by type", sub: "Generated RIS, PAR, ICS, AIR and others" },
   { title: "Delayed & aging transactions", sub: "Open records past the 7-day threshold, by workflow" },
   { title: "Quarterly issuance", sub: "PAR / ICS documents issued per calendar quarter — last 8 quarters" },
   { title: "Asset conditions", sub: "Registered assets by current condition" },
 ];
 
-// Bar heights (%) + trend-line points for the combo chart placeholder.
-const BARS = [42, 68, 55, 82, 60, 74];
-const LINE_POINTS = "50,190 150,150 250,165 350,110 450,130 550,85";
+// Analytics rows mirror the real layout: 3 · 2 · 1 · 3 · 2 cards.
+const ANALYTICS_ROWS = [3, 2, 1, 3, 2];
+
+// Paired bar heights (%) for the grouped-bar chart placeholder.
+const BAR_PAIRS = [
+  [42, 30],
+  [68, 52],
+  [55, 44],
+  [82, 62],
+  [60, 48],
+  [74, 58],
+];
 
 function Pulse({ className }: { className: string }) {
   return <div aria-hidden="true" className={`animate-pulse rounded bg-navy-100 ${className}`} />;
@@ -95,7 +103,7 @@ export default function SuperAdminDashboardLoading() {
         ))}
       </div>
 
-      {/* Chart — same combo card: head, bars + line, insight, buttons */}
+      {/* Chart — same grouped-bar card as personnel: head, bars, buttons */}
       <Card className={`${styles.panel} p-4`}>
         <div className={styles.panelHead}>
           <div>
@@ -106,40 +114,22 @@ export default function SuperAdminDashboardLoading() {
             <Pulse className="h-8 w-40" />
           </div>
         </div>
-        <div className="relative max-h-[280px] w-full" aria-hidden="true">
-          <svg
-            viewBox="0 0 600 280"
-            preserveAspectRatio="none"
-            className="pointer-events-none absolute inset-0 h-full w-full animate-pulse"
-          >
-            <polyline
-              points={LINE_POINTS}
-              fill="none"
-              stroke="#f5c518"
-              strokeWidth="3"
-              strokeLinejoin="round"
-              strokeLinecap="round"
-            />
-            {LINE_POINTS.split(" ").map((pt) => {
-              const [cx, cy] = pt.split(",");
-              return <circle key={pt} cx={cx} cy={cy} r="6" fill="#f5c518" />;
-            })}
-          </svg>
-          <div className="flex h-[280px] items-end justify-around gap-2 px-2">
-            {BARS.map((h, i) => (
-              <div key={i} className="flex h-full flex-1 flex-col items-center justify-end gap-2">
+        <div className="flex h-[280px] items-end justify-around gap-3 px-2" aria-hidden="true">
+          {BAR_PAIRS.map((pair, i) => (
+            <div key={i} className="flex h-full flex-1 flex-col items-center justify-end gap-2">
+              <div className="flex h-full w-full items-end justify-center gap-1">
                 <div
-                  className="w-full max-w-10 animate-pulse rounded bg-navy-100"
-                  style={{ height: `${h}%` }}
+                  className="w-4 max-w-[32%] animate-pulse rounded bg-navy-100"
+                  style={{ height: `${pair[0]}%` }}
                 />
-                <div className="h-3 w-8 animate-pulse rounded bg-navy-100" />
+                <div
+                  className="w-4 max-w-[32%] animate-pulse rounded bg-navy-100"
+                  style={{ height: `${pair[1]}%` }}
+                />
               </div>
-            ))}
-          </div>
-        </div>
-        <div className={styles.chartCaption} aria-hidden="true">
-          <Pulse className="h-3 w-full" />
-          <Pulse className="mt-1.5 h-3 w-2/3" />
+              <div className="h-3 w-8 animate-pulse rounded bg-navy-100" />
+            </div>
+          ))}
         </div>
         <div className={styles.panelFooter} aria-hidden="true">
           <span className={styles.inspectLink}>View deliveries</span>
@@ -147,26 +137,38 @@ export default function SuperAdminDashboardLoading() {
         </div>
       </Card>
 
-      {/* Analytics — same heading + 8 cards in the same grid */}
+      {/* Analytics — same heading + 11 cards in the 3 · 2 · 1 · 3 · 2 rows */}
       <div>
         <h2 className={styles.panelTitle}>Analytics</h2>
         <p className={styles.panelSub}>
           Live breakdowns across every transaction type — each with what it means for operations.
         </p>
-        <div className={styles.analyticsGrid} aria-hidden="true">
-          {ANALYTICS_CARDS.map((c) => (
-            <Card key={c.title} className={`${styles.panel} p-4`}>
-              <div>
-                <h3 className={styles.panelTitle}>{c.title}</h3>
-                <p className={styles.panelSub}>{c.sub}</p>
+        <div className={styles.analyticsRows} aria-hidden="true">
+          {ANALYTICS_ROWS.map((size, rowIndex) => {
+            const start = ANALYTICS_ROWS.slice(0, rowIndex).reduce((n, s) => n + s, 0);
+            const rowCards = ANALYTICS_CARDS.slice(start, start + size);
+            return (
+              <div
+                key={`analytics-row-${rowIndex}`}
+                className={styles.analyticsRow}
+                data-cols={size}
+              >
+                {rowCards.map((c) => (
+                  <Card key={c.title} className={`${styles.panel} p-4`}>
+                    <div>
+                      <h3 className={styles.panelTitle}>{c.title}</h3>
+                      <p className={styles.panelSub}>{c.sub}</p>
+                    </div>
+                    <Pulse className="h-44 w-full" />
+                    <div className={styles.chartCaption}>
+                      <Pulse className="h-3 w-full" />
+                      <Pulse className="mt-1.5 h-3 w-3/4" />
+                    </div>
+                  </Card>
+                ))}
               </div>
-              <Pulse className="h-44 w-full" />
-              <div className={styles.chartCaption}>
-                <Pulse className="h-3 w-full" />
-                <Pulse className="mt-1.5 h-3 w-3/4" />
-              </div>
-            </Card>
-          ))}
+            );
+          })}
         </div>
       </div>
     </section>

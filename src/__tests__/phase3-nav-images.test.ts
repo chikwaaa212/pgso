@@ -33,11 +33,12 @@ describe("nav prefetch map: first-page keys match their target pages", () => {
   });
   it("admin entries use the shared factory with matching fetchers", () => {
     assert.match(map, /module: 'super-admin',\s*resource: 'users', page: 1/);
-    assert.match(map, /getUsersPage\(\{ page: 1, q: '' \}\)/);
+    assert.match(map, /getUsersPage\(\{ page: 1, q: '', role: 'all', status: 'all' \}\)/);
     assert.match(map, /module: 'super-admin',\s*resource: 'deliveries', page: 1/);
     assert.match(map, /browseDeliveriesPage\(\{ page: 1, q: '' \}\)/);
-    assert.match(map, /module: 'super-admin',\s*resource: 'requests', page: 1/);
-    assert.match(map, /browseRequestsPage\(\{ page: 1, q: '' \}\)/);
+    // Admin requests reuses the personnel Requests page (all-queue reader).
+    assert.match(map, /'\/super-admin\/requests': \[\s*\{\s*key: buildQueryKey\(\{/);
+    assert.match(map, /getRequestsPage\(\{ page: 1, pageSize: 100 \}\)/);
   });
   it("employee entries mirror the snapshot compositions", () => {
     assert.match(map, /getMyAssets\(\), getMyDocs\(\), getMyAssetRequests\(\)/);
@@ -59,6 +60,7 @@ describe("navbars spread intent props on every nav link", () => {
     ["../components/super-admin/SuperAdminNavbar.tsx", 2],
     ["../components/super-admin/SuperAdminSidebar.tsx", 2],
     ["../components/employee/EmployeeNavbar.tsx", 2],
+    ["../components/employee/EmployeeSidebar.tsx", 2],
   ] as const) {
     it(`${nav}: all nav Links carry hover/focus prefetch`, () => {
       const body = src(nav);

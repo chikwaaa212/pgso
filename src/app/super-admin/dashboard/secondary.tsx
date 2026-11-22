@@ -13,8 +13,8 @@ export async function DashboardMonthly() {
   return <DeliveryInspectionChart data={monthly} />
 }
 
-export async function DashboardAnalytics({ gridClass }: { gridClass: string }) {
+export async function DashboardAnalytics() {
   const analytics = await getAnalytics()
   if (!analytics) return null
-  return <AnalyticsGrid data={analytics} gridClass={gridClass} />
+  return <AnalyticsGrid data={analytics} />
 }

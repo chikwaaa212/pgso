@@ -1,6 +1,7 @@
 "use client";
 
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { usePathname } from "next/navigation";
 import { toast } from "sonner";
 import {
   Boxes,
@@ -64,6 +65,7 @@ import { CLIENT_CACHE_KEYS, bustClientCache } from "@/lib/client-cache";
 import RequestsLoading from "./loading";
 import req from "./page.module.css";
 import { EmptySearchState } from "@/components/personnel/EmptySearchState";
+import { portalFromPathname } from "@/lib/portal-path";
 
 function tone(status: string | null) {
   if (status === "approved") return "info";
@@ -313,6 +315,10 @@ export default function PersonnelRequestsPage() {
 }
 
 function PersonnelRequestsContent() {
+  // Super Admin reuses this page (same UI + actions). Personnel only see the
+  // requests sent to them; the admin sees the whole queue so they can act on
+  // requests sent to any personnel, exactly like their own.
+  const isAdminPortal = portalFromPathname(usePathname()) === "super-admin";
   const [query, setQuery] = useState("");
   const [statusTab, setStatusTab] =
     useState<(typeof STATUS_TABS)[number]["value"]>("all");
@@ -336,7 +342,12 @@ function PersonnelRequestsContent() {
     refresh: refreshRows,
   } = useCachedAction(
     cacheKey,
-    () => getRequestsPage({ forRecipient: true, page: 1, pageSize: FETCH_LIMIT }),
+    () =>
+      getRequestsPage(
+        isAdminPortal
+          ? { page: 1, pageSize: FETCH_LIMIT }
+          : { forRecipient: true, page: 1, pageSize: FETCH_LIMIT }
+      ),
     {
       staleTime: 30_000,
     }
@@ -832,7 +843,7 @@ function PersonnelRequestsContent() {
         subtitle="Review requests sent to you, then approve, reject, or complete them. Use ‘New request’ to file one for an employee."
         meta={`${queueTotal.toLocaleString("en-PH")} request${
           queueTotal === 1 ? "" : "s"
-        } in your queue`}
+        } ${isAdminPortal ? "across all employees" : "in your queue"}`}
         actions={
           <div className={req.headerActions}>
             <Button
@@ -857,9 +868,15 @@ function PersonnelRequestsContent() {
             <Inbox size={16} aria-hidden="true" />
           </span>
           <div className={req.summaryBody}>
-            <p className={req.summaryLabel}>In your queue</p>
+            <p className={req.summaryLabel}>
+              {isAdminPortal ? "All requests" : "In your queue"}
+            </p>
             <p className={req.summaryValue}>{queueTotal}</p>
-            <p className={req.summaryMeta}>All statuses sent to you</p>
+            <p className={req.summaryMeta}>
+              {isAdminPortal
+                ? "Filed by employees and personnel"
+                : "All statuses sent to you"}
+            </p>
           </div>
         </article>
 

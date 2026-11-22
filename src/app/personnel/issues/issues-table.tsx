@@ -5,6 +5,7 @@ import {
   Check,
   Copy,
   Download,
+  FileText,
   PackageSearch,
   Printer,
   QrCode,
@@ -24,9 +25,15 @@ import {
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Pagination } from "@/components/ui/pagination";
 import { EmptySearchState } from "@/components/personnel/EmptySearchState";
+import { ReceiptLoading } from "@/components/personnel/ReceiptLoading";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
+import { useReceipt } from "@/hooks/use-receipt";
 import { PAGE_SIZE } from "@/lib/constants";
 import { cn } from "@/lib/utils";
+import { getIssuance, type IssuanceDetail } from "../issuances/actions";
+import { IcsReportSheet } from "../documents/ics-report";
+import { ParReportSheet } from "../documents/par-report";
+import { ReceiptOverlay } from "../documents/receipt-overlay";
 import type { PublicIssueLine } from "./actions";
 import styles from "../dashboard/page.module.css";
 import stockStyles from "../stocks/page.module.css";
@@ -90,6 +97,15 @@ export function IssuesTable({
   useEffect(() => {
     if (serverDriven) onFiltersChange({ q: debouncedQuery, docType: docFilter, assetType: typeFilter });
   }, [debouncedQuery, docFilter, typeFilter, serverDriven, onFiltersChange]);
+
+  // Full PAR / ICS form in its own overlay, opened from the QR record footer.
+  // Shares the receipt cache with the Issuances and Documents screens, so a
+  // document opened there paints instantly here.
+  const viewer = useReceipt<IssuanceDetail | null>();
+  const openDocument = (row: PublicIssueLine) =>
+    viewer.open(row.issuance_id, `issuance:${row.issuance_id}`, () =>
+      getIssuance(row.issuance_id)
+    );
 
   const typeOptions = useMemo(() => {
     if (serverTypeOptions) {
@@ -498,6 +514,15 @@ export function IssuesTable({
                 <div className={`${qr.actions} ${qr.noPrint}`}>
                   <button
                     type="button"
+                    onClick={() => active && openDocument(active)}
+                    className={qr.btnPrimary}
+                    title={`Open the full ${active.doc_type} form`}
+                  >
+                    <FileText size={14} aria-hidden="true" /> See{" "}
+                    {active.doc_type} record
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => window.print()}
                     className={qr.btnOutline}
                   >
@@ -515,7 +540,7 @@ export function IssuesTable({
                     <a
                       href={active.qr_data_url}
                       download={`issue-${active.doc_type}-${active.doc_no ?? active.issuance_id.slice(0, 8)}-line${active.line_index + 1}.svg`}
-                      className={qr.btnPrimary}
+                      className={qr.btnOutline}
                     >
                       <Download size={14} aria-hidden="true" /> Download QR
                     </a>
@@ -526,6 +551,37 @@ export function IssuesTable({
           ) : null}
         </DialogContent>
       </Dialog>
+
+      {/* Full document form — opens over the QR record so the summary stays
+          visible behind it. Printable as the official PAR/ICS page. */}
+      <ReceiptOverlay
+        open={viewer.selectedId !== null}
+        title={
+          viewer.doc?.doc_type === "PAR"
+            ? "Property Acknowledgement Receipt"
+            : "Inventory Custodian Slip"
+        }
+        onClose={viewer.close}
+        printable={!viewer.docLoading && !!viewer.doc}
+      >
+        {viewer.docLoading ? (
+          <ReceiptLoading label="Loading record..." />
+        ) : !viewer.doc ? (
+          <div className={stockStyles.empty}>
+            <p className={stockStyles.emptyText}>
+              This record is no longer available.
+            </p>
+          </div>
+        ) : (
+          <div className={qr.receiptStack}>
+            {viewer.doc.doc_type === "PAR" ? (
+              <ParReportSheet issuance={viewer.doc} />
+            ) : (
+              <IcsReportSheet issuance={viewer.doc} />
+            )}
+          </div>
+        )}
+      </ReceiptOverlay>
     </div>
   );
 }

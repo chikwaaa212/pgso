@@ -4,7 +4,7 @@ import prisma from '@/lib/prisma'
 import { requireSuperAdmin } from '@/lib/auth-guard'
 import {
   getAgingReport,
-  getAssetConditionReport,
+  getAssetAvailabilityReport,
   getQuarterlyIssuanceReport,
 } from '@/lib/reporting-queries'
 
@@ -30,7 +30,7 @@ export interface Analytics {
   documentsByType: Slice[]
   agingByModule: Slice[]
   quarterlyIssuance: Slice[]
-  assetConditions: Slice[]
+  assetAvailability: Slice[]
   insights: Record<string, string>
 }
 
@@ -124,10 +124,11 @@ export async function getAnalytics(): Promise<Analytics | null> {
       grouped,
       stockCounts,
       issuanceRows,
+      documentRows,
       monthlyBuckets,
       agingReport,
       quarterlyReport,
-      conditionReport,
+      availabilityReport,
     ] = await Promise.all([
       prisma.delivery.groupBy({ by: ['inspection_status'], _count: true }).catch(() => [] as { inspection_status: string | null; _count: number }[]),
       groupCounts(),
@@ -146,6 +147,28 @@ export async function getAnalytics(): Promise<Analytics | null> {
         SELECT doc_type, COUNT(*)::bigint AS count FROM issuance_records GROUP BY doc_type ORDER BY count DESC`.catch(
         () => [] as Array<{ doc_type: string; count: bigint }>
       ),
+      // "Documents by type" mirrors the Documents library: every generated
+      // receipt/report lives in its own source table — the `documents` table
+      // only stores inspection photos, so counting it alone showed nothing.
+      prisma.$queryRaw<Array<{ name: string; value: bigint }>>`
+        SELECT 'Delivery receipts' AS name, COUNT(*)::bigint AS value FROM deliveries
+        UNION ALL
+        SELECT 'Inspection reports', COUNT(*)::bigint FROM deliveries
+          WHERE inspection_status IS NOT NULL AND inspection_status <> 'pending'
+        UNION ALL
+        SELECT 'Stock receipts', COUNT(*)::bigint FROM inventory
+        UNION ALL
+        SELECT 'Asset receipts', COUNT(*)::bigint FROM assets
+        UNION ALL
+        SELECT 'Repair receipts', COUNT(*)::bigint FROM repairs WHERE status = 'completed'
+        UNION ALL
+        SELECT 'IAR reports', COUNT(*)::bigint FROM iar_records
+        UNION ALL
+        SELECT 'PAR', COUNT(*)::bigint FROM issuance_records WHERE doc_type = 'PAR'
+        UNION ALL
+        SELECT 'ICS', COUNT(*)::bigint FROM issuance_records WHERE doc_type = 'ICS'`.catch(
+        () => [] as Array<{ name: string; value: bigint }>
+      ),
       // Single grouped query (was 6 sequential per-month counts).
       prisma.$queryRaw<Array<{ month: Date; count: bigint }>>`
         SELECT date_trunc('month', created_at) AS month, COUNT(*)::bigint AS count
@@ -154,9 +177,9 @@ export async function getAnalytics(): Promise<Analytics | null> {
       ),
       getAgingReport({ portal: 'super-admin' }),
       getQuarterlyIssuanceReport(),
-      getAssetConditionReport(),
+      getAssetAvailabilityReport(),
     ])
-    const { request: requestStatus, repair: repairStatus, asset: assetStatus, document: documentsByType } = grouped
+    const { request: requestStatus, repair: repairStatus, asset: assetStatus } = grouped
 
     // Map UTC month buckets onto the local month labels.
     const bucketMap = new Map(
@@ -198,6 +221,11 @@ export async function getAnalytics(): Promise<Analytics | null> {
       value: Number(r.count),
     }))
 
+    const documentsByType: Slice[] = documentRows.map((r) => ({
+      name: r.name,
+      value: Number(r.value),
+    }))
+
     // Objective 4: delayed/aging, quarterly issuance, asset conditions.
     const agingByModule: Slice[] = agingReport.summaries.map((s) => ({
       name: s.label,
@@ -213,9 +241,9 @@ export async function getAnalytics(): Promise<Analytics | null> {
       name: q.label,
       value: q.documents,
     }))
-    const assetConditions: Slice[] = conditionReport.rows.map((r) => ({
+    const assetAvailability: Slice[] = availabilityReport.rows.map((r) => ({
       name: r.label,
-      value: r.count,
+      value: r.items,
     }))
 
     const insights: Record<string, string> = {
@@ -322,13 +350,17 @@ export async function getAnalytics(): Promise<Analytics | null> {
           return 'No PAR/ICS documents issued in the last 8 quarters — quarterly issuance will populate once items move to end users.'
         return `${total} document${total === 1 ? '' : 's'} issued in the last 8 quarters, peaking in ${peak?.label} (${peak?.documents}). This year ${quarterlyReport.totals.documents} documents moved ${quarterlyReport.totals.quantity} unit${quarterlyReport.totals.quantity === 1 ? '' : 's'} worth ${quarterlyReport.totals.amount.toLocaleString('en-PH', { style: 'currency', currency: 'PHP' })}.`
       })(),
-      conditions: (() => {
-        if (conditionReport.total === 0)
-          return 'No assets registered yet — the condition breakdown will appear once the registry is populated.'
-        const attention = conditionReport.unserviceable + conditionReport.unspecified
-        if (attention === 0)
-          return `All ${conditionReport.total} assets carry a serviceable condition — the fleet is fully accounted for.`
-        return `${conditionReport.serviceablePct}% of ${conditionReport.total} assets are serviceable; ${conditionReport.unserviceable} unserviceable and ${conditionReport.unspecified} with no recognized condition. Repair or dispose the unserviceable units, then clean up the unspecified records so the registry stays auditable.`
+      availability: (() => {
+        if (availabilityReport.total === 0)
+          return 'No assets registered yet — the availability breakdown will appear once the registry is populated.'
+        const { total, totalUnits, available, inUse, unavailable } =
+          availabilityReport
+        const parts = [
+          `${available} available`,
+          `${inUse} assigned / in use`,
+          `${unavailable} unavailable (out of stock, maintenance, retired)`,
+        ]
+        return `${availabilityReport.availablePct}% of ${total} registry item${total === 1 ? '' : 's'} (${totalUnits} unit${totalUnits === 1 ? '' : 's'}) ${total === 1 ? 'is' : 'are'} issuable — ${parts.join(', ')}. Restock the out-of-stock lines first; assigned units stay with their custodians until turned over.`
       })(),
     }
 
@@ -344,7 +376,7 @@ export async function getAnalytics(): Promise<Analytics | null> {
       documentsByType,
       agingByModule,
       quarterlyIssuance,
-      assetConditions,
+      assetAvailability,
       insights,
     }
   } catch (e) {

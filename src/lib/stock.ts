@@ -85,6 +85,8 @@ export async function stockInspectionItems(
     inspection.delivery.asset_type?.trim() ||
     null;
 
+  // One loop pass per delivery item, each with its own find/update round-trip;
+  // on a remote database this easily outruns Prisma's 5s default budget.
   await prisma.$transaction(async (tx) => {
     for (const item of inspection.delivery.items) {
       const actual = receivedQty(item.id, item.quantity);
@@ -189,7 +191,7 @@ export async function stockInspectionItems(
       where: { id: inspection.id },
       data: { stocked_at: new Date() },
     });
-  });
+  }, { maxWait: 15_000, timeout: 60_000 });
 
   return { stocked: added > 0, added, costsFixed };
 }

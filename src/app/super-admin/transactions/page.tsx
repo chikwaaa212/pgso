@@ -1,10 +1,23 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
+import {
+  ClipboardCheck,
+  ClipboardList,
+  FileCheck2,
+  Inbox,
+  RefreshCw,
+  Search,
+  Truck,
+  Wrench,
+} from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { PageHeader } from "@/components/personnel/PageHeader";
 import { label } from "@/lib/labels";
+import { cn } from "@/lib/utils";
 import { getRecentDeliveries } from "@/app/personnel/inspections/actions";
 import {
   getOperationsStats,
@@ -37,6 +50,7 @@ import { IcsReportSheet } from "@/app/personnel/documents/ics-report";
 import receipt from "@/app/personnel/inspections/components/receipt.module.css";
 import TransactionsLoading from "./loading";
 import actionStyles from "@/app/personnel/dashboard/page.module.css";
+import ui from "@/components/personnel/personnel-ui.module.css";
 import styles from "./page.module.css";
 
 function fmtDate(iso: string | null) {
@@ -51,12 +65,49 @@ function fmtDate(iso: string | null) {
   });
 }
 
+/** Yellow 24px action buttons — same treatment as Assets / Inspections / Users. */
+const ACTION_BTN = cn(
+  "h-6 gap-1.5 rounded-[4px] border border-yellow-500 bg-yellow-500 px-3 text-xs font-semibold",
+  "text-navy-900 opacity-[0.85] transition-colors hover:bg-yellow-400 hover:text-navy-900 hover:opacity-100 disabled:opacity-40"
+);
+
+const VIEW_TABS = [
+  { value: "deliveries", label: "Deliveries" },
+  { value: "requests", label: "Requests" },
+  { value: "repairs", label: "Repairs" },
+  { value: "issuances", label: "PAR / ICS" },
+] as const;
+
+type ViewTab = (typeof VIEW_TABS)[number]["value"];
+
+function statusTone(value: string | null) {
+  if (value === "passed" || value === "completed") return "ok";
+  if (value === "failed" || value === "rejected") return "bad";
+  if (value === "approved" || value === "in_progress") return "info";
+  return "warn";
+}
+
+/**
+ * Delivery status mirrors the personnel delivery log: a passed inspection
+ * marks the delivery as Delivered; otherwise the log-time state still
+ * applies (arrival / legacy waiting for arrival).
+ */
+function deliveryStatusLabel(status: string | null, inspection: string | null) {
+  if (inspection === "passed") return "Delivered";
+  if (status === "awaiting") return "Waiting for arrival";
+  if (status === "arrival") return "Arrival";
+  return "Delivered";
+}
+
 export default function SuperAdminTransactionsPage() {
+  const [view, setView] = useState<ViewTab>("deliveries");
+  const [query, setQuery] = useState("");
+
   // Cached snapshot (stats + 4 recent lists): back-navigation paints
   // instantly from memory / sessionStorage and only revalidates silently
   // when stale (60s, matching the server caches) — same SWR pattern as
   // the other admin pages.
-  const { data: snapshot, loading, isValidating } = useCachedAction(
+  const { data: snapshot, loading, isValidating, refresh } = useCachedAction(
     buildQueryKey({ module: 'super-admin', resource: 'transactions' }),
     () =>
       Promise.all([
@@ -101,241 +152,507 @@ export default function SuperAdminTransactionsPage() {
   const openRequest = (id: string) =>
     requestR.open(id, `admin-request:${id}`, () => browseRequest(id));
 
+  const needle = query.trim().toLowerCase();
+  const matches = (...values: (string | null | undefined)[]) =>
+    needle === "" ||
+    values.some((v) => (v ?? "").toLowerCase().includes(needle));
+
+  // The recent lists are capped at 10 rows, so filtering inline is cheaper
+  // than memoizing — typing never refetches and results never lag a key.
+  const filteredDeliveries = deliveries.filter((d) =>
+    matches(
+      d.supplier,
+      d.po_reference,
+      deliveryStatusLabel(d.delivery_status, d.inspection_status),
+      label(d.inspection_status)
+    )
+  );
+  const filteredRequests = requests.filter((r) =>
+    matches(r.employee_name, label(r.request_type), label(r.status))
+  );
+  const filteredRepairs = repairs.filter((r) =>
+    matches(r.asset_label, r.description, r.technician, label(r.status))
+  );
+  const filteredIssuances = issuances.filter((r) =>
+    matches(r.doc_type, r.doc_no, r.employee_name)
+  );
+
+  const counts: Record<ViewTab, number> = {
+    deliveries: deliveries.length,
+    requests: requests.length,
+    repairs: repairs.length,
+    issuances: issuances.length,
+  };
+  const filteredCounts: Record<ViewTab, number> = {
+    deliveries: filteredDeliveries.length,
+    requests: filteredRequests.length,
+    repairs: filteredRepairs.length,
+    issuances: filteredIssuances.length,
+  };
+
   if (loading) {
     return <TransactionsLoading />;
   }
 
   const issuanceDoc = issuanceR.doc ?? null;
   const issuanceIsIcs = issuanceDoc?.doc_type === "ICS";
+  const activeRepairs =
+    (stats?.pendingRepairs ?? 0) + (stats?.inProgressRepairs ?? 0);
+
+  const tiles = [
+    {
+      label: "Deliveries",
+      value: stats?.totalDeliveries ?? 0,
+      meta: `${stats?.completedInspections ?? 0} inspections completed`,
+      tone: "info" as const,
+      icon: Truck,
+      tab: "deliveries" as ViewTab,
+    },
+    {
+      label: "Pending inspections",
+      value: stats?.pendingInspections ?? 0,
+      meta: "deliveries awaiting processing",
+      tone: "warn" as const,
+      icon: ClipboardCheck,
+      tab: "deliveries" as ViewTab,
+    },
+    {
+      label: "Pending requests",
+      value: stats?.pendingRequests ?? 0,
+      meta: "awaiting a decision",
+      tone: "warn" as const,
+      icon: Inbox,
+      tab: "requests" as ViewTab,
+    },
+    {
+      label: "Active repairs",
+      value: activeRepairs,
+      meta: `${stats?.pendingRepairs ?? 0} pending · ${stats?.inProgressRepairs ?? 0} in progress`,
+      tone: "info" as const,
+      icon: Wrench,
+      tab: "repairs" as ViewTab,
+    },
+    {
+      label: "PAR / ICS issued",
+      value: stats?.totalIssuances ?? 0,
+      meta: "accountability documents",
+      tone: "ok" as const,
+      icon: FileCheck2,
+      tab: "issuances" as ViewTab,
+    },
+  ];
+
+  const searchPlaceholder =
+    view === "deliveries"
+      ? "Search supplier, PO reference, status…"
+      : view === "requests"
+        ? "Search employee, request type, status…"
+        : view === "repairs"
+          ? "Search asset, issue, technician…"
+          : "Search document no., end user, type…";
+
+  const emptyCopy =
+    view === "deliveries"
+      ? "No deliveries have been logged yet."
+      : view === "requests"
+        ? "No employee requests have been filed yet."
+        : view === "repairs"
+          ? "No repair tickets have been raised yet."
+          : "No PAR or ICS has been issued yet.";
+
+  const rowAction = (labelText: string, onClick: () => void, ariaLabel: string) => (
+    <button
+      type="button"
+      className={cn(ACTION_BTN, "cursor-pointer")}
+      aria-label={ariaLabel}
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
+    >
+      {labelText}
+    </button>
+  );
+
+  const currentCount = filteredCounts[view] ?? 0;
+  const tabTotal = counts[view] ?? 0;
 
   return (
     <section className={styles.section}>
-      <div>
-        <h1 className={styles.title}>Transactions</h1>
-        <p className={styles.subtitle}>
-          {stats?.totalDeliveries ?? 0} deliveries · {stats?.pendingInspections ?? 0} pending
-          inspection · {stats?.pendingRequests ?? 0} pending requests ·{' '}
-          {(stats?.pendingRepairs ?? 0) + (stats?.inProgressRepairs ?? 0)} active repairs ·{' '}
-          {stats?.totalIssuances ?? 0} PAR/ICS issued · view-only oversight
-          {isValidating ? (
-            <span role="status" aria-live="polite"> · Updating…</span>
-          ) : null}
-        </p>
+      <PageHeader
+        eyebrow="Operations ledger"
+        title="Transactions"
+        subtitle="Every delivery, employee request, repair ticket and PAR/ICS issued across the province — inspect any record in a read-only overlay."
+        meta={
+          <>
+            {stats?.totalDeliveries ?? 0} deliveries · {stats?.pendingRequests ?? 0}{" "}
+            pending requests · {(stats?.pendingInspections ?? 0)} pending inspections ·{" "}
+            {activeRepairs} active repairs · {stats?.totalIssuances ?? 0} PAR/ICS issued
+            {isValidating ? <span className={styles.updating}> · Updating…</span> : null}
+          </>
+        }
+        actions={
+          <Button
+            type="button"
+            onClick={refresh}
+            disabled={isValidating}
+            title="Reload the latest transactions"
+            className={ACTION_BTN}
+          >
+            <RefreshCw
+              size={14}
+              aria-hidden="true"
+              className={isValidating ? "animate-spin" : undefined}
+            />
+            {isValidating ? "Refreshing…" : "Refresh"}
+          </Button>
+        }
+      />
+
+      {/* Summary tiles — each one jumps straight to the matching stream */}
+      <div className={ui.tiles}>
+        {tiles.map((tile) => {
+          const Icon = tile.icon;
+          return (
+            <button
+              key={tile.label}
+              type="button"
+              title={`Show recent ${tile.label.toLowerCase()}`}
+              className={cn(ui.tile, styles.tileButton)}
+              data-tone={tile.tone}
+              data-active={view === tile.tab}
+              onClick={() => {
+                setView(tile.tab);
+                setQuery("");
+              }}
+            >
+              <span className={ui.tileIcon}>
+                <Icon size={16} aria-hidden="true" />
+              </span>
+              <div className={ui.tileBody}>
+                <p className={ui.tileLabel}>{tile.label}</p>
+                <p className={ui.tileValue}>{tile.value.toLocaleString()}</p>
+                <p className={ui.tileMeta}>{tile.meta}</p>
+              </div>
+            </button>
+          );
+        })}
       </div>
 
       <Card className={styles.panel}>
-        <h2 className={styles.panelTitle}>Recent deliveries</h2>
-        <p className={styles.panelSub}>
-          Newest first. Open a row to see the full delivery record.
-        </p>
-        <div className={styles.tableWrap}>
-          <table className={styles.table}>
-            <thead>
-              <tr>
-                <th>Supplier</th>
-                <th>PO ref</th>
-                <th>Date</th>
-                <th>Status</th>
-                <th>Inspection</th>
-                <th>Details</th>
-              </tr>
-            </thead>
-            <tbody>
-              {deliveries.map((d) => (
-                <tr key={d.id}>
-                  <td>{d.supplier ?? "—"}</td>
-                  <td>{d.po_reference ?? "—"}</td>
-                  <td>{fmtDate(d.date_delivered)}</td>
-                  <td>
-                    <span className={styles.status} data-tone="info">
-                      {label(d.delivery_status)}
-                    </span>
-                  </td>
-                  <td>
-                    <span
-                      className={styles.status}
-                      data-tone={
-                        d.inspection_status === "passed"
-                          ? "ok"
-                          : d.inspection_status === "failed"
-                            ? "bad"
-                            : "warn"
-                      }
-                    >
-                      {label(d.inspection_status)}
-                    </span>
-                  </td>
-                  <td>
-                    <button
-                      type="button"
-                      className={`${actionStyles.inspectLinkSecondary} cursor-pointer`}
-                      aria-label={`View details for delivery ${d.id.slice(0, 8).toUpperCase()}`}
+        <div className={styles.panelHead}>
+          <div className={styles.tabs} role="tablist" aria-label="Transaction type">
+            {VIEW_TABS.map((tab) => {
+              const active = view === tab.value;
+              return (
+                <button
+                  key={tab.value}
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  className={styles.tab}
+                  data-active={active}
+                  onClick={() => {
+                    setView(tab.value);
+                    setQuery("");
+                  }}
+                >
+                  {tab.label}
+                  <span className={styles.tabCount} data-active={active}>
+                    {counts[tab.value]}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className={styles.filters}>
+            <div className={styles.searchWrap}>
+              <Search size={15} aria-hidden="true" className={styles.searchIcon} />
+              <Input
+                type="search"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder={searchPlaceholder}
+                className={styles.search}
+                aria-label={searchPlaceholder}
+              />
+            </div>
+            {query.trim() !== "" ? (
+              <button
+                type="button"
+                className={styles.clearBtn}
+                onClick={() => setQuery("")}
+              >
+                Clear
+              </button>
+            ) : null}
+          </div>
+        </div>
+
+        {currentCount === 0 ? (
+          <div className={styles.empty}>
+            <span className={styles.emptyIcon}>
+              {query.trim() !== "" ? (
+                <Search size={20} aria-hidden="true" />
+              ) : (
+                <ClipboardList size={20} aria-hidden="true" />
+              )}
+            </span>
+            <p className={styles.emptyTitle}>
+              {query.trim() !== "" ? "No matching records" : "Nothing here yet"}
+            </p>
+            <p className={styles.emptyText}>
+              {query.trim() !== ""
+                ? "Try a different keyword, or clear the search to see every record."
+                : emptyCopy}
+            </p>
+            {query.trim() !== "" ? (
+              <button
+                type="button"
+                className={styles.emptyAction}
+                onClick={() => setQuery("")}
+              >
+                Clear search
+              </button>
+            ) : null}
+          </div>
+        ) : (
+          <div className={styles.tableWrap}>
+            {view === "deliveries" ? (
+              <table className={styles.table}>
+                <thead>
+                  <tr>
+                    <th>Supplier</th>
+                    <th>PO reference</th>
+                    <th>Date delivered</th>
+                    <th>Delivery status</th>
+                    <th>Inspection</th>
+                    <th className={styles.actionHead}>Details</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredDeliveries.map((d) => (
+                    <tr
+                      key={d.id}
+                      className={styles.bodyRow}
+                      tabIndex={0}
                       onClick={() => openDelivery(d.id)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          openDelivery(d.id);
+                        }
+                      }}
                     >
-                      View Details
-                    </button>
-                  </td>
-                </tr>
-              ))}
-              {deliveries.length === 0 && (
-                <tr>
-                  <td colSpan={6} className={styles.empty}>No deliveries logged yet.</td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </Card>
+                      <td>
+                        <span className={styles.cellMain}>{d.supplier ?? "—"}</span>
+                      </td>
+                      <td>
+                        <span className={styles.mono}>{d.po_reference ?? "—"}</span>
+                      </td>
+                      <td>{fmtDate(d.date_delivered ?? d.expected_arrival_date)}</td>
+                      <td>
+                        <span
+                          className={styles.badge}
+                          data-tone={
+                            deliveryStatusLabel(d.delivery_status, d.inspection_status) ===
+                            "Delivered"
+                              ? "ok"
+                              : "info"
+                          }
+                        >
+                          {deliveryStatusLabel(d.delivery_status, d.inspection_status)}
+                        </span>
+                      </td>
+                      <td>
+                        <span
+                          className={styles.badge}
+                          data-tone={statusTone(d.inspection_status)}
+                        >
+                          {label(d.inspection_status)}
+                        </span>
+                      </td>
+                      <td className={styles.actionCell}>
+                        {rowAction(
+                          "View details",
+                          () => openDelivery(d.id),
+                          `View details for delivery ${d.id.slice(0, 8).toUpperCase()}`
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : null}
 
-      <Card className={styles.panel}>
-        <h2 className={styles.panelTitle}>Recent employee requests</h2>
-        <p className={styles.panelSub}>Transfer, new-assignment and repair requests.</p>
-        <div className={styles.tableWrap}>
-          <table className={styles.table}>
-            <thead>
-              <tr>
-                <th>Employee</th>
-                <th>Type</th>
-                <th>Date</th>
-                <th>Status</th>
-                <th>Details</th>
-              </tr>
-            </thead>
-            <tbody>
-              {requests.map((r) => (
-                <tr key={r.id}>
-                  <td>{r.employee_name}</td>
-                  <td>{label(r.request_type)}</td>
-                  <td>{fmtDate(r.date_requested)}</td>
-                  <td>
-                    <span
-                      className={styles.status}
-                      data-tone={
-                        r.status === "completed"
-                          ? "ok"
-                          : r.status === "rejected"
-                            ? "bad"
-                            : r.status === "approved"
-                              ? "info"
-                              : "warn"
-                      }
-                    >
-                      {label(r.status)}
-                    </span>
-                  </td>
-                  <td>
-                    <button
-                      type="button"
-                      className={`${actionStyles.inspectLinkSecondary} cursor-pointer`}
-                      aria-label={`View details for request ${r.id.slice(0, 8).toUpperCase()}`}
+            {view === "requests" ? (
+              <table className={styles.table}>
+                <thead>
+                  <tr>
+                    <th>Employee</th>
+                    <th>Request type</th>
+                    <th>Date requested</th>
+                    <th>Status</th>
+                    <th className={styles.actionHead}>Details</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredRequests.map((r) => (
+                    <tr
+                      key={r.id}
+                      className={styles.bodyRow}
+                      tabIndex={0}
                       onClick={() => openRequest(r.id)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          openRequest(r.id);
+                        }
+                      }}
                     >
-                      View Details
-                    </button>
-                  </td>
-                </tr>
-              ))}
-              {requests.length === 0 && (
-                <tr>
-                  <td colSpan={5} className={styles.empty}>No requests yet.</td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </Card>
+                      <td>
+                        <span className={styles.cellMain}>{r.employee_name}</span>
+                      </td>
+                      <td>{label(r.request_type)}</td>
+                      <td>{fmtDate(r.date_requested)}</td>
+                      <td>
+                        <span className={styles.badge} data-tone={statusTone(r.status)}>
+                          {label(r.status)}
+                        </span>
+                      </td>
+                      <td className={styles.actionCell}>
+                        {rowAction(
+                          "View details",
+                          () => openRequest(r.id),
+                          `View details for request ${r.id.slice(0, 8).toUpperCase()}`
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : null}
 
-      <Card className={styles.panel}>
-        <h2 className={styles.panelTitle}>Recent repairs</h2>
-        <p className={styles.panelSub}>Repair tickets and technicians.</p>
-        <div className={styles.tableWrap}>
-          <table className={styles.table}>
-            <thead>
-              <tr>
-                <th>Asset / issue</th>
-                <th>Technician</th>
-                <th>Date</th>
-                <th>Status</th>
-                <th>Details</th>
-              </tr>
-            </thead>
-            <tbody>
-              {repairs.map((r) => (
-                <tr key={r.id}>
-                  <td>{r.asset_label ?? r.description.slice(0, 60)}</td>
-                  <td>{r.technician ?? "—"}</td>
-                  <td>{fmtDate(r.repair_date)}</td>
-                  <td>
-                    <span
-                      className={styles.status}
-                      data-tone={r.status === "completed" ? "ok" : r.status === "in_progress" ? "info" : "warn"}
-                    >
-                      {label(r.status)}
-                    </span>
-                  </td>
-                  <td>
-                    <button
-                      type="button"
-                      className={`${actionStyles.inspectLinkSecondary} cursor-pointer`}
-                      aria-label={`View details for repair ${r.id.slice(0, 8).toUpperCase()}`}
+            {view === "repairs" ? (
+              <table className={styles.table}>
+                <thead>
+                  <tr>
+                    <th>Asset / issue</th>
+                    <th>Technician</th>
+                    <th>Repair date</th>
+                    <th>Status</th>
+                    <th className={styles.actionHead}>Details</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredRepairs.map((r) => (
+                    <tr
+                      key={r.id}
+                      className={styles.bodyRow}
+                      tabIndex={0}
                       onClick={() => openRepair(r.id)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          openRepair(r.id);
+                        }
+                      }}
                     >
-                      View Details
-                    </button>
-                  </td>
-                </tr>
-              ))}
-              {repairs.length === 0 && (
-                <tr>
-                  <td colSpan={5} className={styles.empty}>No repair tickets yet.</td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </Card>
+                      <td>
+                        <span className={styles.cellMain}>
+                          {r.asset_label ?? r.description.slice(0, 60)}
+                        </span>
+                        {r.asset_label && r.description ? (
+                          <span className={styles.cellSub}>
+                            {r.description.slice(0, 80)}
+                          </span>
+                        ) : null}
+                      </td>
+                      <td>{r.technician ?? "—"}</td>
+                      <td>{fmtDate(r.repair_date)}</td>
+                      <td>
+                        <span className={styles.badge} data-tone={statusTone(r.status)}>
+                          {label(r.status)}
+                        </span>
+                      </td>
+                      <td className={styles.actionCell}>
+                        {rowAction(
+                          "View details",
+                          () => openRepair(r.id),
+                          `View details for repair ${r.id.slice(0, 8).toUpperCase()}`
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : null}
 
-      <Card className={styles.panel}>
-        <h2 className={styles.panelTitle}>Recent PAR / ICS issuances</h2>
-        <p className={styles.panelSub}>Accountability documents issued to end users.</p>
-        <div className={styles.tableWrap}>
-          <table className={styles.table}>
-            <thead>
-              <tr>
-                <th>Doc</th>
-                <th>End user</th>
-                <th>Date</th>
-                <th>Report</th>
-              </tr>
-            </thead>
-            <tbody>
-              {issuances.map((r) => (
-                <tr key={r.id}>
-                  <td>
-                    {r.doc_type}
-                    {r.doc_no ? ` · ${r.doc_no}` : ""}
-                  </td>
-                  <td>{r.employee_name}</td>
-                  <td>{fmtDate(r.created_at)}</td>
-                  <td>
-                    <button
-                      type="button"
-                      className={`${actionStyles.inspectLinkSecondary} cursor-pointer`}
-                      aria-label={`View ${r.doc_type} report ${r.doc_no ?? r.id.slice(0, 8).toUpperCase()}`}
+            {view === "issuances" ? (
+              <table className={styles.table}>
+                <thead>
+                  <tr>
+                    <th>Document</th>
+                    <th>End user</th>
+                    <th>Date issued</th>
+                    <th className={styles.actionHead}>Report</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredIssuances.map((r) => (
+                    <tr
+                      key={r.id}
+                      className={styles.bodyRow}
+                      tabIndex={0}
                       onClick={() => openIssuance(r.id)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          openIssuance(r.id);
+                        }
+                      }}
                     >
-                      View {r.doc_type}
-                    </button>
-                  </td>
-                </tr>
-              ))}
-              {issuances.length === 0 && (
-                <tr>
-                  <td colSpan={4} className={styles.empty}>Nothing issued yet.</td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+                      <td>
+                        <span
+                          className={styles.badge}
+                          data-tone={r.doc_type === "PAR" ? "info" : "neutral"}
+                        >
+                          {r.doc_type}
+                        </span>
+                        <span className={styles.cellSub}>
+                          {r.doc_no ? `No. ${r.doc_no}` : "No document number"}
+                        </span>
+                      </td>
+                      <td>
+                        <span className={styles.cellMain}>{r.employee_name}</span>
+                      </td>
+                      <td>{fmtDate(r.created_at)}</td>
+                      <td className={styles.actionCell}>
+                        {rowAction(
+                          `View ${r.doc_type}`,
+                          () => openIssuance(r.id),
+                          `View ${r.doc_type} report ${r.doc_no ?? r.id.slice(0, 8).toUpperCase()}`
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : null}
+          </div>
+        )}
+
+        <div className={styles.panelFoot}>
+          <span className={styles.footInfo}>
+            Showing <strong>{currentCount}</strong> of{" "}
+            <strong>{tabTotal}</strong> recent{" "}
+            {VIEW_TABS.find((t) => t.value === view)?.label.toLowerCase()}
+            {query.trim() !== "" ? " matching your search" : " · newest first"}
+          </span>
+          <span className={styles.footHint}>
+            Select any row to open its read-only record
+          </span>
         </div>
       </Card>
 
@@ -410,7 +727,7 @@ export default function SuperAdminTransactionsPage() {
           <ReceiptLoading label="Loading delivery receipt…" />
         ) : !deliveryR.doc ? (
           <div className={styles.emptyState}>
-            <p className={styles.panelSub}>No delivery record found.</p>
+            <p className={styles.emptyText}>No delivery record found.</p>
           </div>
         ) : (
           <div className={receipt.receiptStack} style={{ maxWidth: "none" }}>
@@ -428,7 +745,7 @@ export default function SuperAdminTransactionsPage() {
           <ReceiptLoading label="Loading receipt…" />
         ) : !repairR.doc ? (
           <div className={styles.emptyState}>
-            <p className={styles.panelSub}>
+            <p className={styles.emptyText}>
               This record is no longer available.
             </p>
           </div>
@@ -438,7 +755,7 @@ export default function SuperAdminTransactionsPage() {
             style={{ maxWidth: "none" }}
           >
             <RepairReceipt repair={repairR.doc} />
-            <p className={styles.panelSub} style={{ textAlign: "center" }}>
+            <p className={styles.emptyText} style={{ textAlign: "center" }}>
               <Button
                 type="button"
                 variant="outline"
@@ -463,7 +780,7 @@ export default function SuperAdminTransactionsPage() {
           <ReceiptLoading label="Loading report…" />
         ) : !issuanceDoc ? (
           <div className={styles.emptyState}>
-            <p className={styles.panelSub}>
+            <p className={styles.emptyText}>
               This record is no longer available.
             </p>
           </div>
@@ -474,17 +791,17 @@ export default function SuperAdminTransactionsPage() {
             ) : (
               <ParReportSheet issuance={issuanceDoc} />
             )}
-            <p className={styles.panelSub}>
+            <p className={styles.docLinkRow}>
               <Link
                 href={`/super-admin/issuances/${issuanceDoc.id}`}
-                className={actionStyles.inspectLinkSecondary}
+                className={styles.docLink}
               >
                 Open full report
               </Link>{" "}
               ·{" "}
               <a
                 href={`/api/personnel/issuances/${issuanceDoc.id}/${issuanceIsIcs ? "ics-xlsx" : "par-xlsx"}`}
-                className={actionStyles.inspectLinkSecondary}
+                className={styles.docLink}
               >
                 Download Excel
               </a>

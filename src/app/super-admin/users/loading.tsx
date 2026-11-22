@@ -1,27 +1,16 @@
 import { Card } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
+import { PageHeader } from "@/components/personnel/PageHeader";
 import styles from "./page.module.css";
-import actionStyles from "@/app/personnel/dashboard/page.module.css";
+import stockStyles from "@/app/personnel/stocks/page.module.css";
+import airStyles from "@/app/personnel/inspections/air-section.module.css";
+import docs from "@/app/personnel/issuances/page.module.css";
 
 /**
- * Super-admin users skeleton — mirrors SuperAdminUsersPage 1:1 (crumb,
- * header with counts, all-accounts panel with toggle buttons) so content
- * swaps in without layout shift.
- *
- * Static chrome renders as real text with the real classes; only live
- * values are pulse placeholders sized to the real cells.
+ * Super-admin users skeleton — mirrors SuperAdminUsersPage 1:1 (header with
+ * refresh, four clickable summary tiles, account/pending tabs, then the
+ * roster card with its toolbar, avatar rows, and pager) so content swaps in
+ * without layout shift.
  */
-
-const btnDanger: React.CSSProperties = {
-  padding: "0.375rem 0.75rem",
-  fontSize: "0.75rem",
-  fontWeight: 600,
-  borderRadius: "0.375rem",
-  border: "1px solid #b91c1c",
-  background: "#fff",
-  color: "#b91c1c",
-  whiteSpace: "nowrap",
-};
 
 function TextPulse({ className }: { className: string }) {
   return (
@@ -48,63 +37,96 @@ export default function UsersLoading() {
       aria-busy="true"
       aria-label="Loading users"
     >
-      <div>
-        <h1 className={styles.title}>Users</h1>
-        <p className={styles.subtitle}>
+      <PageHeader
+        eyebrow="Access control"
+        title="Users"
+        subtitle={
           <span
             aria-hidden="true"
-            className="inline-block h-4 w-56 animate-pulse rounded bg-navy-100 align-middle"
-          />{" "}
-          Admin creates personnel directly — employees + personnel can also self-register and wait for
-          approval.
-        </p>
+            className="mt-1 block h-4 w-[30rem] max-w-full animate-pulse rounded bg-navy-100"
+          />
+        }
+        meta={
+          <span
+            aria-hidden="true"
+            className="mt-1 block h-3.5 w-56 animate-pulse rounded bg-navy-100"
+          />
+        }
+        actions={
+          <div className={styles.actions} aria-hidden="true">
+            <div className="h-6 w-24 animate-pulse rounded-[4px] bg-yellow-200" />
+          </div>
+        }
+      />
+
+      {/* Summary tiles */}
+      <div className={styles.summaryGrid} aria-hidden="true">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <div key={i} className={stockStyles.summaryCard}>
+            <span className={stockStyles.summaryIcon}>
+              <span className="h-4 w-4 animate-pulse rounded bg-navy-200" />
+            </span>
+            <div className={stockStyles.summaryBody}>
+              <TextPulse className="h-3 w-24" />
+              <TextPulse className="mt-1 h-6 w-12" />
+              <TextPulse className="mt-1 h-3 w-36" />
+            </div>
+          </div>
+        ))}
       </div>
 
-      <Card className={styles.panel}>
-        <h2 className={styles.panelTitle}>All accounts</h2>
-        <p className={styles.panelSub}>
-          Personnel are created from{" "}
-          <span style={{ textDecoration: "underline" }}>
-            Dashboard → Add Personnel
-          </span>
-          . You cannot change your own account or any Administrator here.
-        </p>
-        <div className={styles.searchRow} aria-hidden="true">
-          <Input
-            type="search"
-            disabled
-            placeholder="Search name, email, role, office…"
-            aria-label="Search accounts"
-            tabIndex={-1}
-          />
+      {/* View tabs */}
+      <div className={docs.tabsRow} aria-hidden="true">
+        <div className={airStyles.tabs}>
+          <span className="h-7 w-36 animate-pulse rounded-[4px] bg-navy-100" />
+          <span className="h-7 w-40 animate-pulse rounded-[4px] bg-navy-100" />
         </div>
-        <div className={styles.tableWrap}>
-          <table className={styles.table} aria-hidden="true">
+      </div>
+
+      <Card className={stockStyles.panel}>
+        {/* Toolbar — chips left, search + role/status filters right */}
+        <div className={stockStyles.toolbar} aria-hidden="true">
+          <div className={docs.statChips}>
+            <span className="h-[22px] w-24 animate-pulse rounded-full bg-navy-100" />
+            <span className="h-[22px] w-20 animate-pulse rounded-full bg-navy-100" />
+          </div>
+          <div className={stockStyles.filters}>
+            <div className="h-8 w-72 max-w-full animate-pulse rounded-md bg-navy-100" />
+            <div className="h-8 w-32 animate-pulse rounded-md bg-navy-100" />
+            <div className="h-8 w-32 animate-pulse rounded-md bg-navy-100" />
+          </div>
+        </div>
+
+        {/* Roster table */}
+        <div className={stockStyles.tableWrap}>
+          <table className={stockStyles.table} aria-hidden="true">
             <thead>
               <tr>
-                <th>Name</th>
-                <th>Email</th>
+                <th>Account</th>
                 <th>Role</th>
                 <th>Status</th>
                 <th>Office</th>
                 <th>Created</th>
-                <th>Action</th>
+                <th style={{ textAlign: "right" }}>Action</th>
               </tr>
             </thead>
             <tbody>
               {Array.from({ length: 10 }).map((_, r) => (
                 <tr key={r} style={{ opacity: 1 - r * 0.05 }}>
                   <td>
-                    <TextPulse className="h-3.5 w-28" />
+                    <div className={styles.accountCell}>
+                      <span className="h-8 w-8 animate-pulse rounded-full bg-navy-100" />
+                      <span className="flex flex-col gap-1">
+                        <TextPulse className="h-3.5 w-28" />
+                        <TextPulse className="h-3 w-40" />
+                      </span>
+                    </div>
                   </td>
                   <td>
-                    <TextPulse className="h-3.5 w-40" />
+                    <PillPulse className="w-20" />
                   </td>
                   <td>
-                    <TextPulse className="h-3.5 w-20" />
-                  </td>
-                  <td>
-                    <PillPulse />
+                    <PillPulse className="w-16" />
                   </td>
                   <td>
                     <TextPulse className="h-3.5 w-24" />
@@ -112,8 +134,8 @@ export default function UsersLoading() {
                   <td>
                     <TextPulse className="h-3.5 w-20" />
                   </td>
-                  <td>
-                    <span style={btnDanger}>Deactivate</span>
+                  <td className={styles.actionCell}>
+                    <span className="inline-flex h-7 w-24 animate-pulse rounded-[4px] bg-yellow-200" />
                   </td>
                 </tr>
               ))}
@@ -121,26 +143,9 @@ export default function UsersLoading() {
           </table>
         </div>
 
-        {/* Pager — same structure as TablePager */}
-        <div className={actionStyles.pager} aria-hidden="true">
-          <span className={actionStyles.pagerInfo}>
-            <span className="block h-3 w-36 animate-pulse rounded bg-navy-100" />
-          </span>
-          <div className={actionStyles.pagerControls}>
-            <span className={actionStyles.pageSizeWrap}>
-              <span>Rows</span>
-              <span className="h-8 w-[5.5rem] animate-pulse rounded-md bg-navy-100" />
-            </span>
-            <span className={actionStyles.pageBtn} aria-hidden="true">
-              ‹
-            </span>
-            <span className={actionStyles.pageBtn} data-active="true">
-              1
-            </span>
-            <span className={actionStyles.pageBtn} aria-hidden="true">
-              ›
-            </span>
-          </div>
+        <div className={stockStyles.footer} aria-hidden="true">
+          <TextPulse className="h-3.5 w-36" />
+          <TextPulse className="h-3.5 w-24" />
         </div>
       </Card>
     </section>

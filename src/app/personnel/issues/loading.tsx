@@ -50,6 +50,7 @@ export default function IssuesLoading() {
         </div>
         <div className={styles.actions} aria-hidden="true">
           <div className="h-6 w-24 animate-pulse rounded-[4px] bg-yellow-200" />
+          <div className="h-6 w-20 animate-pulse rounded-[4px] bg-yellow-200" />
         </div>
       </div>
 

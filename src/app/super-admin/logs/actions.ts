@@ -11,7 +11,45 @@ export interface SystemLogRow {
   purpose: string | null
   summary: string | null
   reference_id: string | null
+  /** Full audit payload — shown in the expanded row detail. */
+  details: Record<string, unknown> | null
   created_at: string | null
+}
+
+export type LogRange = 'all' | 'today' | '7d' | '30d'
+export type LogOrder = 'desc' | 'asc'
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value as Record<string, unknown>
+  }
+  return null
+}
+
+function normalizeRange(value: unknown): LogRange {
+  return value === 'today' || value === '7d' || value === '30d' ? value : 'all'
+}
+
+function normalizeOrder(value: unknown): LogOrder {
+  return value === 'asc' ? 'asc' : 'desc'
+}
+
+/** Start of the selected window, in Asia/Manila for "today". */
+function rangeStart(range: LogRange): Date | null {
+  if (range === 'all') return null
+  const now = new Date()
+  if (range === 'today') {
+    const offsetMs = 8 * 60 * 60 * 1000
+    const manila = new Date(now.getTime() + offsetMs)
+    const startManila = Date.UTC(
+      manila.getUTCFullYear(),
+      manila.getUTCMonth(),
+      manila.getUTCDate()
+    )
+    return new Date(startManila - offsetMs)
+  }
+  const days = range === '7d' ? 7 : 30
+  return new Date(now.getTime() - days * 24 * 60 * 60 * 1000)
 }
 
 function asText(value: unknown): string | null {
@@ -61,7 +99,13 @@ export async function getAdminLogModules(): Promise<string[]> {
  * every mutation (see the invalidation map `logs` entry).
  */
 export async function getLogsPage(
-  opts: { page?: number; q?: string; module?: string } = {}
+  opts: {
+    page?: number
+    q?: string
+    module?: string
+    range?: LogRange
+    order?: LogOrder
+  } = {}
 ): Promise<LogsPage> {
   try {
     await requireSuperAdmin()
@@ -74,6 +118,8 @@ export async function getLogsPage(
   const page = parsePage(opts.page)
   const q = parseQuery(opts.q)
   const mod = (opts.module ?? 'all').trim()
+  const range = normalizeRange(opts.range)
+  const order = normalizeOrder(opts.order)
   const pageSize = PAGE_SIZE
   return withScopedCache('super-admin:logs-page', 30, async () => {
   try {
@@ -96,6 +142,8 @@ export async function getLogsPage(
     }
     const conds: InstanceType<typeof Prisma.Sql>[] = []
     if (mod !== 'all') conds.push(Prisma.sql`module = ${mod}`)
+    const since = rangeStart(range)
+    if (since) conds.push(Prisma.sql`created_at >= ${since}`)
     if (like) {
       const textMatch = Prisma.sql`(
         action ILIKE ${like} OR module ILIKE ${like}
@@ -112,6 +160,7 @@ export async function getLogsPage(
     }
     const whereClause = conds.length > 0 ? Prisma.sql`WHERE ${Prisma.join(conds, ' AND ')}` : Prisma.empty
     const offset = (page - 1) * pageSize
+    const direction = Prisma.raw(order === 'asc' ? 'ASC' : 'DESC')
     interface LogDb {
       id: string
       user_id: string
@@ -126,7 +175,7 @@ export async function getLogsPage(
       prisma.$queryRaw<LogDb[]>`
         SELECT id::text AS id, user_id::text AS user_id, action, module, details, created_at
         FROM audit_logs ${whereClause}
-        ORDER BY created_at DESC LIMIT ${pageSize} OFFSET ${offset}`,
+        ORDER BY created_at ${direction} LIMIT ${pageSize} OFFSET ${offset}`,
     ])
     const total = Number(countRows[0]?.count ?? 0)
     const ids = [...new Set(rows.map((r) => r.user_id))]
@@ -137,7 +186,7 @@ export async function getLogsPage(
       : []
     const names = new Map(profiles.map((p) => [p.id, p.full_name ?? 'Unknown']))
     const mapped: SystemLogRow[] = rows.map((r) => {
-      const d = ((r.details ?? {}) as Record<string, unknown>) ?? {}
+      const d = asRecord(r.details) ?? {}
       return {
         id: r.id,
         user_name: names.get(r.user_id) ?? 'Unknown',
@@ -146,6 +195,7 @@ export async function getLogsPage(
         purpose: asText(d.purpose) ?? asText(d.remarks) ?? asText(d.reason),
         summary: asText(d.summary) ?? asText(d.description),
         reference_id: asText(d.reference_id),
+        details: d,
         created_at:
           r.created_at instanceof Date
             ? r.created_at.toISOString()
@@ -160,7 +210,7 @@ export async function getLogsPage(
     console.error('[getLogsPage]', e)
     return { rows: [], data: [], total: 0, page: 1, pageSize, totalPages: 1 }
   }
-  }, { page, pageSize, q, mod })
+  }, { page, pageSize, q, mod, range, order })
 }
 
 export async function getAllLogs(): Promise<SystemLogRow[]> {
@@ -185,7 +235,7 @@ export async function getAllLogs(): Promise<SystemLogRow[]> {
       .catch(() => [] as { id: string; full_name: string | null }[])
     const names = new Map(profiles.map((p) => [p.id, p.full_name ?? 'Unknown']))
     return rows.map((r) => {
-      const d = ((r.details ?? {}) as Record<string, unknown>) ?? {}
+      const d = asRecord(r.details) ?? {}
       return {
         id: r.id,
         user_name: names.get(r.user_id) ?? 'Unknown',
@@ -194,6 +244,7 @@ export async function getAllLogs(): Promise<SystemLogRow[]> {
         purpose: asText(d.purpose) ?? asText(d.remarks) ?? asText(d.reason),
         summary: asText(d.summary) ?? asText(d.description),
         reference_id: asText(d.reference_id),
+        details: d,
         created_at: r.created_at?.toISOString() ?? null,
       }
     })
@@ -201,5 +252,87 @@ export async function getAllLogs(): Promise<SystemLogRow[]> {
     console.error('[getAllLogs]', e)
     return []
   }
+  })
+}
+
+// ─── System-wide headline counters ─────────────────────────────────────────
+
+export interface AdminLogStats {
+  total: number
+  users: number
+  modules: number
+  last7: number
+  lastActivity: string | null
+  byModule: Array<{ module: string; count: number }>
+}
+
+const EMPTY_LOG_STATS: AdminLogStats = {
+  total: 0,
+  users: 0,
+  modules: 0,
+  last7: 0,
+  lastActivity: null,
+  byModule: [],
+}
+
+/**
+ * Headline counters across every account (cached 60s like the other admin
+ * aggregates). One summary query + one bounded per-module breakdown.
+ */
+export async function getAdminLogStats(): Promise<AdminLogStats> {
+  try {
+    await requireSuperAdmin()
+  } catch {
+    return EMPTY_LOG_STATS
+  }
+  const { withScopedCache } = await import('@/lib/personnel-cache')
+  return withScopedCache('super-admin:log-stats', 60, async () => {
+    try {
+      const [summary, byModule] = await Promise.all([
+        prisma.$queryRaw<
+          Array<{
+            total: bigint
+            users: bigint
+            modules: bigint
+            last7: bigint
+            last_activity: Date | string | null
+          }>
+        >`
+          SELECT
+            COUNT(*)::bigint AS total,
+            COUNT(DISTINCT user_id)::bigint AS users,
+            COUNT(DISTINCT module)::bigint AS modules,
+            COUNT(*) FILTER (WHERE created_at >= now() - interval '7 days')::bigint AS last7,
+            MAX(created_at) AS last_activity
+          FROM audit_logs`,
+        prisma.$queryRaw<Array<{ module: string; count: bigint }>>`
+          SELECT module, COUNT(*)::bigint AS count
+          FROM audit_logs
+          GROUP BY module
+          ORDER BY count DESC, module ASC
+          LIMIT 6`,
+      ])
+
+      const row = summary[0]
+      return {
+        total: Number(row?.total ?? 0),
+        users: Number(row?.users ?? 0),
+        modules: Number(row?.modules ?? 0),
+        last7: Number(row?.last7 ?? 0),
+        lastActivity:
+          row?.last_activity instanceof Date
+            ? row.last_activity.toISOString()
+            : typeof row?.last_activity === 'string'
+              ? row.last_activity
+              : null,
+        byModule: byModule.map((r) => ({
+          module: r.module,
+          count: Number(r.count ?? 0),
+        })),
+      }
+    } catch (e) {
+      console.error('[getAdminLogStats]', e)
+      return EMPTY_LOG_STATS
+    }
   })
 }

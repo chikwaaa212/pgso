@@ -265,6 +265,12 @@ export interface UnifiedInspectionRow {
   stocked_at: string | null
   /** Resolved system-user name of who logged the inspection (super-admin browse fills this). */
   logged_by: string | null
+  /**
+   * Super-admin rows only: true when this admin logged the delivery. Admins
+   * may log and inspect their own deliveries; other rows stay read-only.
+   * Undefined for personnel rows (always manageable).
+   */
+  mine?: boolean
 }
 
 export interface InspectionsPageOpts {
@@ -405,6 +411,28 @@ export async function getInspectionsPage(
       }),
     ])
 
+    // Super-admin lists attribute each inspection to the account that
+    // recorded it — resolve the inspector profiles in one batch.
+    let loggedById = new Map<string, string>()
+    if (scope.isSuperAdmin) {
+      const ids = [
+        ...new Set(
+          deliveries
+            .map((d) => d.inspections[0]?.inspector_id)
+            .filter((v): v is string => Boolean(v))
+        ),
+      ]
+      if (ids.length > 0) {
+        const profiles = await prisma.profile.findMany({
+          where: { id: { in: ids } },
+          select: { id: true, full_name: true },
+        })
+        loggedById = new Map(
+          profiles.map((p) => [p.id, p.full_name ?? 'Unknown'])
+        )
+      }
+    }
+
     return {
       total,
       rows: deliveries.map((d) => ({
@@ -428,7 +456,11 @@ export async function getInspectionsPage(
         iar_no:            d.inspections[0]?.iar_no ?? null,
         iar_image_url:     d.inspections[0]?.iar_image_url ?? null,
         stocked_at:        d.inspections[0]?.stocked_at?.toISOString() ?? null,
-        logged_by:         null,
+        logged_by:         d.inspections[0]?.inspector_id
+          ? (loggedById.get(d.inspections[0].inspector_id) ?? null)
+          : null,
+        // Super admins may manage only deliveries they logged themselves.
+        mine:              scope.isSuperAdmin ? d.received_by === scope.userId : true,
       })),
     }
   } catch (e) {
@@ -852,6 +884,9 @@ export interface RecentDeliveryRow {
   delivery_status: string | null
   inspection_status: string | null
   date_delivered: string | null
+  /** Recorded arrival date — used as the display fallback for older rows
+   *  logged before date_delivered was defaulted. */
+  expected_arrival_date: string | null
 }
 
 export async function getRecentDeliveries(
@@ -881,6 +916,7 @@ export async function getRecentDeliveries(
         delivery_status: true,
         inspection_status: true,
         date_delivered: true,
+        expected_arrival_date: true,
       },
     })
 
@@ -891,6 +927,7 @@ export async function getRecentDeliveries(
       delivery_status:  d.delivery_status,
       inspection_status: d.inspection_status,
       date_delivered:   d.date_delivered?.toISOString().slice(0, 10) ?? null,
+      expected_arrival_date: d.expected_arrival_date?.toISOString().slice(0, 10) ?? null,
     }))
   } catch (e) {
     console.error('[getRecentDeliveries]', e)

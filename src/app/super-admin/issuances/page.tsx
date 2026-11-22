@@ -1,25 +1,50 @@
 "use client";
 
+import { useMemo, useState, type KeyboardEvent } from "react";
 import Link from "next/link";
-import { useMemo, useState } from "react";
-import { browseIssuance, browseIssuancesPage } from "../browse/actions";
+import {
+  Eye,
+  FileCheck2,
+  FileText,
+  PackageSearch,
+  ScrollText,
+  TriangleAlert,
+} from "lucide-react";
+import {
+  browseIssuance,
+  browseIssuanceTotals,
+  browseIssuancesPage,
+} from "../browse/actions";
 import type { IssuanceDetail } from "@/app/personnel/issuances/actions";
+import { PAGE_SIZE } from "@/lib/constants";
+import { Input } from "@/components/ui/input";
+import { Card } from "@/components/ui/card";
+import { PageHeader } from "@/components/personnel/PageHeader";
+import { EmptySearchState } from "@/components/personnel/EmptySearchState";
+import { ReceiptLoading } from "@/components/personnel/ReceiptLoading";
+import { TablePager } from "@/components/personnel/TablePager";
 import { useCachedAction } from "@/hooks/use-cached-action";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
-import { buildQueryKey } from "@/lib/query-keys";
 import { useReceipt } from "@/hooks/use-receipt";
-import { PAGE_SIZE } from "@/lib/constants";
-import { Card } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { TablePager } from "@/components/personnel/TablePager";
-import { ReceiptLoading } from "@/components/personnel/ReceiptLoading";
+import { buildQueryKey } from "@/lib/query-keys";
 import { ReceiptOverlay } from "@/app/personnel/documents/receipt-overlay";
 import { ParReportSheet } from "@/app/personnel/documents/par-report";
 import { IcsReportSheet } from "@/app/personnel/documents/ics-report";
 import receipt from "@/app/personnel/inspections/components/receipt.module.css";
-import IssuancesLoading from "./loading";
+import IssuancesLoading, { IssuancesTableSkeleton } from "./loading";
 import styles from "@/app/personnel/dashboard/page.module.css";
+import stockStyles from "@/app/personnel/stocks/page.module.css";
+import assetStyles from "@/app/personnel/assets/page.module.css";
 import air from "@/app/personnel/inspections/air-section.module.css";
+import docs from "@/app/personnel/issuances/page.module.css";
+
+const DOC_TABS = [
+  { value: "all", label: "All" },
+  { value: "PAR", label: "PAR" },
+  { value: "ICS", label: "ICS" },
+] as const;
+
+type DocTab = (typeof DOC_TABS)[number]["value"];
 
 function fmt(iso: string | null | undefined) {
   if (!iso) return "—";
@@ -42,53 +67,114 @@ function peso(n: number | null | undefined) {
   }).format(n);
 }
 
+function docTone(docType: string) {
+  return docType === "PAR" ? "ok" : "info";
+}
+
+/** Row click (or Enter/Space) opens the report overlay. */
+function rowOpenProps(onOpen: () => void) {
+  return {
+    role: "button",
+    tabIndex: 0,
+    title: "Open this report",
+    onClick: onOpen,
+    onKeyDown: (event: KeyboardEvent<HTMLTableRowElement>) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        onOpen();
+      }
+    },
+  } as const;
+}
+
 export default function SuperAdminIssuancesPage() {
-  // Server-paged window (PAGE_SIZE = 10): the DB returns only the window +
-  // exact total per filter set (30s, busted by issuance writes).
   const [query, setQuery] = useState("");
   const debouncedQuery = useDebouncedValue(query, 300);
+  const [docTab, setDocTab] = useState<DocTab>("all");
+  const [view, setView] = useState<"table" | "grid">("table");
   const [page, setPage] = useState(1);
-  const { data: paged, loading, isValidating } = useCachedAction(
-    buildQueryKey({ module: 'super-admin', resource: 'issuances', page, filters: { q: debouncedQuery } }),
-    () => browseIssuancesPage({ page, q: debouncedQuery }),
+
+  // Server-paged window (PAGE_SIZE) — the DB returns only the window + exact
+  // total per filter set, matching the personnel issuances layout while the
+  // admin scope lifts the owner filter.
+  const {
+    data: paged,
+    loading,
+    isValidating,
+    error,
+  } = useCachedAction(
+    buildQueryKey({
+      module: "super-admin",
+      resource: "issuances",
+      page,
+      pageSize: PAGE_SIZE,
+      filters: { q: debouncedQuery, docType: docTab },
+    }),
+    () =>
+      browseIssuancesPage({
+        page,
+        q: debouncedQuery,
+        docType: docTab,
+      }),
     { staleTime: 30_000 }
   );
-  const [view, setView] = useState<"table" | "grid">("table");
+
+  // Header summary totals (system-wide, independent of the active tab/search).
+  const { data: totals } = useCachedAction(
+    buildQueryKey({
+      module: "super-admin",
+      resource: "issuances",
+      page: 1,
+      pageSize: 1,
+      filters: { totals: true },
+    }),
+    browseIssuanceTotals,
+    { staleTime: 30_000 }
+  );
+  const counts = totals ?? { all: 0, par: 0, ics: 0 };
+
   // Overlay receipt viewer with per-record client caching (same shared
   // scheme as personnel — admin-prefixed keys keep per-role caches
   // separate): viewing a receipt opens a modal, not a new page.
   const viewer = useReceipt<IssuanceDetail | null>();
   const openReceipt = (id: string) =>
     viewer.open(id, `admin-issuance:${id}`, () => browseIssuance(id));
+
   const rows = useMemo(() => paged?.rows ?? [], [paged]);
   const total = paged?.total ?? 0;
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const safePage = Math.min(Math.max(1, page), pageCount);
 
+  const hasFilters = query.trim() !== "" || docTab !== "all";
+
+  const resetPage = () => setPage(1);
+  const clearFilters = () => {
+    setQuery("");
+    setDocTab("all");
+    resetPage();
+  };
+
+  // Cold start paints the full route skeleton; in-flight refreshes keep the
+  // header, summary, tabs, and search mounted and skeletonize only the table.
   if (loading && rows.length === 0) {
     return <IssuancesLoading />;
   }
 
+  const fetching = loading || isValidating;
   const doc = viewer.doc ?? null;
   const isIcs = doc?.doc_type === "ICS";
+
   return (
     <section className={styles.section}>
-      <div className={styles.headerRow}>
-        <div>
-          <h1 className={styles.title}>PAR / ICS Issuances</h1>
-          <p className={styles.subtitle}>
-            {total} {total === 1 ? "record" : "records"} · value
-            over ₱50,000 → PAR, ₱50,000 or less → ICS · every issuance from all
-            personnel
-            {isValidating ? " · updating…" : ""}
-          </p>
-        </div>
-        <div className={styles.actions}>
-          <div
-            className={air.tabs}
-            role="group"
-            aria-label="Change layout"
-          >
+      <PageHeader
+        eyebrow="Accountability documents"
+        title="PAR / ICS issuances"
+        subtitle="Signed property documents you issued · value over ₱50,000 → PAR, ₱50,000 or less → ICS"
+        meta={`${counts.all.toLocaleString("en-PH")} document${
+          counts.all === 1 ? "" : "s"
+        } across all personnel`}
+        actions={
+          <div className={air.tabs} role="group" aria-label="Change layout">
             {(["table", "grid"] as const).map((v) => (
               <button
                 key={v}
@@ -102,136 +188,324 @@ export default function SuperAdminIssuancesPage() {
               </button>
             ))}
           </div>
-        </div>
-      </div>
-      <Card className={styles.panel}>
-        <div style={{ display: "flex", gap: "0.75rem", marginBottom: "1rem" }}>
-          <Input
-            type="search"
-            aria-label="Search issuances"
-            placeholder="Search document, employee, item…"
-            value={query}
-            onChange={(e) => {
-              setQuery(e.target.value);
-              setPage(1);
-            }}
-          />
-        </div>
-        {rows.length === 0 ? (
-          <div className={styles.emptyState}>
-            <p className={styles.panelSub}>
-              No PAR/ICS records yet — they appear here once personnel issue
-              items with a signed PAR or ICS.
+        }
+      />
+
+      {/* Summary tiles */}
+      <div className={stockStyles.summary}>
+        <div className={stockStyles.summaryCard}>
+          <span className={stockStyles.summaryIcon}>
+            <ScrollText size={16} aria-hidden="true" />
+          </span>
+          <div className={stockStyles.summaryBody}>
+            <p className={stockStyles.summaryLabel}>Total issuances</p>
+            <p className={stockStyles.summaryValue}>{counts.all}</p>
+            <p className={stockStyles.summaryMeta}>
+              PAR + ICS records across all personnel
             </p>
           </div>
-        ) : view === "table" ? (
-          <div className={styles.tableWrap}>
-            <table className={styles.table}>
-              <thead>
-                <tr>
-                  <th>Doc</th>
-                  <th>No.</th>
-                  <th>Employee</th>
-                  <th>Logged By</th>
-                  <th>Item</th>
-                  <th>Qty</th>
-                  <th>Total</th>
-                  <th>Date</th>
-                  <th>Report</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((r) => (
-                  <tr key={r.id}>
-                    <td>
-                      <span className={styles.status} data-tone={r.doc_type === "PAR" ? "ok" : "info"}>
-                        {r.doc_type}
+        </div>
+
+        <div className={stockStyles.summaryCard}>
+          <span className={stockStyles.summaryIcon}>
+            <FileText size={16} aria-hidden="true" />
+          </span>
+          <div className={stockStyles.summaryBody}>
+            <p className={stockStyles.summaryLabel}>PAR</p>
+            <p className={stockStyles.summaryValue}>{counts.par}</p>
+            <p className={stockStyles.summaryMeta}>Value over ₱50,000</p>
+          </div>
+        </div>
+
+        <div className={stockStyles.summaryCard}>
+          <span className={stockStyles.summaryIcon}>
+            <FileCheck2 size={16} aria-hidden="true" />
+          </span>
+          <div className={stockStyles.summaryBody}>
+            <p className={stockStyles.summaryLabel}>ICS</p>
+            <p className={stockStyles.summaryValue}>{counts.ics}</p>
+            <p className={stockStyles.summaryMeta}>₱50,000 or less</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Type tabs with live counts */}
+      <div className={docs.tabsRow}>
+        <div className={air.tabs} role="tablist" aria-label="Filter by document type">
+          {DOC_TABS.map((t) => {
+            const countKey =
+              t.value === "all" ? "all" : t.value === "PAR" ? "par" : "ics";
+            return (
+              <button
+                key={t.value}
+                type="button"
+                role="tab"
+                aria-selected={docTab === t.value}
+                className={air.tab}
+                data-active={docTab === t.value}
+                onClick={() => {
+                  setDocTab(t.value);
+                  resetPage();
+                }}
+              >
+                {t.label}
+                <span
+                  className={docs.tabCount}
+                  data-active={docTab === t.value ? "true" : undefined}
+                >
+                  {counts[countKey]}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <Card className={stockStyles.panel}>
+        <div className={stockStyles.toolbar}>
+          <div
+            className={docs.statChips}
+            aria-live="polite"
+            aria-busy={fetching || undefined}
+          >
+            {fetching ? (
+              <span
+                role="status"
+                aria-label="Loading issuances"
+                className="block h-3.5 w-44 animate-pulse rounded bg-navy-100"
+              />
+            ) : hasFilters ? (
+              <>
+                <span className={docs.statChip}>
+                  Showing <strong>{total}</strong> of {counts.all}{" "}
+                  {counts.all === 1 ? "record" : "records"}
+                </span>
+                {docTab !== "all" ? (
+                  <span className={docs.statChip} data-tone="info">
+                    {docTab} only
+                  </span>
+                ) : null}
+              </>
+            ) : (
+              <>
+                <span className={docs.statChip}>
+                  <strong>{counts.all}</strong>{" "}
+                  {counts.all === 1 ? "record" : "records"}
+                </span>
+                <span className={docs.statChip} data-tone="ok">
+                  PAR <strong>{counts.par}</strong>
+                </span>
+                <span className={docs.statChip} data-tone="info">
+                  ICS <strong>{counts.ics}</strong>
+                </span>
+              </>
+            )}
+          </div>
+
+          <div className={stockStyles.filters}>
+            <Input
+              type="search"
+              value={query}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                resetPage();
+              }}
+              placeholder="Search no., employee, item…"
+              className={stockStyles.search}
+              aria-label="Search issuances"
+            />
+            {hasFilters ? (
+              <button
+                type="button"
+                className={assetStyles.rowAction}
+                onClick={clearFilters}
+              >
+                Clear
+              </button>
+            ) : null}
+          </div>
+        </div>
+
+        {error && !fetching ? (
+          <div className={stockStyles.empty} role="alert">
+            <span className={stockStyles.emptyIcon}>
+              <TriangleAlert size={20} aria-hidden="true" />
+            </span>
+            <p className={stockStyles.emptyTitle}>Could not load issuances</p>
+            <p className={stockStyles.emptyText}>
+              The issuance service did not respond. Refresh the page to try
+              again.
+            </p>
+          </div>
+        ) : fetching ? (
+          <IssuancesTableSkeleton />
+        ) : total === 0 ? (
+          hasFilters ? (
+            <EmptySearchState
+              description="Try a different search term or document type."
+              onClear={clearFilters}
+            />
+          ) : (
+            <div className={stockStyles.empty}>
+              <span className={stockStyles.emptyIcon}>
+                <PackageSearch size={20} aria-hidden="true" />
+              </span>
+              <p className={stockStyles.emptyTitle}>No PAR/ICS records yet</p>
+              <p className={stockStyles.emptyText}>
+                Issue an item from Assets or approve a new-assignment request —
+                the signed PAR or ICS appears here automatically.
+              </p>
+            </div>
+          )
+        ) : (
+          <>
+            {view === "table" ? (
+              <div className={styles.tableWrap}>
+                <table className={styles.table}>
+                  <thead>
+                    <tr>
+                      <th>Doc</th>
+                      <th>No.</th>
+                      <th>Employee</th>
+                      <th>Item</th>
+                      <th className={docs.num}>Qty</th>
+                      <th className={docs.num}>Total</th>
+                      <th>Date</th>
+                      <th style={{ textAlign: "right" }}>Report</th>
+                      <th style={{ textAlign: "right" }}>Details</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((r, i) => (
+                      <tr
+                        key={`${r.id}-${i}`}
+                        className={docs.clickableRow}
+                        {...rowOpenProps(() => openReceipt(r.id))}
+                      >
+                        <td>
+                          <span
+                            className={stockStyles.badge}
+                            data-tone={docTone(r.doc_type)}
+                          >
+                            {r.doc_type}
+                          </span>
+                        </td>
+                        <td>
+                          {r.doc_no ? (
+                            <span className={docs.mono}>{r.doc_no}</span>
+                          ) : (
+                            <span className={docs.muted}>—</span>
+                          )}
+                        </td>
+                        <td>{r.employee_name}</td>
+                        <td>
+                          <span className={docs.cellMain}>{r.item_label}</span>
+                        </td>
+                        <td className={docs.num}>{r.quantity}</td>
+                        <td className={docs.num}>{peso(r.total_amount)}</td>
+                        <td>{fmt(r.doc_date)}</td>
+                        <td
+                          className={docs.actionCell}
+                          onClick={(e) => e.stopPropagation()}
+                          onKeyDown={(e) => e.stopPropagation()}
+                        >
+                          <button
+                            type="button"
+                            className={assetStyles.rowAction}
+                            onClick={() => openReceipt(r.id)}
+                          >
+                            <Eye size={14} aria-hidden="true" />
+                            View {r.doc_type}
+                          </button>
+                        </td>
+                        <td
+                          className={docs.actionCell}
+                          onClick={(e) => e.stopPropagation()}
+                          onKeyDown={(e) => e.stopPropagation()}
+                        >
+                          <Link
+                            href={`/super-admin/issuances/${r.id}`}
+                            className={assetStyles.rowActionMuted}
+                          >
+                            Open
+                          </Link>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className={air.grid}>
+                {rows.map((r, i) => (
+                  <article key={`${r.id}-${i}`} className={air.card}>
+                    <div className={air.cardTop}>
+                      <span className={air.ref}>
+                        {r.doc_no ?? r.doc_type}
                       </span>
-                    </td>
-                    <td>{r.doc_no ?? "—"}</td>
-                    <td>{r.employee_name}</td>
-                    <td>{r.logged_by ?? "—"}</td>
-                    <td>{r.item_label}</td>
-                    <td>{r.quantity}</td>
-                    <td>{peso(r.total_amount)}</td>
-                    <td>{fmt(r.doc_date)}</td>
-                    <td>
+                      <span className={air.chips}>
+                        <span
+                          className={stockStyles.badge}
+                          data-tone={docTone(r.doc_type)}
+                        >
+                          {r.doc_type}
+                        </span>
+                      </span>
+                    </div>
+                    <dl className={air.meta}>
+                      <div>
+                        <dt>Employee</dt>
+                        <dd>{r.employee_name}</dd>
+                      </div>
+                      <div>
+                        <dt>Date</dt>
+                        <dd>{fmt(r.doc_date)}</dd>
+                      </div>
+                      <div>
+                        <dt>Quantity</dt>
+                        <dd>{r.quantity}</dd>
+                      </div>
+                      <div>
+                        <dt>Total</dt>
+                        <dd>{peso(r.total_amount)}</dd>
+                      </div>
+                      <div className={air.metaFull}>
+                        <dt>Item</dt>
+                        <dd>{r.item_label}</dd>
+                      </div>
+                    </dl>
+                    <div className={air.actions}>
                       <button
                         type="button"
-                        className={`${styles.inspectLinkSecondary} cursor-pointer`}
+                        className={assetStyles.rowAction}
                         onClick={() => openReceipt(r.id)}
                       >
+                        <Eye size={14} aria-hidden="true" />
                         View {r.doc_type}
                       </button>
-                    </td>
-                  </tr>
+                    </div>
+                  </article>
                 ))}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <div className={air.grid}>
-            {rows.map((r) => (
-              <article key={r.id} className={air.card}>
-                <div className={air.cardTop}>
-                  <span className={air.ref}>{r.doc_no ?? r.doc_type}</span>
-                  <span className={air.chips}>
-                    <span
-                      className={styles.status}
-                      data-tone={r.doc_type === "PAR" ? "ok" : "info"}
-                    >
-                      {r.doc_type}
-                    </span>
-                  </span>
-                </div>
-                <dl className={air.meta}>
-                  <div>
-                    <dt>Employee</dt>
-                    <dd>{r.employee_name}</dd>
-                  </div>
-                  <div>
-                    <dt>Logged by</dt>
-                    <dd>{r.logged_by ?? "—"}</dd>
-                  </div>
-                  <div>
-                    <dt>Date</dt>
-                    <dd>{fmt(r.doc_date)}</dd>
-                  </div>
-                  <div>
-                    <dt>Quantity</dt>
-                    <dd>{r.quantity}</dd>
-                  </div>
-                  <div>
-                    <dt>Total</dt>
-                    <dd>{peso(r.total_amount)}</dd>
-                  </div>
-                  <div className={air.metaFull}>
-                    <dt>Item</dt>
-                    <dd>{r.item_label}</dd>
-                  </div>
-                </dl>
-                <div className={air.actions}>
-                  <button
-                    type="button"
-                    className={`${air.primary} cursor-pointer`}
-                    onClick={() => openReceipt(r.id)}
-                  >
-                    View {r.doc_type}
-                  </button>
-                </div>
-              </article>
-            ))}
-          </div>
+              </div>
+            )}
+
+            <div className={stockStyles.footer}>
+              {total > PAGE_SIZE ? (
+                <TablePager
+                  id="admin-issuances"
+                  total={total}
+                  pageSize={PAGE_SIZE}
+                  page={safePage}
+                  onPageChange={setPage}
+                />
+              ) : (
+                <span className={stockStyles.footerInfo}>
+                  Showing all {total} {total === 1 ? "record" : "records"}
+                </span>
+              )}
+            </div>
+          </>
         )}
-        {total > 0 ? (
-          <TablePager
-            id="admin-issuances"
-            total={total}
-            pageSize={PAGE_SIZE}
-            page={safePage}
-            onPageChange={setPage}
-          />
-        ) : null}
       </Card>
 
       <ReceiptOverlay
@@ -240,12 +514,13 @@ export default function SuperAdminIssuancesPage() {
           isIcs ? "Inventory Custodian Slip" : "Property Acknowledgment Receipt"
         }
         onClose={viewer.close}
+        printable={!viewer.docLoading && !!doc}
       >
         {viewer.docLoading ? (
           <ReceiptLoading label="Loading report…" />
         ) : !doc ? (
-          <div className={styles.emptyState}>
-            <p className={styles.panelSub}>
+          <div className={stockStyles.empty}>
+            <p className={stockStyles.emptyText}>
               This record is no longer available.
             </p>
           </div>
@@ -256,17 +531,17 @@ export default function SuperAdminIssuancesPage() {
             ) : (
               <ParReportSheet issuance={doc} />
             )}
-            <p className={styles.panelSub}>
+            <p className={stockStyles.toolbarInfo}>
               <Link
                 href={`/super-admin/issuances/${doc.id}`}
-                className={styles.inspectLinkSecondary}
+                className={assetStyles.rowActionMuted}
               >
                 Open full report
               </Link>{" "}
               ·{" "}
               <a
                 href={`/api/personnel/issuances/${doc.id}/${isIcs ? "ics-xlsx" : "par-xlsx"}`}
-                className={styles.inspectLinkSecondary}
+                className={assetStyles.rowActionMuted}
               >
                 Download Excel
               </a>

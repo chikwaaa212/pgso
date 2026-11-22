@@ -16,6 +16,7 @@ import prisma from "@/lib/prisma";
 import { generateAssetQrDataUrl, generateStockQrDataUrl } from "@/lib/qrcode";
 import { ASSET_EXCEL_HEADERS, ASSET_TEMPLATE_SHEET } from "@/lib/asset-excel";
 import { findCatalogEntry, getActiveCatalogEntries, resolveUnitName } from "@/lib/master-data";
+import { ACCOUNT_CODE_PREFIX, nextAccountCode } from "@/lib/account-code";
 import { fetchCustomBags, type CustomBag } from "./custom-fields";
 
 export interface EditState {
@@ -1768,6 +1769,60 @@ function normalizeStatusInput(value: string | null): string | null {
   return "available";
 }
 
+/**
+ * Allocate a unique AST-xxx-xx-xx code for a manually-added asset. Both the
+ * asset registry and the delivery log participate in the sequence so a manual
+ * code can never collide with a delivery/inspection code.
+ */
+async function allocateAssetAccountCode(): Promise<string | null> {
+  const prefix = ACCOUNT_CODE_PREFIX.asset;
+  try {
+    const [assets, deliveries] = await Promise.all([
+      prisma.asset.findMany({
+        where: {
+          OR: [
+            { account_code: { startsWith: `${prefix}-`, mode: "insensitive" } },
+            { property_number: { startsWith: `${prefix}-`, mode: "insensitive" } },
+          ],
+        },
+        select: { account_code: true, property_number: true },
+      }),
+      prisma.delivery.findMany({
+        where: { account_code: { startsWith: `${prefix}-`, mode: "insensitive" } },
+        select: { account_code: true },
+      }),
+    ]);
+    const codes: (string | null)[] = [
+      ...assets.flatMap((a) => [a.account_code, a.property_number]),
+      ...deliveries.map((d) => d.account_code),
+    ];
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const candidate = nextAccountCode("asset", codes);
+      // Guard against a concurrent write that picked the same candidate.
+      const taken = await prisma.asset.findFirst({
+        where: { OR: [{ property_number: candidate }, { account_code: candidate }] },
+        select: { id: true },
+      });
+      if (!taken) return candidate;
+      codes.push(candidate);
+    }
+    return null;
+  } catch (e) {
+    console.error("[allocateAssetAccountCode]", e);
+    return null;
+  }
+}
+
+/** Preview the next system asset code for the Add asset form. */
+export async function generateAssetAccountCode(): Promise<
+  { code: string } | { error: string }
+> {
+  const code = await allocateAssetAccountCode();
+  return code
+    ? { code }
+    : { error: "Could not generate an account code. Please try again." };
+}
+
 export async function createAsset(
   _prevState: CreateAssetState,
   formData: FormData
@@ -1787,18 +1842,52 @@ export async function createAsset(
     return s === "" ? null : s;
   };
 
-  const accountCode = get("account_code");
+  const accountTitleRaw = get("account_title");
+  const assetTypeRaw = get("category");
   const article = get("article");
-  if (!accountCode) return { success: false, error: "ACCOUNT CODE is required — pick one from Master Data." };
+  if (!accountTitleRaw)
+    return { success: false, error: "ACCOUNT TITLE is required — pick one from Master Data." };
   if (!article) return { success: false, error: "ARTICLE is required." };
 
-  // Strict mode: code must exist in the active catalog; title + type are
-  // authoritative from the catalog entry, not the submitted form.
-  const catalogEntry = await findCatalogEntry(accountCode);
-  if (!catalogEntry)
+  // Strict mode: the title must exist in the active catalog. Asset type comes
+  // from the catalog row(s) for that title (the form auto-fills it when a
+  // title maps to a single type). The account code is system-owned below.
+  const catalogEntries = await getActiveCatalogEntries();
+  const titleMatches = catalogEntries.filter(
+    (e) => (e.title ?? "").trim().toUpperCase() === accountTitleRaw.toUpperCase()
+  );
+  if (titleMatches.length === 0)
     return {
       success: false,
-      error: `Unknown ACCOUNT CODE "${accountCode}" — ask your Super Admin to add it to Master Data.`,
+      error: `Unknown ACCOUNT TITLE "${accountTitleRaw}" — ask your Super Admin to add it to Master Data.`,
+    };
+
+  const accountTitle = titleMatches[0].title;
+  const typeOptions = [
+    ...new Map(
+      titleMatches
+        .map((e) => (e.type ?? "").trim())
+        .filter(Boolean)
+        .map((t) => [t.toLowerCase(), t])
+    ).values(),
+  ];
+  let category: string | null = null;
+  if (assetTypeRaw) {
+    category =
+      typeOptions.find((t) => t.toLowerCase() === assetTypeRaw.toLowerCase()) ?? null;
+  }
+  if (!category) category = typeOptions[0] ?? null;
+  if (!category)
+    return {
+      success: false,
+      error: `"${accountTitle}" has no asset type in Master Data — ask your Super Admin to update it.`,
+    };
+
+  const accountCode = await allocateAssetAccountCode();
+  if (!accountCode)
+    return {
+      success: false,
+      error: "Could not allocate a unique account code. Please try again.",
     };
 
   const unitRaw = get("unit");
@@ -1840,12 +1929,6 @@ export async function createAsset(
   const qrCode = get("qr_code");
 
   try {
-    const dupCode = await prisma.asset.findUnique({
-      where: { property_number: accountCode },
-      select: { id: true },
-    });
-    if (dupCode)
-      return { success: false, error: `ACCOUNT CODE "${accountCode}" already exists.` };
     if (qrCode) {
       const dupQr = await prisma.asset.findUnique({
         where: { qr_code: qrCode },
@@ -1860,9 +1943,9 @@ export async function createAsset(
         property_number: accountCode,
         account_code: accountCode,
         identifier: get("identifier"),
-        account_title: catalogEntry.title,
+        account_title: accountTitle,
         account_name: get("account_name"),
-        category: catalogEntry.type,
+        category,
         article,
         quantity,
         unit,
@@ -1920,9 +2003,105 @@ export interface ImportAssetsState {
   created?: number;
   updated?: number;
   skipped?: number;
+  /** Account codes that were newly saved (or re-activated) in Master Data. */
+  masterDataCreated?: number;
   errors?: string[];
   /** Template columns matched in the uploaded file (any order; extras ignored). */
   matched?: string[];
+}
+
+interface ImportCatalogEntry {
+  code: string;
+  title: string;
+  type: string;
+}
+
+/**
+ * Master Data bootstrap for Excel imports.
+ *
+ * Existing codes keep their approved Title/Type (the catalog stays
+ * authoritative for records that are already validated). A code that only
+ * exists in the uploaded file is saved to Master Data right here, so an
+ * import never has to wait for a Super Admin to add it first. Codes that were
+ * previously deactivated/soft-deleted are re-activated instead of duplicated.
+ */
+async function ensureImportCatalogEntry(input: {
+  code: string;
+  title: string | null;
+  type: string | null;
+  name: string | null;
+  createdBy: string | null;
+}): Promise<{ entry: ImportCatalogEntry; changed: boolean }> {
+  const code = input.code.trim();
+  const row = await prisma.accountCatalog.findUnique({
+    where: { account_code: code },
+    select: {
+      account_code: true,
+      account_title: true,
+      asset_type: true,
+      status: true,
+      deleted_at: true,
+    },
+  });
+
+  if (row) {
+    let changed = false;
+    if (row.status !== "active" || row.deleted_at) {
+      await prisma.accountCatalog.update({
+        where: { account_code: code },
+        data: { status: "active", deleted_at: null },
+      });
+      changed = true;
+    }
+    return {
+      entry: {
+        code: row.account_code,
+        title: row.account_title,
+        type: row.asset_type,
+      },
+      changed,
+    };
+  }
+
+  const title = (input.title ?? "").trim().toUpperCase() || "GENERAL";
+  const type = (input.type ?? "").trim() || "General";
+  try {
+    const created = await prisma.accountCatalog.create({
+      data: {
+        account_code: code,
+        account_title: title,
+        account_name: input.name,
+        asset_type: type,
+        status: "active",
+        created_by: input.createdBy,
+      },
+      select: { account_code: true, account_title: true, asset_type: true },
+    });
+    return {
+      entry: {
+        code: created.account_code,
+        title: created.account_title,
+        type: created.asset_type,
+      },
+      changed: true,
+    };
+  } catch (e) {
+    // Another row/import raced the same new code — the winner is authoritative.
+    const raced = await prisma.accountCatalog.findUnique({
+      where: { account_code: code },
+      select: { account_code: true, account_title: true, asset_type: true },
+    });
+    if (raced)
+      return {
+        entry: {
+          code: raced.account_code,
+          title: raced.account_title,
+          type: raced.asset_type,
+        },
+        changed: false,
+      };
+    throw e;
+  }
 }
 
 /**
@@ -2093,6 +2272,7 @@ export async function importAssetsFromExcel(
   let created = 0;
   let updated = 0;
   let skipped = 0;
+  let masterDataCreated = 0;
   const errors: string[] = [];
   const seenQr = new Set<string>();
 
@@ -2102,7 +2282,7 @@ export async function importAssetsFromExcel(
   );
 
   // Existing assets, loaded once. Each row is handled independently:
-  // - triple (code + title + type) must exist in Master Data, else skipped;
+  // - a new Account Code is saved to Master Data from the row's Title/Type;
   // - row identical to the existing record on every provided column →
   //   duplicate, skipped with a message;
   // - row differs → the existing record is updated;
@@ -2214,27 +2394,30 @@ export async function importAssetsFromExcel(
       continue;
     }
 
-    // The code must exist in the office's approved Master Data list…
-    const catalogHit = catalogByCode.get(accountCode);
+    // Every row is saved against Master Data. Existing codes keep their
+    // approved Title/Type; codes that only appear in this file are written to
+    // Master Data on the spot so the import never waits for a Super Admin.
+    let catalogHit = catalogByCode.get(accountCode);
     if (!catalogHit) {
-      skipped++;
-      errors.push(
-        `Row ${i} (Account Code "${accountCode}"): not imported — this code is not yet in the approved Master Data list. What to do: ask your Super Admin to add code "${accountCode}" to Master Data, then re-import just this row.`
-      );
-      continue;
-    }
-
-    // …and the row's title + type must match that approved entry.
-    const rowTitle = (strVal(at(row, "ACCOUNT TITLE")) ?? "").trim();
-    const rowType = (strVal(at(row, "ASSET TYPE")) ?? "").trim();
-    const titleOk = rowTitle.toUpperCase() === (catalogHit.title ?? "").trim().toUpperCase();
-    const typeOk = rowType.toLowerCase() === (catalogHit.type ?? "").trim().toLowerCase();
-    if (!titleOk || !typeOk) {
-      skipped++;
-      errors.push(
-        `Row ${i} (Account Code "${accountCode}"): not imported — the Account Title or Asset Type in your file doesn't match the approved list. The approved entry is Title "${catalogHit.title}" and Type "${catalogHit.type}". What to do: correct your file to match exactly, then re-import just this row.`
-      );
-      continue;
+      try {
+        const ensured = await ensureImportCatalogEntry({
+          code: accountCode,
+          title: strVal(at(row, "ACCOUNT TITLE")),
+          type: strVal(at(row, "ASSET TYPE")),
+          name: strVal(at(row, "ACCOUNT NAME")),
+          createdBy: actor.userId,
+        });
+        catalogHit = ensured.entry;
+        catalogByCode.set(accountCode, catalogHit);
+        if (ensured.changed) masterDataCreated++;
+      } catch (e) {
+        console.error(`[importAssetsFromExcel] master data row ${i}`, e);
+        skipped++;
+        errors.push(
+          `Row ${i} (Account Code "${accountCode}"): not imported — we couldn't save this code to Master Data. What to do: try the import again; if it keeps failing, ask your Super Admin to add code "${accountCode}" to Master Data.`
+        );
+        continue;
+      }
     }
 
     // Unknown units are left blank with a warning so the row itself is not lost.
@@ -2364,11 +2547,21 @@ export async function importAssetsFromExcel(
     }
   }
 
+  // Master Data may have gained codes above — drop its cached lookups so the
+  // Master Data page and the Add asset dropdowns see them immediately.
+  if (masterDataCreated > 0) {
+    nextRevalidatePath("/super-admin/master-data");
+    void import("@/lib/personnel-cache")
+      .then((m) => m.bustCachePrefixes(["catalog:", "master-data:"]))
+      .catch(() => {});
+  }
+
   if (created === 0 && updated === 0)
     return {
       success: false,
-      error: "Nothing was imported — every row was skipped. This usually means the rows are already saved and unchanged, the Account Codes aren't in the approved Master Data list yet, or the Title / Type in the file doesn't match the approved list. Please read the per-row notes below, fix your file, and re-import only the rows that failed.",
+      error: "Nothing was imported — every row was skipped. This usually means the rows are already saved and unchanged, or a required value is missing. Please read the per-row notes below, fix your file, and re-import only the rows that failed.",
       skipped,
+      masterDataCreated,
       errors: errors.slice(0, 20),
       matched,
     };
@@ -2379,8 +2572,8 @@ export async function importAssetsFromExcel(
       userId: actor.userId!,
       action: 'asset:import',
       module: 'assets',
-      details: { purpose: `Import assets from Excel`, summary: `created ${created}, updated ${updated}, skipped ${skipped}`, created, updated, skipped },
+      details: { purpose: `Import assets from Excel`, summary: `created ${created}, updated ${updated}, skipped ${skipped}, master data saved ${masterDataCreated}`, created, updated, skipped, masterDataCreated },
     }).catch(() => {})
   ).catch(() => {});
-  return { success: true, created, updated, skipped, errors: errors.slice(0, 20), matched };
+  return { success: true, created, updated, skipped, masterDataCreated, errors: errors.slice(0, 20), matched };
 }

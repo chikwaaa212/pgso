@@ -589,7 +589,7 @@ export default function PersonnelInspectionsPage() {
                   <tr>
                     <th>PO ref</th>
                     <th>Type</th>
-                    <th>Supplier</th>
+                    <th>{readOnly ? "Logged by" : "Supplier"}</th>
                     <th>Arrival date</th>
                     <th>Date inspected</th>
                     <th>Result</th>
@@ -653,7 +653,7 @@ export default function PersonnelInspectionsPage() {
                   <tr>
                     <th>PO ref</th>
                     <th>Type</th>
-                    <th>Supplier</th>
+                    <th>{readOnly ? "Logged by" : "Supplier"}</th>
                     <th>Arrival date</th>
                     <th>Date inspected</th>
                     <th>Result</th>
@@ -665,6 +665,8 @@ export default function PersonnelInspectionsPage() {
                     const isPending = d.inspection_status === 'pending'
                     const isEditable = canEditInspection(d)
                     const isPassed = d.inspection_status === 'passed'
+                    // Admins can act on deliveries they logged; other rows stay read-only.
+                    const canManage = !readOnly || d.mine === true
                     return (
                       <tr
                         key={d.delivery_id}
@@ -681,7 +683,11 @@ export default function PersonnelInspectionsPage() {
                         <td>
                           <DeliveryKindCell kind={d.delivery_kind} />
                         </td>
-                        <td>{d.supplier ?? '—'}</td>
+                        <td>
+                          {readOnly
+                            ? (d.logged_by ?? d.inspector_name ?? "—")
+                            : (d.supplier ?? "—")}
+                        </td>
                         <td>{fmt(d.expected_arrival_date)}</td>
                         <td>{fmt(d.inspection_date)}</td>
                         <td>
@@ -706,7 +712,7 @@ export default function PersonnelInspectionsPage() {
                                 triggerClassName={ROW_ACTION_CLASS}
                               />
                             ) : null}
-                            {!readOnly && isEditable ? (
+                            {canManage && isEditable ? (
                               <Link
                                 href={inspectionHref(d.delivery_id, '', portal)}
                                 className={ROW_ACTION_CLASS}
@@ -715,7 +721,7 @@ export default function PersonnelInspectionsPage() {
                                 Edit
                               </Link>
                             ) : null}
-                            {!readOnly && isPending ? (
+                            {canManage && isPending ? (
                               <InspectConfirmButton
                                 deliveryId={d.delivery_id}
                                 deliveryRef={d.delivery_ref}
@@ -905,7 +911,7 @@ export default function PersonnelInspectionsPage() {
                     <tr>
                       <th>PO ref</th>
                       <th>Type</th>
-                      <th>Supplier</th>
+                      <th>{readOnly ? 'Logged by' : 'Supplier'}</th>
                       <th>Arrival date</th>
                       <th>Date inspected</th>
                       <th>AIR / IAR</th>
@@ -917,6 +923,8 @@ export default function PersonnelInspectionsPage() {
                   <tbody>
                     {airVisible.map((d) => {
                       const isPending = d.inspection_status === 'pending'
+                      // Admins can continue inspecting deliveries they logged.
+                      const canManage = !readOnly || d.mine === true
                       const airTone = d.iar_no || d.iar_image_url
                         ? 'ok'
                         : isPending
@@ -935,7 +943,7 @@ export default function PersonnelInspectionsPage() {
                               return
                             }
                             toast.info(
-                              readOnly
+                              !canManage
                                 ? 'No AIR / IAR has been recorded for this delivery yet.'
                                 : isPending
                                   ? 'This delivery still needs an inspection. Use “Continue inspection” to record it first.'
@@ -948,7 +956,11 @@ export default function PersonnelInspectionsPage() {
                           <td>
                             <DeliveryKindCell kind={d.delivery_kind} />
                           </td>
-                          <td>{d.supplier ?? '—'}</td>
+                          <td>
+                          {readOnly
+                            ? (d.logged_by ?? d.inspector_name ?? "—")
+                            : (d.supplier ?? "—")}
+                        </td>
                           <td>{fmt(d.expected_arrival_date)}</td>
                           <td>{fmt(d.inspection_date)}</td>
                           <td>
@@ -992,19 +1004,19 @@ export default function PersonnelInspectionsPage() {
                                   triggerClassName={ROW_PRIMARY_CLASS}
                                 />
                               ) : isPending ? (
-                                readOnly ? (
-                                  <ViewInspectionDialog
-                                    deliveryId={d.delivery_id}
-                                    deliveryRef={d.delivery_ref}
-                                    triggerClassName={ROW_ACTION_CLASS}
-                                  />
-                                ) : (
+                                canManage ? (
                                   <Link
                                     href={inspectionHref(d.delivery_id, '', portal)}
                                     className={ROW_PRIMARY_CLASS}
                                   >
                                     Continue inspection
                                   </Link>
+                                ) : (
+                                  <ViewInspectionDialog
+                                    deliveryId={d.delivery_id}
+                                    deliveryRef={d.delivery_ref}
+                                    triggerClassName={ROW_ACTION_CLASS}
+                                  />
                                 )
                               ) : readOnly ? (
                                 <ViewInspectionDialog

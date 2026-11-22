@@ -203,8 +203,17 @@ export interface UsersPage {
  * the legacy path). Pending self-registrations (any role) live in the
  * approval queue, not the roster table.
  */
+export interface UsersPageFilters {
+  page?: number
+  q?: string
+  /** super_admin | pgso_personnel | employee | all */
+  role?: string
+  /** active | inactive | all (pending lives in the approval queue) */
+  status?: string
+}
+
 export async function getUsersPage(
-  opts: { page?: number; q?: string } = {}
+  opts: UsersPageFilters = {}
 ): Promise<UsersPage> {
   try {
     await requireSuperAdmin()
@@ -217,6 +226,8 @@ export async function getUsersPage(
   const page = parsePage(opts.page)
   const q = parseQuery(opts.q)
   const pageSize = PAGE_SIZE
+  const role = (opts.role ?? 'all').trim()
+  const status = (opts.status ?? 'all').trim()
   return withScopedCache('super-admin:users-page', 30, async () => {
   try {
     const like = q ? `%${q}%` : null
@@ -240,6 +251,8 @@ export async function getUsersPage(
     const where: Record<string, unknown> = {
       NOT: [{ status: 'pending' }],
     }
+    if (role !== 'all' && role !== '') where.role = role
+    if (status === 'active' || status === 'inactive') where.status = status
     if (like) {
       // employee_no / department exist only after migration 25 (same guard
       // as the SELECT list) — filtering on missing columns would P2022 the
@@ -281,25 +294,26 @@ export async function getUsersPage(
     console.error('[getUsersPage]', e)
     return { rows: [], data: [], total: 0, page: 1, pageSize, totalPages: 1 }
   }
-  }, { page, pageSize, q })
+  }, { page, pageSize, q, role, status })
 }
 
-export async function getUserCounts(): Promise<{ pending: number; personnel: number; employees: number }> {  try {
+export async function getUserCounts(): Promise<{ pending: number; personnel: number; employees: number; admins: number }> {  try {
     await requireSuperAdmin()
   } catch {
-    return { pending: 0, personnel: 0, employees: 0 }
+    return { pending: 0, personnel: 0, employees: 0, admins: 0 }
   }
   const { withScopedCache } = await import('@/lib/personnel-cache')
   return withScopedCache('super-admin:user-counts', 30, async () => {
   try {
-    const [pending, personnel, employees] = await Promise.all([
+    const [pending, personnel, employees, admins] = await Promise.all([
       prisma.profile.count({ where: { status: 'pending', role: { in: ['employee', 'pgso_personnel'] } } }),
       prisma.profile.count({ where: { role: 'pgso_personnel' } }),
       prisma.profile.count({ where: { role: 'employee' } }),
+      prisma.profile.count({ where: { role: 'super_admin' } }),
     ])
-    return { pending, personnel, employees }
+    return { pending, personnel, employees, admins }
   } catch {
-    return { pending: 0, personnel: 0, employees: 0 }
+    return { pending: 0, personnel: 0, employees: 0, admins: 0 }
   }
   })
 }

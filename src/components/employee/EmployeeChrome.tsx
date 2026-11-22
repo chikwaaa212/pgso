@@ -1,6 +1,7 @@
 "use client";
 
 import { EmployeeNavbar } from "./EmployeeNavbar";
+import { EmployeeSidebar } from "./EmployeeSidebar";
 import layoutStyles from "../../app/employee/layout.module.css";
 
 export function EmployeeChrome({
@@ -15,7 +16,10 @@ export function EmployeeChrome({
   return (
     <div className={layoutStyles.shell}>
       <EmployeeNavbar userName={userName} userDetail={userDetail} />
-      <div className={layoutStyles.main}>{children}</div>
+      <div className={layoutStyles.body}>
+        <EmployeeSidebar />
+        <div className={layoutStyles.main}>{children}</div>
+      </div>
     </div>
   );
 }

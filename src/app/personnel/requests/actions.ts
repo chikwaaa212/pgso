@@ -1034,8 +1034,12 @@ export async function createStockReplenishment(
     if (!requester) return { error: 'Your account was not found.' }
     if (requester.status !== 'active')
       return { error: 'Only active accounts can file requests.' }
-    if (requester.role !== 'pgso_personnel' && requester.role !== 'employee')
-      return { error: 'Only personnel can file stock requests.' }
+    if (
+      requester.role !== 'pgso_personnel' &&
+      requester.role !== 'employee' &&
+      requester.role !== 'super_admin'
+    )
+      return { error: 'Only personnel and admins can file stock requests.' }
     if (!stock) return { error: 'Selected stock item no longer exists.' }
 
     const unitCost =

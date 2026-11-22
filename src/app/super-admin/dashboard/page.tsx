@@ -22,14 +22,26 @@ function ChartFallback() {
       </div>
       <div
         aria-hidden="true"
-        className="flex h-[220px] items-end justify-around gap-2 px-2"
+        className="flex h-[240px] items-end justify-around gap-3 px-2"
       >
-        {[42, 68, 55, 82, 60, 74].map((h, i) => (
-          <div
-            key={i}
-            className="w-full max-w-10 animate-pulse rounded bg-navy-100"
-            style={{ height: `${h}%` }}
-          />
+        {[
+          [42, 30],
+          [68, 52],
+          [55, 44],
+          [82, 62],
+          [60, 48],
+          [74, 58],
+        ].map((pair, i) => (
+          <div key={i} className="flex h-full flex-1 items-end justify-center gap-1">
+            <div
+              className="w-4 max-w-[32%] animate-pulse rounded bg-navy-100"
+              style={{ height: `${pair[0]}%` }}
+            />
+            <div
+              className="w-4 max-w-[32%] animate-pulse rounded bg-navy-100"
+              style={{ height: `${pair[1]}%` }}
+            />
+          </div>
         ))}
       </div>
     </Card>
@@ -44,11 +56,25 @@ function AnalyticsFallback() {
         Live breakdowns across every transaction type — each with what it means
         for operations.
       </p>
-      <div className={styles.analyticsGrid}>
-        {Array.from({ length: 11 }).map((_, i) => (
-          <Card key={i} className={`${styles.panel} p-4`}>
-            <div aria-hidden="true" className="h-44 w-full animate-pulse rounded bg-navy-100" />
-          </Card>
+      <div className={styles.analyticsRows}>
+        {[3, 2, 1, 3, 2].map((size, rowIndex) => (
+          <div
+            key={`analytics-skeleton-row-${rowIndex}`}
+            className={styles.analyticsRow}
+            data-cols={size}
+          >
+            {Array.from({ length: size }).map((_, i) => (
+              <Card
+                key={`analytics-skeleton-${rowIndex}-${i}`}
+                className={`${styles.panel} p-4`}
+              >
+                <div
+                  aria-hidden="true"
+                  className="h-44 w-full animate-pulse rounded bg-navy-100"
+                />
+              </Card>
+            ))}
+          </div>
         ))}
       </div>
     </div>
@@ -165,7 +191,7 @@ export default async function SuperAdminDashboard() {
         <div>
           <h1 className={styles.title}>Welcome, {displayName}</h1>
           <p className={styles.subtitle}>
-            Signed in as {userEmail} · system-wide oversight at a glance.
+            Property and supply operations at a glance.
           </p>
         </div>
         <div className={styles.actions}>
@@ -203,7 +229,7 @@ export default async function SuperAdminDashboard() {
       </Suspense>
 
       <Suspense fallback={<AnalyticsFallback />}>
-        <DashboardAnalytics gridClass={styles.analyticsGrid} />
+        <DashboardAnalytics />
       </Suspense>
     </section>
   )

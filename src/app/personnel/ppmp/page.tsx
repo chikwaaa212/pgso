@@ -107,7 +107,17 @@ export default function PpmpPage() {
   }, [loadFiles]);
 
   function submit(formData: FormData) {
+    const name = fileName;
     setResult(null);
+    // Close the dialog right away — the upload continues in the background,
+    // and the toast reports the outcome when the server finishes.
+    setOpen(false);
+    setFileName("");
+    formRef.current?.reset();
+    toast({
+      title: "Import started",
+      description: `${name || "The PPMP workbook"} is being processed.`,
+    });
     startTransition(async () => {
       const res = await importPpmpFromExcel({} as ImportPpmpState, formData);
       setResult(res);
@@ -119,10 +129,13 @@ export default function PpmpPage() {
             : `${res.imported ?? 0} row(s) imported.`,
           variant: "success",
         });
-        setOpen(false);
-        setFileName("");
-        formRef.current?.reset();
         loadFiles();
+      } else if (res.error) {
+        toast({
+          title: "Import failed",
+          description: res.error,
+          variant: "error",
+        });
       }
     });
   }

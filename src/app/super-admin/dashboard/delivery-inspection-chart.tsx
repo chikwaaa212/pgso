@@ -1,14 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import {
-  Bar,
-  CartesianGrid,
-  ComposedChart,
-  Line,
-  XAxis,
-  YAxis,
-} from "recharts";
+import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
 import { Card } from "@/components/ui/card";
 import {
   ChartContainer,
@@ -21,7 +14,6 @@ import {
 import type { MonthlyPoint } from "@/app/personnel/inspections/actions";
 import {
   useMonthlyOverview,
-  monthlyInsight,
   monthlyRangeLabel,
 } from "@/hooks/use-monthly-overview";
 import { MonthlyRangeFilter } from "@/components/dashboard/monthly-range-filter";
@@ -30,19 +22,19 @@ import styles from "./page.module.css";
 
 const chartConfig = {
   deliveries: {
-    label: "Deliveries (bars)",
+    label: "Deliveries",
     color: "#243b66",
   },
   inspections: {
-    label: "Inspections (line)",
+    label: "Inspections",
     color: "#f5c518",
   },
 } satisfies ChartConfig;
 
 /**
- * Deliveries vs inspections as a single bar + line combo card:
- * monthly delivery volume as bars, inspections as a trend line over them.
- * Super-admin links — the personnel dashboard keeps its own chart.
+ * Deliveries vs inspections as grouped bars — matches the personnel
+ * dashboard chart exactly. Super-admin links point at the system-wide
+ * record pages.
  */
 export function DeliveryInspectionChart({ data }: { data: MonthlyPoint[] }) {
   const {
@@ -72,7 +64,7 @@ export function DeliveryInspectionChart({ data }: { data: MonthlyPoint[] }) {
         <ChartSkeleton />
       ) : hasData ? (
         <ChartContainer config={chartConfig} className="max-h-[280px] w-full">
-          <ComposedChart accessibilityLayer data={monthly}>
+          <BarChart accessibilityLayer data={monthly}>
             <CartesianGrid vertical={false} />
             <XAxis
               dataKey="month"
@@ -93,38 +85,29 @@ export function DeliveryInspectionChart({ data }: { data: MonthlyPoint[] }) {
             />
             <ChartLegend content={<ChartLegendContent />} />
             <Bar dataKey="deliveries" fill="var(--color-deliveries)" radius={4} />
-            <Line
-              type="monotone"
-              dataKey="inspections"
-              stroke="var(--color-inspections)"
-              strokeWidth={2}
-              dot={{ r: 3 }}
-              activeDot={{ r: 4 }}
-            />
-          </ComposedChart>
+            <Bar dataKey="inspections" fill="var(--color-inspections)" radius={4} />
+          </BarChart>
         </ChartContainer>
       ) : (
         <div className={styles.emptyCard}>
           <p className={styles.emptyCardText}>
             No data for the selected range.
           </p>
-          <Link href="/super-admin/reports" className={styles.emptyCardButton}>
-            View reports
+          <Link href="/super-admin/deliveries" className={styles.emptyCardButton}>
+            Log delivery
           </Link>
         </div>
       )}
-      <p className={styles.chartCaption}>
-        <strong>What this means: </strong>
-        {monthlyInsight(monthly, range)}
-      </p>
-      <div className={styles.panelFooter}>
-        <Link href="/super-admin/deliveries" className={styles.inspectLink}>
-          View deliveries
-        </Link>
-        <Link href="/super-admin/inspections" className={styles.inspectLink}>
-          View inspections
-        </Link>
-      </div>
+      {!loading && hasData && (
+        <div className={styles.panelFooter}>
+          <Link href="/super-admin/deliveries" className={styles.inspectLink}>
+            View deliveries
+          </Link>
+          <Link href="/super-admin/inspections" className={styles.inspectLink}>
+            View inspections
+          </Link>
+        </div>
+      )}
     </Card>
   );
 }

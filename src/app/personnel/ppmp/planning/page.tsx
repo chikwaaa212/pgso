@@ -15,6 +15,13 @@ import {
   Wallet,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { PageHeader } from "@/components/personnel/PageHeader";
 import { SummaryTiles, type SummaryTile } from "@/components/personnel/SummaryTiles";
 import { PpmpBackLink } from "@/components/personnel/PpmpBackLink";
@@ -427,20 +434,33 @@ export default function PpmpPlanningPage() {
             <span className={styles.fieldHint}>Leave blank to plan without a cap.</span>
           </label>
 
-          <label className={styles.field}>
-            <span className={styles.fieldLabel}>Forecast method</span>
-            <select
-              className={styles.control}
+          <div className={styles.field}>
+            <span className={styles.fieldLabel} id="ppmp-forecast-method">
+              Forecast method
+            </span>
+            <Select
               value={method}
-              onChange={(e) => setMethod(e.target.value as PlanningMethod)}
+              onValueChange={(value) => setMethod(value as PlanningMethod)}
             >
-              <option value="average">Average / carryover</option>
-              <option value="trend">Trend (statistical where available)</option>
-              <option value="growth">Growth rate</option>
-              <option value="consumption">Issuance history (actual usage)</option>
-            </select>
+              <SelectTrigger
+                className={styles.control}
+                aria-labelledby="ppmp-forecast-method"
+              >
+                <SelectValue placeholder="Select a method" />
+              </SelectTrigger>
+              <SelectContent className="bg-white">
+                <SelectItem value="average">Average / carryover</SelectItem>
+                <SelectItem value="trend">
+                  Trend (statistical where available)
+                </SelectItem>
+                <SelectItem value="growth">Growth rate</SelectItem>
+                <SelectItem value="consumption">
+                  Issuance history (actual usage)
+                </SelectItem>
+              </SelectContent>
+            </Select>
             <span className={styles.fieldHint}>How next year&apos;s quantity is estimated.</span>
-          </label>
+          </div>
 
           <label className={styles.field}>
             <span className={styles.fieldLabel}>Quantity growth % / year</span>
@@ -577,7 +597,7 @@ export default function PpmpPlanningPage() {
           step={3}
           icon={Sparkles}
           title="Planning draft"
-          text="Upload clean spreadsheet PDFs where possible and run one category at a time for large histories. Have budget and procurement staff check this output before submission."
+          text="Review the draft snapshot, the basis behind every projection, and the consumption check before exporting. Nothing is submitted automatically — download the GPPB file and have Budget and BAC staff validate it."
           tone="ok"
           actions={
             <span className={styles.status} data-tone="ok">

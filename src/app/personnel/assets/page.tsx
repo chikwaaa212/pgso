@@ -27,7 +27,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  getAssetFilterOptions,
   getUnifiedAsset,
   getUnifiedAssetsPage,
   type UnifiedAssetRow,
@@ -217,14 +216,6 @@ export default function PersonnelAssetsPage() {
     { staleTime: 60_000 }
   );
   const rows = useMemo(() => registryData?.rows ?? [], [registryData]);
-
-  // Catalog categories still feed the Add asset dialog.
-  const { data: filterOptions } = useCachedAction(
-    `${CLIENT_CACHE_KEYS.assets}-filter-options`,
-    getAssetFilterOptions,
-    { staleTime: 300_000 }
-  );
-  const categories = useMemo(() => filterOptions?.categories ?? [], [filterOptions]);
 
   const reload = useCallback(() => {
     // Own write (add / import / issue / edit): drop the dashboard snapshot and
@@ -475,7 +466,6 @@ export default function PersonnelAssetsPage() {
             {!isInspected ? (
               <>
                 <AddAssetDialog
-                  categories={categories}
                   onSuccess={reload}
                   onMutationEvent={handleAssetCreateEvent}
                   triggerClassName={ACTION_BTN}

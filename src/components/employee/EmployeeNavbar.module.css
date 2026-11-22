@@ -54,67 +54,12 @@
   color: var(--color-navy-500);
 }
 
-.nav {
-  display: none;
-  align-items: center;
-  gap: 0.25rem;
-  position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
-}
-
-@media (min-width: 1024px) {
-  .nav {
-    display: flex;
-  }
-}
-
-.menu {
-  position: relative;
-}
-
-.topLink {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.375rem;
-  padding: 0.5rem 0.75rem;
-  font-size: 0.875rem;
-  font-weight: 500;
-  color: var(--color-navy-600);
-  background: none;
-  border: none;
-  border-radius: 0.5rem;
-  text-decoration: none;
-  cursor: pointer;
-  font-family: inherit;
-  white-space: nowrap;
-}
-
-.topLink:hover {
-  color: var(--color-navy-900);
-  background-color: var(--color-navy-100);
-}
-
-.topLink[data-active="true"] {
-  color: var(--color-navy-900);
-  background-color: var(--color-yellow-500);
-  font-weight: 600;
-}
-
 .chevron {
   transition: transform 0.15s ease;
 }
 
 .chevron[data-open="true"] {
   transform: rotate(180deg);
-}
-
-.triggerDot {
-  width: 0.5rem;
-  height: 0.5rem;
-  border-radius: 9999px;
-  background-color: var(--color-destructive);
-  flex-shrink: 0;
 }
 
 .panel {
@@ -134,7 +79,7 @@
 }
 
 /* Invisible hover bridge covering the gap between the trigger and the
-   panel — without it, moving the mouse down crosses outside .menu,
+   panel - without it, moving the mouse down crosses outside .menu,
    fires mouseleave, and the dropdown vanishes before it can be reached. */
 .panel::before {
   content: "";
@@ -143,12 +88,6 @@
   left: 0;
   right: 0;
   height: 0.625rem;
-}
-
-.panel[data-wide="true"] {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  min-width: 34rem;
 }
 
 @keyframes panel-in {
@@ -160,77 +99,6 @@
     opacity: 1;
     transform: translateY(0);
   }
-}
-
-.item {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.75rem;
-  padding: 0.625rem;
-  border-radius: 0.5rem;
-  text-decoration: none;
-}
-
-.item:hover {
-  background-color: var(--color-navy-100);
-}
-
-.item[data-active="true"] {
-  background-color: var(--color-yellow-100, #fef3c7);
-}
-
-.itemIcon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 2.25rem;
-  height: 2.25rem;
-  flex-shrink: 0;
-  border: 1px solid var(--color-navy-200);
-  border-radius: 0.5rem;
-  color: var(--color-navy-700);
-  background-color: #fff;
-}
-
-.item[data-active="true"] .itemIcon {
-  border-color: var(--color-yellow-500);
-  background-color: var(--color-yellow-500);
-  color: var(--color-navy-900);
-}
-
-.itemText {
-  display: flex;
-  flex-direction: column;
-  gap: 0.125rem;
-  min-width: 0;
-}
-
-.itemLabel {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  font-size: 0.875rem;
-  font-weight: 600;
-  color: var(--color-navy-900);
-}
-
-.itemDesc {
-  font-size: 0.75rem;
-  color: var(--color-navy-500);
-}
-
-.badge {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 1.125rem;
-  height: 1.125rem;
-  padding-inline: 0.25rem;
-  font-size: 0.6875rem;
-  font-weight: 700;
-  color: var(--color-white);
-  background-color: var(--color-destructive);
-  border-radius: 9999px;
 }
 
 .right {
@@ -306,7 +174,7 @@
   color: var(--color-navy-500);
 }
 
-/* Appearance rows — icon on the left, label next to it, check on the right. */
+/* Appearance rows - icon on the left, label next to it, check on the right. */
 .themeRow {
   display: flex;
   align-items: center;

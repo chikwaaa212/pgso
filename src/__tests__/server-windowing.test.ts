@@ -102,8 +102,11 @@ describe("super-admin documents page: server windows, no client filter", () => {
     assert.ok(!/browseDeliveryDocuments\(\)/.test(page), "no full-list snapshot");
     assert.ok(!/browseAssets\(\)/.test(page), "no full-registry fetch");
   });
-  it("keeps Logged By columns and receipt overlays", () => {
-    assert.ok((page.match(/logged_by/g) ?? []).length >= 5, "Logged By columns kept");
+  it("matches the personnel library layout and receipt overlays", () => {
+    // The admin page mirrors personnel exactly: no admin-only Logged By
+    // columns, one bounded tab window, and admin-scoped receipt readers.
+    assert.ok(!page.includes("logged_by"), "no admin-only Logged By columns");
+    assert.match(page, /FETCH_LIMIT/);
     assert.match(page, /browseDelivery\(deliveryId\)/);
     assert.match(page, /browseIssuance\(row\.id\)/);
   });
@@ -113,7 +116,6 @@ describe("super-admin assets page: server window, not browseAssets", () => {
   const page = src("../app/super-admin/assets/page.tsx");
   it("pages via getUnifiedAssetsPage + bounded filter options", () => {
     assert.match(page, /getUnifiedAssetsPage\(\{/);
-    assert.match(page, /getAssetFilterOptions/);
     assert.ok(!/browseAssets\(\)/.test(page), "no 500+500 client list");
     assert.ok(!/customSearchText\(a\)/.test(page), "no client haystack scan");
   });

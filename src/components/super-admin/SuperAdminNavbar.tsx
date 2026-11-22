@@ -241,6 +241,7 @@ export function SuperAdminNavbar({
             {groups.map((group) => {
               const expanded = mobileSection === group.title;
               const badge = groupBadge(group);
+              const GroupIcon = group.icon;
               return (
                 <div key={group.title} className={styles.sheetGroup}>
                   <button
@@ -252,6 +253,7 @@ export function SuperAdminNavbar({
                       setMobileSection(expanded ? null : group.title)
                     }
                   >
+                    <GroupIcon size={18} aria-hidden="true" />
                     {group.title}
                     {badge > 0 && (
                       <span className={styles.badge} aria-label={`${badge} pending`}>

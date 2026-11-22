@@ -10,12 +10,14 @@ import actionStyles from "@/app/personnel/dashboard/page.module.css";
  */
 
 const HEADERS = [
-  "Item",
-  "On hand",
-  "Unit cost",
+  "Account Code",
+  "Type",
+  "Stock Title",
+  "Qty Available",
+  "Availability",
+  "Assigned to",
   "Status",
-  "Reorder threshold",
-  "Recommendation",
+  "Actions",
 ] as const;
 
 function TextPulse({ className }: { className: string }) {
@@ -68,6 +70,10 @@ export default function InventoryLoading() {
           />{" "}
           stock lines · reorder thresholds are set by the Administrator
         </p>
+        <div className={styles.tabs} aria-hidden="true" style={{ marginTop: "0.75rem" }}>
+          <span className={`${styles.tab} animate-pulse bg-navy-100`} />
+          <span className={`${styles.tab} animate-pulse bg-navy-100`} />
+        </div>
       </div>
 
       <div className={styles.summary} aria-hidden="true">
@@ -110,7 +116,7 @@ export default function InventoryLoading() {
                 <tr key={r} style={{ opacity: 1 - r * 0.05 }}>
                   <td>
                     <div className={styles.itemCell}>
-                      <TextPulse className="h-3.5 w-40" />
+                      <TextPulse className="h-3.5 w-24" />
                       <TextPulse className="h-2.5 w-28" />
                     </div>
                   </td>
@@ -118,19 +124,28 @@ export default function InventoryLoading() {
                     <TextPulse className="h-3.5 w-16" />
                   </td>
                   <td>
-                    <TextPulse className="h-3.5 w-20" />
+                    <div className={styles.itemCell}>
+                      <TextPulse className="h-3.5 w-40" />
+                      <TextPulse className="h-2.5 w-24" />
+                    </div>
+                  </td>
+                  <td>
+                    <TextPulse className="h-3.5 w-16" />
+                  </td>
+                  <td>
+                    <PillPulse className="w-20" />
+                  </td>
+                  <td>
+                    <TextPulse className="h-3.5 w-28" />
                   </td>
                   <td>
                     <PillPulse className="w-20" />
                   </td>
                   <td>
                     <div className="flex items-center gap-1.5">
-                      <span className="h-6 w-20 animate-pulse rounded-[4px] bg-navy-100" />
-                      <span className="h-6 w-12 animate-pulse rounded-[4px] bg-navy-100" />
+                      <span className="h-6 w-16 animate-pulse rounded-[4px] bg-navy-100" />
+                      <span className="h-6 w-6 animate-pulse rounded-[4px] bg-navy-100" />
                     </div>
-                  </td>
-                  <td>
-                    <PillPulse className="w-24" />
                   </td>
                 </tr>
               ))}

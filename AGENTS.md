@@ -46,6 +46,7 @@ npm run build
 - **Database:** Prisma is the single access layer. Raw SQL is used only for selective paginated/aggregated reads.
 - **Supporting services:** Supabase (Auth, Storage, Realtime), Upstash Redis (REST cache), ExcelJS/SheetJS for workbooks, `qrcode`/`jsQR` for tags.
 - **Path alias:** `@/*` → `src/*`.
+- **Shared portal pages:** `/super-admin/deliveries` and `/super-admin/inspections` re-export the personnel pages. Use `portalFromPathname` for links, the `readOnly` prop for portal-level gating, and per-row `mine` for admin actions. The admin inspection detail route renders the editable form only for the admin's own deliveries and the read-only receipt for everyone else.
 
 ## Roles and access
 
@@ -59,6 +60,7 @@ npm run build
 - Enforce role checks in **both** middleware and the server action.
 - Enforce ownership with `personnel-scope.ts` or explicit `created_by` / `received_by` / `inspector_id` / `assigned_to` comparisons.
 - Super Admin reuses personnel readers; scope helpers return `isSuperAdmin` so owner filters are skipped rather than duplicated.
+- **Super Admin delivery/inspection exception:** admins may log deliveries and then inspect (process) **only the deliveries they logged**. Every other personnel record stays read-only. Editing a logged delivery (`updateDelivery`) and generating/attaching IAR remain admin-restricted. Enforce this per row in the UI (`mine`) **and** in the action (`received_by !== userId` → reject).
 
 ## Domain invariants — do not break
 
@@ -93,7 +95,8 @@ npm run build
 - **Client TTLs:** `CACHE_TTL` in `constants.ts` (lists 30s, counts 60s, lookups 300s, ceiling 10m).
 - **Query keys:** build with `query-keys.ts`. Per-user queues must include role/userId; shared pools deliberately omit it.
 - **Invalidation:** every mutation must bust only the affected prefixes via `cache-invalidation.ts` (client map mirrors server namespaces). Never clear the whole cache. Report readers (`personnel:reports:*`, client keys `pgso:v2:*:reports-*`) are busted by delivery, inspection, asset, issuance, request, and repair writes.
-- **Reports:** report data is scoped and cached in `reporting-queries.ts` (60s). Add new report readers there — never query the DB directly from the Reports UI — and keep the XLSX builders in `report-excel.ts` reading the same query results as the page.
+- **Reports:** report data is scoped and cached in `reporting-queries.ts` (60s). Add new report readers there — never query the DB directly from the Reports UI — and keep the XLSX builders in `report-excel.ts` reading the same query results as the page. The Super Admin dashboard's asset card uses `getAssetAvailabilityReport()` (registry status buckets: available / assigned / out of stock / maintenance / retired), not `getAssetConditionReport()`.
+- **Admin list attribution:** admin Deliveries show "Logged By" from `received_by`; admin Inspections show "Logged by" from the inspector profile (`inspector_id`, fallback `inspector_name`). Batch-resolve profile names once per list and only when `scope.isSuperAdmin`.
 - **Auth reads:** use memoized helpers in `personnel-scope.ts` (`getSessionIdentity`, `getCurrentUserId`, `getCachedProfileRow`) instead of repeated `auth.getUser()` calls.
 - **Role cache:** 60s. After role/status writes, call `bustRoleCache` and delete the Redis key `pgso:middleware-role:<userId>`.
 - **XLSX responses:** use `etag.ts` (`etagForText` / `notModified`) where applicable.
@@ -117,6 +120,7 @@ npm run build
 | Route gating, public paths, role cache | `middleware.ts` |
 | Server-side role assertions | `src/lib/auth-guard.ts` |
 | Ownership scope + memoized identity/profile | `src/lib/personnel-scope.ts` |
+| Deliveries/inspections (shared portals, admin log + inspect parity) | `src/app/personnel/deliveries/{page,delivery-table,log-delivery-modal,actions}.tsx`, `src/app/personnel/inspections/{page,actions}.tsx`, `src/app/super-admin/inspections/[id]/page.tsx`, `src/lib/portal-path.ts` |
 | Inspection pass/return rules and cumulative math | `src/lib/inspection-rules.ts` |
 | PAR/ICS threshold and totals | `src/lib/issuance-rules.ts` |
 | Idempotent stocking | `src/lib/stock.ts` |

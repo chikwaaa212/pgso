@@ -6,7 +6,7 @@ import { usePathname } from "next/navigation";
 import { ChevronDown } from "lucide-react";
 import { navPrefetchProps } from "@/lib/nav-prefetch";
 import { buildPersonnelNav, formatBadge } from "./personnel-nav";
-import styles from "./PersonnelSidebar.module.css";
+import styles from "@/components/nav/PortalSidebar.module.css";
 
 /**
  * Desktop left rail grouping every section by workflow: Operations,

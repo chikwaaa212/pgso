@@ -22,15 +22,19 @@ const TYPES = ["transfer", "new_assignment", "repair"] as const;
 const inputStyle: React.CSSProperties = {
   width: "100%",
   borderRadius: "0.375rem",
-  border: "1px solid var(--color-navy-300)",
-  padding: "0.5rem 0.75rem",
-  fontSize: "0.875rem",
+  border: "1px solid var(--color-navy-200)",
+  background: "#ffffff",
+  padding: "0.4375rem 0.625rem",
+  fontSize: "0.8125rem",
+  color: "var(--color-navy-900)",
+  fontFamily: "inherit",
   marginTop: "0.25rem",
 };
 
 const labelStyle: React.CSSProperties = {
   fontSize: "0.75rem",
   fontWeight: 600,
+  color: "var(--color-navy-800)",
   display: "block",
 };
 
@@ -366,14 +370,22 @@ export function NewRequestForm({
           type="submit"
           disabled={pending}
           style={{
-            padding: "0.5rem 1.25rem",
-            fontSize: "0.875rem",
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: "0.375rem",
+            height: "2rem",
+            padding: "0 1rem",
+            fontFamily: "inherit",
+            fontSize: "0.75rem",
             fontWeight: 600,
             borderRadius: "0.375rem",
-            border: "1px solid var(--color-navy-600)",
-            background: "var(--color-navy-900)",
-            color: "#fff",
+            border: "1px solid #d9ab00",
+            background: "linear-gradient(180deg, #ffd335, var(--color-yellow-500))",
+            color: "var(--color-navy-900)",
             cursor: pending ? "wait" : "pointer",
+            boxShadow:
+              "0 1px 2px rgba(27, 42, 74, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.5)",
             opacity: pending ? 0.7 : 1,
           }}
         >

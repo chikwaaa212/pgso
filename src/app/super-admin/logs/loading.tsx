@@ -1,20 +1,30 @@
 import { Card } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
+import { PageHeader } from "@/components/personnel/PageHeader";
+import ui from "@/components/personnel/personnel-ui.module.css";
 import styles from "./page.module.css";
-import actionStyles from "@/app/personnel/dashboard/page.module.css";
-import air from "@/app/personnel/inspections/air-section.module.css";
 
 /**
- * Super-admin logs skeleton — mirrors SuperAdminLogsPage 1:1 (crumb,
- * header, right-aligned search + module dropdown, 5-col table, pager)
- * so content swaps in without layout shift.
- *
- * Static chrome renders as real text with the real classes; only live
- * values are pulse placeholders sized to the real cells. Same pattern
- * as the personnel logs skeleton.
+ * Super-admin logs skeleton — mirrors SuperAdminLogsPage 1:1 (header,
+ * five summary tiles, filter toolbar, 7-column audit table with pager) so
+ * content swaps in without layout shift.
  */
 
-const HEADERS = ["When", "User", "Module", "Action", "Purpose / summary"] as const;
+const TILE_LABELS = [
+  "Total entries",
+  "Active users",
+  "Modules touched",
+  "Last 7 days",
+  "Last activity",
+];
+
+const HEADERS = [
+  "When",
+  "User",
+  "Action",
+  "Module",
+  "Purpose / summary",
+  "Reference",
+] as const;
 
 function TextPulse({ className }: { className: string }) {
   return (
@@ -32,32 +42,50 @@ export default function LogsLoading() {
       aria-busy="true"
       aria-label="Loading logs"
     >
-      <div>
-        <h1 className={styles.title}>System Logs</h1>
-        <p className={styles.subtitle}>
-          <span
-            aria-hidden="true"
-            className="inline-block h-4 w-40 animate-pulse rounded bg-navy-100 align-middle"
-          />{" "}
-          entries across all users — newest first.
-        </p>
+      <PageHeader
+        eyebrow="Accountability"
+        title="System logs"
+        subtitle="Every recorded action across the province — who did what, in which module, and when. Expand any row for the full audit payload."
+        meta="Loading the audit overview…"
+      />
+
+      <div className={ui.tiles} aria-hidden="true">
+        {TILE_LABELS.map((label) => (
+          <div key={label} className={ui.tile}>
+            <span className={ui.tileIcon}>
+              <div className="h-4 w-4 animate-pulse rounded bg-navy-200" />
+            </span>
+            <div className={ui.tileBody}>
+              <p className={ui.tileLabel}>{label}</p>
+              <TextPulse className="mt-0.5 h-6 w-12" />
+              <TextPulse className="mt-1 h-3 w-24" />
+            </div>
+          </div>
+        ))}
       </div>
 
       <Card className={styles.panel}>
-        {/* Controls — same right-aligned search + module dropdown */}
-        <div className={air.controls} aria-hidden="true">
-          <Input
-            type="search"
-            disabled
-            placeholder="Search action, user, module…"
-            aria-label="Search logs"
-            tabIndex={-1}
-            className={air.search}
-          />
-          <div className="h-9 w-44 animate-pulse rounded-md bg-navy-100" />
+        <div className={styles.panelHead}>
+          <div>
+            <h2 className={styles.panelTitle}>Audit trail</h2>
+            <p className={styles.panelSub}>
+              Newest first by default. Filter by user, module or date range, then
+              expand a row for the full record.
+            </p>
+          </div>
         </div>
 
-        {/* Table — same 5 columns, 10 rows (default page size) */}
+        <div className={styles.toolbar} aria-hidden="true">
+          <div className={styles.toolbarLeft}>
+            <TextPulse className="h-8 w-[21rem] max-w-full" />
+            <TextPulse className="h-8 w-44" />
+          </div>
+          <div className={styles.toolbarRight}>
+            <TextPulse className="h-8 w-64" />
+            <TextPulse className="h-8 w-24" />
+          </div>
+        </div>
+
         <div className={styles.tableWrap}>
           <table className={styles.table} aria-hidden="true">
             <thead>
@@ -65,53 +93,37 @@ export default function LogsLoading() {
                 {HEADERS.map((h) => (
                   <th key={h}>{h}</th>
                 ))}
+                <th aria-label="Expand" />
               </tr>
             </thead>
             <tbody>
               {Array.from({ length: 10 }).map((_, r) => (
                 <tr key={r} style={{ opacity: 1 - r * 0.05 }}>
                   <td>
-                    <TextPulse className="h-3.5 w-32" />
+                    <TextPulse className="h-3.5 w-28" />
+                    <TextPulse className="mt-1.5 h-3 w-20" />
                   </td>
                   <td>
                     <TextPulse className="h-3.5 w-24" />
+                  </td>
+                  <td>
+                    <TextPulse className="h-[22px] w-24 rounded-full" />
                   </td>
                   <td>
                     <TextPulse className="h-3.5 w-20" />
                   </td>
                   <td>
-                    <TextPulse className="h-3.5 w-24" />
-                  </td>
-                  <td>
                     <TextPulse className="h-3.5 w-full" />
                     <TextPulse className="mt-1.5 h-3 w-2/3" />
                   </td>
+                  <td>
+                    <TextPulse className="h-5 w-16" />
+                  </td>
+                  <td />
                 </tr>
               ))}
             </tbody>
           </table>
-        </div>
-
-        {/* Pager — same structure as TablePager */}
-        <div className={actionStyles.pager} aria-hidden="true">
-          <span className={actionStyles.pagerInfo}>
-            <span className="block h-3 w-36 animate-pulse rounded bg-navy-100" />
-          </span>
-          <div className={actionStyles.pagerControls}>
-            <span className={actionStyles.pageSizeWrap}>
-              <span>Rows</span>
-              <span className="h-8 w-[5.5rem] animate-pulse rounded-md bg-navy-100" />
-            </span>
-            <span className={actionStyles.pageBtn} aria-hidden="true">
-              ‹
-            </span>
-            <span className={actionStyles.pageBtn} data-active="true">
-              1
-            </span>
-            <span className={actionStyles.pageBtn} aria-hidden="true">
-              ›
-            </span>
-          </div>
         </div>
       </Card>
     </section>

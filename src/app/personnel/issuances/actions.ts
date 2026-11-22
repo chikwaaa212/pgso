@@ -833,6 +833,10 @@ async function evaluateAndAssign(
   }
 
   try {
+    // Remote (Supabase) latency is ~1s per round-trip and this body runs the
+    // insert plus several asset/stock claims; Prisma's default 5s interactive
+    // transaction budget expires mid-flight ("Transaction already closed")
+    // and surfaces as a failed assignment. Give it real headroom.
     const recordId = await prisma.$transaction(async (tx) => {
       const { randomUUID } = await import('crypto')
       const newId = randomUUID()
@@ -908,8 +912,7 @@ async function evaluateAndAssign(
           throw new Error('Stock quantity changed — reload and try again.')
       }
       return newId
-    })
-
+    }, { maxWait: 15_000, timeout: 30_000 })
     // Await the single Redis bust BEFORE revalidating/reporting success:
     // the client's immediate refetch must not re-cache pre-write rows as
     // fresh. revalidatePath() below is pure Next.js (no hidden extra busts).
@@ -1475,7 +1478,7 @@ export async function approveRequestWithIssuance(
         },
       })
       return id
-    })
+    }, { maxWait: 15_000, timeout: 30_000 })
 
     // One awaited bust BEFORE revalidating: the client's immediate refetch
     // must not re-cache pre-write rows as fresh. Pure Next revalidations

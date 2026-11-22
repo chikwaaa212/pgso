@@ -307,3 +307,71 @@
   text-align: center;
 }
 
+/* "View all" overlay: the dialog never scrolls as a whole — only the table
+   card does, with a thin scrollbar that appears on hover. */
+.dialogContent {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  max-height: min(88vh, 900px);
+  overflow: hidden;
+}
+
+.dialogTableWrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  border: 1px solid var(--color-navy-200);
+  border-radius: 0.5rem;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+.dialogTableWrap:hover {
+  scrollbar-color: var(--color-navy-300) transparent;
+}
+
+.dialogTableWrap::-webkit-scrollbar {
+  width: 6px;
+}
+
+.dialogTableWrap::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.dialogTableWrap::-webkit-scrollbar-thumb {
+  background-color: transparent;
+  border-radius: 9999px;
+}
+
+.dialogTableWrap:hover::-webkit-scrollbar-thumb {
+  background-color: var(--color-navy-300);
+}
+
+.dialogTableWrap::-webkit-scrollbar-thumb:hover {
+  background-color: var(--color-navy-400);
+}
+
+/* Overlay tables fit the widened dialog: cells wrap instead of forcing a
+   horizontal scrollbar, and the last column is not an action column. */
+.dialogTable th,
+.dialogTable td {
+  white-space: normal;
+}
+
+.dialogTable th:last-child,
+.dialogTable td:last-child,
+.dialogTable th:nth-child(2),
+.dialogTable td:nth-child(2) {
+  width: auto;
+  text-align: left;
+}
+
+.dialogTable thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+

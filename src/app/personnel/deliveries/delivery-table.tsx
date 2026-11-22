@@ -44,6 +44,8 @@ export interface DeliveryRow {
   kind: string;
   status: "Arrival" | "Waiting for arrival" | "Delivered";
   itemCount: number;
+  /** Account name that logged the record (admin lists). */
+  loggedBy: string | null;
   inspectionStatus: "pending" | "passed" | "failed" | "partial";
   inspectionRef: string;
   /** Optimistic row painted while the background save is still running. */
@@ -172,6 +174,7 @@ export function DeliveryTable({
                 ? "Arrival"
                 : "Delivered",
         itemCount: edit ? edit.itemCount : d.item_count,
+        loggedBy: d.logged_by ?? null,
         inspectionStatus: (d.inspection_status as DeliveryRow["inspectionStatus"]) ?? "pending",
         inspectionRef: d.id.slice(0, 8).toUpperCase(),
       };
@@ -215,6 +218,7 @@ export function DeliveryTable({
         kind: p.kind,
         status: "Arrival" as const,
         itemCount: p.itemCount,
+        loggedBy: null,
         inspectionStatus: "pending" as const,
         inspectionRef: "",
         pending: true,
@@ -290,7 +294,7 @@ export function DeliveryTable({
           <div className={cn(styles.emptyState, "flex-1")}>
             <div className={styles.emptyCard}>
               <p className={styles.emptyCardText}>No deliveries logged yet.</p>
-              {!readOnly ? <LogDeliveryModal /> : null}
+              <LogDeliveryModal />
             </div>
           </div>
         ) : (
@@ -363,7 +367,11 @@ export function DeliveryTable({
                         "—"
                       )}
                     </td>
-                    <td>{d.date}</td>
+                    <td>
+                      {readOnly
+                        ? (d.loggedBy ?? "—")
+                        : d.date}
+                    </td>
                     <td>
                       {d.pending ? (
                         <div className="flex items-center justify-end">

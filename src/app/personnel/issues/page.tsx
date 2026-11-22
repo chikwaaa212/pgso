@@ -6,6 +6,7 @@ import {
   FileText,
   Layers,
   PackageSearch,
+  Plus,
   RefreshCw,
   Search,
 } from "lucide-react";
@@ -18,6 +19,7 @@ import { Input } from "@/components/ui/input";
 import { RequestQrButton } from "@/components/personnel/RequestQrButton";
 import { TablePager, FIXED_PAGE_SIZE } from "@/components/personnel/TablePager";
 import { EmptySearchState } from "@/components/personnel/EmptySearchState";
+import { IssuanceEvaluateDialog } from "@/components/personnel/IssuanceDialog";
 import { requestTypeLabel } from "@/app/personnel/requests/request-types";
 import { useCachedAction } from "@/hooks/use-cached-action";
 import { buildQueryKey } from "@/lib/query-keys";
@@ -71,6 +73,7 @@ export default function PersonnelIssuesPage() {
   const [completedPage, setCompletedPage] = useState(1);
   const [view, setView] = useState<IssuesView>("issued");
   const [completedQuery, setCompletedQuery] = useState("");
+  const [issuanceOpen, setIssuanceOpen] = useState(false);
 
   // One read of the issued window — the table filters, counts, and pages this
   // in memory so typing never refetches and results never lag a keystroke.
@@ -167,6 +170,15 @@ export default function PersonnelIssuesPage() {
         }`}
         actions={
           <div className={styles.actions}>
+            <Button
+              type="button"
+              onClick={() => setIssuanceOpen(true)}
+              title="Issue an asset or stock item directly, without a request"
+              className={ACTION_BTN}
+            >
+              <Plus size={14} aria-hidden="true" />
+              Issue item
+            </Button>
             <Button
               type="button"
               onClick={refreshAll}
@@ -397,6 +409,19 @@ export default function PersonnelIssuesPage() {
           </div>
         </Card>
       )}
+
+      {issuanceOpen ? (
+        <IssuanceEvaluateDialog
+          key="personnel-direct-issue"
+          open={issuanceOpen}
+          onOpenChange={setIssuanceOpen}
+          mode="direct"
+          onSuccess={() => {
+            setIssuanceOpen(false);
+            refreshAll();
+          }}
+        />
+      ) : null}
     </section>
   );
 }

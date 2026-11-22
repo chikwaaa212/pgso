@@ -1,18 +1,15 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { ComponentType, SVGProps } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { usePathname, useRouter } from "next/navigation";
 import {
-  ClipboardList,
+  ChevronDown,
   KeyRound,
-  LayoutDashboard,
   LogOut,
   Menu,
-  Package,
   Pencil,
   User,
   X,
@@ -36,18 +33,13 @@ import { updateMyDisplayName } from "@/app/employee/profile-actions";
 import { cn } from "@/lib/utils";
 import styles from "./EmployeeNavbar.module.css";
 
-interface NavLink {
-  label: string;
-  href: string;
-  description: string;
-  icon: ComponentType<SVGProps<SVGSVGElement> & { size?: number | string }>;
-}
+import { buildEmployeeNav } from "./employee-nav";
 
 /**
  * Top navbar for the employee portal — same header, brand, account menu,
  * and mobile sheet pattern as the personnel / super-admin navbars.
- * The employee portal only has three pages, so the links render directly
- * instead of grouped dropdowns.
+ * The employee portal keeps its section links in the left rail on desktop,
+ * and mirrors them as grouped links in the mobile sheet.
  */
 export function EmployeeNavbar({
   userName = "Employee",
@@ -62,39 +54,27 @@ export function EmployeeNavbar({
   const router = useRouter();
   const { toast } = useToast();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [mobileSection, setMobileSection] = useState<string | null>(null);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [changePwOpen, setChangePwOpen] = useState(false);
   const [editNameOpen, setEditNameOpen] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
 
-  const links: NavLink[] = [
-    {
-      label: "Dashboard",
-      href: "/employee/dashboard",
-      description: "Overview at a glance",
-      icon: LayoutDashboard,
-    },
-    {
-      label: "My Assets",
-      href: "/employee/assets",
-      description: "Assigned assets and PAR / ICS documents",
-      icon: Package,
-    },
-    {
-      label: "My Requests",
-      href: "/employee/requests",
-      description: "Submit and track requests",
-      icon: ClipboardList,
-    },
-  ];
+  const { dashboard, groups } = buildEmployeeNav();
 
   const isActive = (href: string) =>
     pathname === href || pathname.startsWith(href + "/");
+
+  const groupActive = (groupTitle: string) =>
+    (groups.find((group) => group.title === groupTitle)?.links ?? []).some(
+      (link) => isActive(link.href)
+    );
 
   // Close menus on navigation; lock body scroll while the mobile sheet is open.
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional menu reset on route change
     setMobileOpen(false);
+    setMobileSection(null);
     setUserMenuOpen(false);
     setChangePwOpen(false);
   }, [pathname]);
@@ -142,25 +122,6 @@ export function EmployeeNavbar({
             <span className={styles.brandSub}>Employee</span>
           </span>
         </Link>
-
-        {/* Desktop nav */}
-        <nav className={styles.nav} aria-label="Employee navigation">
-          {links.map((link) => {
-            const active = isActive(link.href);
-            return (
-              <Link
-                key={link.href}
-                href={link.href}
-                className={styles.topLink}
-                data-active={active}
-                aria-current={active ? "page" : undefined}
-                {...navPrefetchProps(link.href)}
-              >
-                {link.label}
-              </Link>
-            );
-          })}
-        </nav>
 
         <div className={styles.right}>
           <div className={styles.userMenu} ref={userMenuRef}>
@@ -256,21 +217,62 @@ export function EmployeeNavbar({
       {mobileOpen && (
         <div className={styles.sheet} role="dialog" aria-label="Employee menu">
           <nav className={styles.sheetNav} aria-label="Employee navigation">
-            {links.map((link) => {
-              const Icon = link.icon;
-              const linkActive = isActive(link.href);
+            <Link
+              href={dashboard.href}
+              className={styles.sheetLink}
+              data-active={isActive(dashboard.href)}
+              aria-current={isActive(dashboard.href) ? "page" : undefined}
+              {...navPrefetchProps(dashboard.href)}
+            >
+              <dashboard.icon size={18} aria-hidden="true" />
+              {dashboard.label}
+            </Link>
+            {groups.map((group) => {
+              const expanded = mobileSection === group.title;
+              const GroupIcon = group.icon;
               return (
-                <Link
-                  key={link.href}
-                  href={link.href}
-                  className={styles.sheetLink}
-                  data-active={linkActive}
-                  aria-current={linkActive ? "page" : undefined}
-                  {...navPrefetchProps(link.href)}
-                >
-                  <Icon size={18} aria-hidden="true" />
-                  {link.label}
-                </Link>
+                <div key={group.title} className={styles.sheetGroup}>
+                  <button
+                    type="button"
+                    className={styles.sheetTrigger}
+                    data-active={groupActive(group.title)}
+                    aria-expanded={expanded}
+                    onClick={() =>
+                      setMobileSection(expanded ? null : group.title)
+                    }
+                  >
+                    <GroupIcon size={18} aria-hidden="true" />
+                    {group.title}
+                    <ChevronDown
+                      size={16}
+                      className={styles.chevron}
+                      data-open={expanded}
+                      aria-hidden="true"
+                    />
+                  </button>
+                  {expanded && (
+                    <div className={styles.sheetLinks}>
+                      {group.links.map((link) => {
+                        const Icon = link.icon;
+                        const linkActive = isActive(link.href);
+                        return (
+                          <Link
+                            key={link.href}
+                            href={link.href}
+                            className={styles.sheetLink}
+                            data-active={linkActive}
+                            aria-current={linkActive ? "page" : undefined}
+                            title={link.description}
+                            {...navPrefetchProps(link.href)}
+                          >
+                            <Icon size={18} aria-hidden="true" />
+                            {link.label}
+                          </Link>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
               );
             })}
           </nav>

@@ -170,9 +170,11 @@ export function ColumnCard({ title, sub, data, insight, href }: CardProps) {
         <ChartContainer config={config} className="max-h-[220px] w-full">
           <BarChart accessibilityLayer data={rows} margin={{ top: 20 }}>
             <CartesianGrid vertical={false} />
-            <XAxis dataKey="name" tickLine={false} axisLine={false} interval={0} style={{ fontSize: 11 }} />
+            {/* Category names live in the hover tooltip — long labels under
+                every column used to collide with each other. */}
+            <XAxis dataKey="name" tickLine={false} axisLine={false} tick={false} height={8} />
             <YAxis tickLine={false} axisLine={false} width={32} allowDecimals={false} />
-            <ChartTooltip content={<ChartTooltipContent hideLabel />} />
+            <ChartTooltip content={<ChartTooltipContent />} />
             <Bar dataKey="value" radius={[6, 6, 0, 0]}>
               {rows.map((r) => (
                 <Cell key={r.name} fill={r.fill} />
@@ -383,73 +385,118 @@ export function StockGaugeCard({
   );
 }
 
-export function AnalyticsGrid({ data, gridClass }: { data: Analytics; gridClass: string }) {
+/** Card counts per analytics row: 3 · 2 · 1 · 3 · 2 (11 cards). */
+export const ANALYTICS_ROW_SIZES = [3, 2, 1, 3, 2] as const;
+
+export function AnalyticsGrid({ data }: { data: Analytics }) {
+  const cards = [
+    <HBarCard
+      key="inspection-outcomes"
+      title="Inspection outcomes"
+      sub="Deliveries by inspection result — all time"
+      data={data.inspectionOutcome}
+      insight={data.insights.inspection}
+    />,
+    <DonutCard
+      key="request-status"
+      title="Requests by status"
+      sub="Employee requests — all time"
+      data={data.requestStatus}
+      insight={data.insights.requests}
+    />,
+    <StockGaugeCard
+      key="stock-gauge"
+      pct={data.stockHealthyPct}
+      breakdown={data.stockHealth}
+      insight={data.insights.stock}
+    />,
+    <ColumnCard
+      key="repair-status"
+      title="Repairs by status"
+      sub="Repair tickets — all time"
+      data={data.repairStatus}
+      insight={data.insights.repairs}
+    />,
+    <StackedBarCard
+      key="asset-status"
+      title="Assets by status"
+      sub="Registered fleet composition — all time"
+      data={data.assetStatus}
+      insight={data.insights.assets}
+    />,
+    // Full-width row — the trend area chart benefits from the extra width.
+    <IssuanceTrendCard
+      key="issuance-trend"
+      data={data.monthlyIssuances}
+      insight={data.insights.trend}
+    />,
+    <RingsCard
+      key="issuance-type"
+      title="Issuances by type"
+      sub="PAR vs ICS accountability documents"
+      data={data.issuanceByType}
+      insight={data.insights.issuance}
+    />,
+    <ColumnCard
+      key="documents-type"
+      title="Documents by type"
+      sub="Generated RIS, PAR, ICS, AIR and others"
+      data={data.documentsByType}
+      insight={data.insights.documents}
+    />,
+    <HBarCard
+      key="aging"
+      title="Delayed & aging transactions"
+      sub="Open records past the 7-day threshold, by workflow"
+      data={data.agingByModule}
+      insight={data.insights.aging}
+      href="/super-admin/reports"
+    />,
+    <ColumnCard
+      key="quarterly"
+      title="Quarterly issuance"
+      sub="PAR / ICS documents issued per calendar quarter — last 8 quarters"
+      data={data.quarterlyIssuance}
+      insight={data.insights.quarterly}
+      href="/super-admin/reports"
+    />,
+    <DonutCard
+      key="asset-availability"
+      title="Asset availability"
+      sub="Registry items by status — available, assigned, out of stock, maintenance"
+      data={data.assetAvailability}
+      insight={data.insights.availability}
+      href="/super-admin/reports"
+    />,
+  ];
+
+  const rows = ANALYTICS_ROW_SIZES.map((size, rowIndex) => {
+    const start = ANALYTICS_ROW_SIZES.slice(0, rowIndex).reduce(
+      (n, s) => n + s,
+      0
+    );
+    return cards.slice(start, start + size);
+  });
+
   return (
     <div>
       <h2 className={styles.panelTitle}>Analytics</h2>
       <p style={{ fontSize: "0.8125rem", color: "var(--color-navy-500)", margin: "0 0 1rem" }}>
         Live breakdowns across every transaction type — each with what it means for operations.
       </p>
-      <div className={gridClass}>
-        <HBarCard
-          title="Inspection outcomes"
-          sub="Deliveries by inspection result — all time"
-          data={data.inspectionOutcome}
-          insight={data.insights.inspection}
-        />
-        <DonutCard
-          title="Requests by status"
-          sub="Employee requests — all time"
-          data={data.requestStatus}
-          insight={data.insights.requests}
-        />
-        <StockGaugeCard pct={data.stockHealthyPct} breakdown={data.stockHealth} insight={data.insights.stock} />
-        <ColumnCard
-          title="Repairs by status"
-          sub="Repair tickets — all time"
-          data={data.repairStatus}
-          insight={data.insights.repairs}
-        />
-        <StackedBarCard
-          title="Assets by status"
-          sub="Registered fleet composition — all time"
-          data={data.assetStatus}
-          insight={data.insights.assets}
-        />
-        <RingsCard
-          title="Issuances by type"
-          sub="PAR vs ICS accountability documents"
-          data={data.issuanceByType}
-          insight={data.insights.issuance}
-        />
-        <IssuanceTrendCard data={data.monthlyIssuances} insight={data.insights.trend} />
-        <ColumnCard
-          title="Documents by type"
-          sub="Generated RIS, PAR, ICS, AIR and others"
-          data={data.documentsByType}
-          insight={data.insights.documents}
-        />
-        <HBarCard
-          title="Delayed & aging transactions"
-          sub="Open records past the 7-day threshold, by workflow"
-          data={data.agingByModule}
-          insight={data.insights.aging}
-          href="/super-admin/reports"
-        />
-        <ColumnCard
-          title="Quarterly issuance"
-          sub="PAR / ICS documents issued per calendar quarter — last 8 quarters"
-          data={data.quarterlyIssuance}
-          insight={data.insights.quarterly}
-          href="/super-admin/reports"
-        />
-        <DonutCard
-          title="Asset conditions"
-          sub="Registered assets by current condition"
-          data={data.assetConditions}
-          insight={data.insights.conditions}
-          href="/super-admin/reports"
-        />
+      <div className={styles.analyticsRows}>
+        {rows.map((row, rowIndex) => {
+          if (row.length === 0) return null;
+          return (
+            <div
+              key={`analytics-row-${rowIndex}`}
+              className={styles.analyticsRow}
+              data-cols={row.length}
+            >
+              {row}
+            </div>
+          );
+        })}
       </div>
     </div>
   );

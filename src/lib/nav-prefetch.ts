@@ -20,7 +20,6 @@ import { getRequestsPage } from '@/app/personnel/requests/actions'
 import { getUsersPage, getUserCounts } from '@/app/super-admin/users/actions'
 import {
   browseDeliveriesPage,
-  browseRequestsPage,
 } from '@/app/super-admin/browse/actions'
 import {
   getMyAssets,
@@ -89,8 +88,8 @@ const MAP: Record<string, NavPrefetchEntry[]> = {
   // super-admin/users/page.tsx
   '/super-admin/users': [
     {
-      key: buildQueryKey({ module: 'super-admin', resource: 'users', page: 1, filters: { q: '' } }),
-      run: () => getUsersPage({ page: 1, q: '' }),
+      key: buildQueryKey({ module: 'super-admin', resource: 'users', page: 1, filters: { q: '', role: 'all', status: 'all' } }),
+      run: () => getUsersPage({ page: 1, q: '', role: 'all', status: 'all' }),
       staleTime: 30_000,
     },
     {
@@ -107,11 +106,19 @@ const MAP: Record<string, NavPrefetchEntry[]> = {
       staleTime: 30_000,
     },
   ],
-  // super-admin/requests/page.tsx
+  // super-admin/requests/page.tsx reuses the personnel Requests page (the
+  // shared page reads the whole queue for an admin), so the key + reader
+  // match the personnel entry's page-1 window.
   '/super-admin/requests': [
     {
-      key: buildQueryKey({ module: 'super-admin', resource: 'requests', page: 1, filters: { q: '' } }),
-      run: () => browseRequestsPage({ page: 1, q: '' }),
+      key: buildQueryKey({
+        module: 'personnel',
+        resource: 'requests',
+        page: 1,
+        pageSize: 100,
+        filters: {},
+      }),
+      run: () => getRequestsPage({ page: 1, pageSize: 100 }),
       staleTime: 30_000,
     },
   ],

@@ -358,7 +358,7 @@ export default function PersonnelDashboard() {
                     <tr key={d.id}>
                       <td>{d.supplier ?? "—"}</td>
                       <td>{d.po_reference ?? "—"}</td>
-                      <td>{fmtDate(d.date_delivered)}</td>
+                      <td>{fmtDate(d.date_delivered ?? d.expected_arrival_date)}</td>
                       <td>
                         <span
                           className={styles.status}

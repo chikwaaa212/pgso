@@ -74,7 +74,7 @@ describe("super-admin Page readers: windowed, counted, keyed per filter set", ()
     it(`${fn}: scoped window cache keyed by page+filters (30s)`, () => {
       const body = fnBody(browse, fn);
       assert.match(body, new RegExp(`withScopedCache\\('${ns}', 30`));
-      assert.match(body, /\}, \{ page, pageSize, q \}\)/);
+      assert.match(body, /\}, \{ page, pageSize, q, docType \}\)|}, \{ page, pageSize, q \}\)/);
     });
     it(`${fn}: fixed PAGE_SIZE window + exact total envelope`, () => {
       const body = fnBody(browse, fn);
@@ -110,7 +110,7 @@ describe("users + logs Page readers", () => {
   it("getUsersPage: window + per-filter total, roster filter in DB", () => {
     const body = fnBody(src("../app/super-admin/users/actions.ts"), "getUsersPage");
     assert.match(body, /withScopedCache\('super-admin:users-page', 30/);
-    assert.match(body, /\}, \{ page, pageSize, q \}\)/);
+    assert.match(body, /\}, \{ page, pageSize, q, role, status \}\)/);
     assert.match(body, /NOT: \[\{ status: 'pending' \}\]/);
     assert.match(body, /skip: \(page - 1\) \* pageSize/);
     assert.match(body, /pageResponse\(mapped, total, page, pageSize\)/);
@@ -134,8 +134,6 @@ describe("users + logs Page readers", () => {
 describe("converted pages fetch windows, not snapshots", () => {
   for (const [file, fetcher] of [
     ["../app/super-admin/issuances/page.tsx", "browseIssuancesPage"],
-    ["../app/super-admin/requests/page.tsx", "browseRequestsPage"],
-    ["../app/super-admin/repairs/page.tsx", "getRepairsPage"],
     ["../app/super-admin/users/page.tsx", "getUsersPage"],
     ["../app/super-admin/logs/page.tsx", "getLogsPage"],
     ["../app/super-admin/stocks/page.tsx", "getInventoryPage"],
@@ -149,7 +147,7 @@ describe("converted pages fetch windows, not snapshots", () => {
       assert.ok(!/take:\s*(300|500)/.test(body), "no bulk take on the page");
     });
   }
-  it("super-admin deliveries/inspections reuse the personnel pages", () => {
+  it("super-admin deliveries/inspections/requests/repairs reuse the personnel pages", () => {
     assert.match(
       src("../app/super-admin/deliveries/page.tsx"),
       /personnel\/deliveries\/page/
@@ -158,9 +156,29 @@ describe("converted pages fetch windows, not snapshots", () => {
       src("../app/super-admin/inspections/page.tsx"),
       /personnel\/inspections\/page/
     );
+    assert.match(
+      src("../app/super-admin/requests/page.tsx"),
+      /personnel\/requests\/page/
+    );
+    assert.match(
+      src("../app/super-admin/repairs/page.tsx"),
+      /personnel\/repairs\/page/
+    );
   });
-  it("super-admin deliveries/inspections are read-only", () => {
-    // Mutating actions reject super admins.
+  it("super-admin deliveries can be logged and inspected; other records stay read-only", () => {
+    // Logging is allowed for both personnel and super admins.
+    assert.match(
+      src("../app/personnel/deliveries/actions.ts"),
+      /scope\.isPersonnel[\s\S]{0,120}permission to log deliveries/
+    );
+    // Inspections are own-data for everyone — admins can process the
+    // deliveries they logged, and nobody can inspect another user's record.
+    assert.match(
+      src("../app/personnel/deliveries/actions.ts"),
+      /exists\.received_by !== user\.id/
+    );
+    // Editing a logged delivery and generating/attaching IAR stay
+    // admin-restricted.
     assert.match(
       src("../app/personnel/deliveries/actions.ts"),
       /scope\.isSuperAdmin[\s\S]{0,120}read-only access to deliveries/
@@ -173,27 +191,29 @@ describe("converted pages fetch windows, not snapshots", () => {
       src("../app/personnel/inspections/actions.ts"),
       /attachScope\.isSuperAdmin[\s\S]{0,120}read-only access to inspections/
     );
-    // The shared lists drop the mutating buttons in the admin portal.
+    // The shared deliveries list offers Log delivery in both portals.
     assert.match(
       src("../app/personnel/deliveries/page.tsx"),
-      /readOnly[\s\S]{0,80}LogDeliveryModal/
+      /LogDeliveryModal/
     );
+    // Row actions are gated per record: admins only act on deliveries they
+    // logged, everyone else's rows stay behind the view dialog.
     assert.match(
       src("../app/personnel/inspections/page.tsx"),
-      /!readOnly && isEditable/
+      /canManage && isEditable/
     );
     assert.match(
       src("../app/personnel/inspections/page.tsx"),
       /ViewInspectionDialog/
     );
-    // The admin detail route shows the read-only receipt, not the form.
-    assert.match(
-      src("../app/super-admin/inspections/[id]/page.tsx"),
-      /inspections\/\[id\]\/receipt\/page/
-    );
+    // The admin detail route shows the form for its own deliveries and the
+    // read-only receipt for everyone else's.
+    const detail = src("../app/super-admin/inspections/[id]/page.tsx");
+    assert.match(detail, /inspections\/\[id\]\/receipt\/page/);
+    assert.match(detail, /delivery\.received_by === userId/);
+    assert.match(detail, /InspectionForm/);
   });
-  it("repairs/inventory/issues reuse the shared (global-scope) readers", () => {
-    assert.match(src("../app/super-admin/repairs/page.tsx"), /pageSize: PAGE_SIZE/);
+  it("inventory/issues reuse the shared (global-scope) readers", () => {
     assert.match(src("../app/super-admin/stocks/page.tsx"), /pageSize: PAGE_SIZE/);
     assert.match(src("../app/super-admin/issues/page.tsx"), /FIXED_PAGE_SIZE/);
   });

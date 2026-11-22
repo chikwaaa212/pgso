@@ -13,6 +13,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { label } from "@/lib/labels";
+import { cn } from "@/lib/utils";
 import { bustClientCache, CLIENT_CACHE_KEYS } from "@/lib/client-cache";
 import { resourcePrefix } from "@/lib/query-keys";
 import {
@@ -295,7 +296,10 @@ function AllRecordsDialog<T>({
         {triggerLabel ? <span>{triggerLabel}</span> : null}
       </button>
       <Dialog open={open} onOpenChange={handleOpenChange}>
-        <DialogContent showCloseButton={false} className="bg-white sm:max-w-2xl dark:bg-white">
+        <DialogContent
+          showCloseButton={false}
+          className={cn("bg-white dark:bg-white sm:max-w-5xl", styles.dialogContent)}
+        >
           <div className={styles.dialogHeaderRow}>
             <DialogHeader>
               <DialogTitle>{title}</DialogTitle>
@@ -323,8 +327,8 @@ function AllRecordsDialog<T>({
               {records.length === 0 ? `No ${noun} yet.` : `No ${noun} match “${query.trim()}”.`}
             </p>
           ) : (
-            <div className={styles.tableWrap}>
-              <table className={styles.table}>
+            <div className={styles.dialogTableWrap}>
+              <table className={cn(styles.table, styles.dialogTable)}>
                 <thead>
                   <tr>
                     {columns.map((col) => (

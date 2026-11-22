@@ -22,8 +22,6 @@ const MIGRATED: Array<[file: string, module: string, resources: string[]]> = [
   ["../app/personnel/logs/logs-table.tsx", "personnel", ["logs", "logs-modules"]],
   ["../app/super-admin/users/page.tsx", "super-admin", ["users", "users-counts"]],
   ["../app/super-admin/issuances/page.tsx", "super-admin", ["issuances"]],
-  ["../app/super-admin/requests/page.tsx", "super-admin", ["requests"]],
-  ["../app/super-admin/repairs/page.tsx", "super-admin", ["repairs"]],
   ["../app/super-admin/logs/page.tsx", "super-admin", ["logs", "logs-modules"]],
   ["../app/super-admin/stocks/page.tsx", "super-admin", ["inventory", "inventory-stats"]],
   ["../app/super-admin/documents/page.tsx", "super-admin", ["documents", "documents-counts", "documents-viewed"]],
@@ -113,8 +111,6 @@ describe("Phase 4: documented exceptions (static + record keys stay)", () => {
   it("static lookups keep persistable legacy keys", () => {
     assert.match(src("../app/personnel/assets/custom-columns.tsx"), /CLIENT_CACHE_KEYS\.assetCustomFields/);
     assert.match(src("../hooks/use-master-data.ts"), /pgso:master-data:active/);
-    assert.match(src("../app/personnel/assets/page.tsx"), /assets\}-filter-options/);
-    assert.match(src("../app/super-admin/assets/page.tsx"), /adminAssets\}-filter-options/);
   });
   it("per-record keys keep their record scheme", () => {
     assert.match(src("../app/super-admin/deliveries/record-modals.tsx"), /adminDeliveryDetail/);

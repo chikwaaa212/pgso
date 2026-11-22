@@ -32,6 +32,10 @@ export interface NavLink {
 
 export interface NavGroup {
   title: string;
+  /** Short helper line shown under the group heading in the sidebar. */
+  hint?: string;
+  /** Group glyph, rendered beside the heading. */
+  icon: ComponentType<SVGProps<SVGSVGElement> & { size?: number | string }>;
   links: NavLink[];
 }
 
@@ -64,11 +68,15 @@ export function buildSuperAdminNav({
     icon: LayoutDashboard,
   };
 
-  // Same modules as the personnel sidebar (oversight sits where personnel
-  // work), plus an Administration group for super-admin-only pages.
+  // Same workflow grouping as the personnel rail (Operations → Inventory →
+  // Issuance → Service Desk → Planning → Administration → Audit) so admins
+  // read the system with the same mental model, plus the oversight-only
+  // Administration group.
   const groups: NavGroup[] = [
     {
       title: "Operations",
+      hint: "Receiving and verification",
+      icon: Truck,
       links: [
         {
           label: "Deliveries",
@@ -86,7 +94,9 @@ export function buildSuperAdminNav({
       ],
     },
     {
-      title: "Stocks",
+      title: "Inventory & Assets",
+      hint: "Stock levels and asset registry",
+      icon: Boxes,
       links: [
         {
           label: "Stock",
@@ -100,11 +110,25 @@ export function buildSuperAdminNav({
           description: "Encode and track assets",
           icon: Package,
         },
+        {
+          label: "QR Scanner",
+          href: "/super-admin/scan",
+          description: "Scan asset QR codes",
+          icon: ScanLine,
+        },
       ],
     },
     {
-      title: "Records",
+      title: "Issuance & Documents",
+      hint: "Accountability paperwork",
+      icon: FileText,
       links: [
+        {
+          label: "PAR / ICS",
+          href: "/super-admin/issuances",
+          description: "Accountability documents",
+          icon: ArrowLeftRight,
+        },
         {
           label: "Documents",
           href: "/super-admin/documents",
@@ -113,29 +137,24 @@ export function buildSuperAdminNav({
           badge: totalDocuments,
         },
         {
+          label: "Templates",
+          href: "/super-admin/templates",
+          description: "Download Excel templates",
+          icon: Download,
+        },
+        {
           label: "PPMP Files",
           href: "/super-admin/ppmp",
           description: "All uploaded PPMP workbooks",
           icon: FileSpreadsheet,
         },
-        {
-          label: "PAR / ICS",
-          href: "/super-admin/issuances",
-          description: "Accountability documents",
-          icon: ArrowLeftRight,
-        },
-        {
-          label: "Issues",
-          href: "/super-admin/issues",
-          description: "Report and track issues",
-          icon: TriangleAlert,
-        },
-        {
-          label: "QR Scanner",
-          href: "/super-admin/scan",
-          description: "Scan asset QR codes",
-          icon: ScanLine,
-        },
+      ],
+    },
+    {
+      title: "Service Desk",
+      hint: "Requests, repairs and issues",
+      icon: Wrench,
+      links: [
         {
           label: "Requests",
           href: "/super-admin/requests",
@@ -151,6 +170,19 @@ export function buildSuperAdminNav({
           badge: pendingRepairs,
         },
         {
+          label: "Issues",
+          href: "/super-admin/issues",
+          description: "Report and track issues",
+          icon: TriangleAlert,
+        },
+      ],
+    },
+    {
+      title: "Planning & Insights",
+      hint: "Forecasts and analysis",
+      icon: BarChart3,
+      links: [
+        {
           label: "Reports",
           href: "/super-admin/reports",
           description: "Aging, issuance and availability",
@@ -162,22 +194,12 @@ export function buildSuperAdminNav({
           description: "Replenishment, disposal and idle advice",
           icon: Lightbulb,
         },
-        {
-          label: "Logs",
-          href: "/super-admin/logs",
-          description: "Activity audit trail",
-          icon: ScrollText,
-        },
-        {
-          label: "Templates",
-          href: "/super-admin/templates",
-          description: "Download Excel templates",
-          icon: Download,
-        },
       ],
     },
     {
       title: "Administration",
+      hint: "Accounts, catalogs and records",
+      icon: Users,
       links: [
         {
           label: "Users",
@@ -203,6 +225,19 @@ export function buildSuperAdminNav({
           href: "/super-admin/records",
           description: "Every record in one place",
           icon: Archive,
+        },
+      ],
+    },
+    {
+      title: "Audit",
+      hint: "Traceability and history",
+      icon: ScrollText,
+      links: [
+        {
+          label: "Logs",
+          href: "/super-admin/logs",
+          description: "Activity audit trail",
+          icon: ScrollText,
         },
       ],
     },

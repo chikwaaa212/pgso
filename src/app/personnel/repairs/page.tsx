@@ -43,6 +43,7 @@ import { useCachedAction } from "@/hooks/use-cached-action";
 import { useReceipt } from "@/hooks/use-receipt";
 import { buildQueryKey, resourcePrefix } from "@/lib/query-keys";
 import { CLIENT_CACHE_KEYS, bustClientCache } from "@/lib/client-cache";
+import { portalFromPathname } from "@/lib/portal-path";
 import { cn } from "@/lib/utils";
 import RepairsLoading from "./loading";
 import { RepairReceipt } from "./repair-receipt";
@@ -148,6 +149,10 @@ function PersonnelRepairsContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const pathname = usePathname();
+  // Super Admin reuses this page (same list, actions, dialogs and receipts).
+  // Personnel see the tickets they logged; admins see every ticket and can
+  // log new ones directly.
+  const isAdminPortal = portalFromPathname(pathname) === "super-admin";
   const [query, setQuery] = useState(searchParams.get("q") ?? "");
   const [statusTab, setStatusTab] = useState<StatusTab>(() => {
     const fromUrl = searchParams.get("status");
@@ -537,10 +542,14 @@ function PersonnelRepairsContent() {
       <PageHeader
         eyebrow="Maintenance"
         title="Repairs"
-        subtitle="Only the repair tickets you logged, in one place — from pending drop-offs to completed receipts."
+        subtitle={
+          isAdminPortal
+            ? "Every repair ticket across all personnel — from pending drop-offs to completed receipts."
+            : "Only the repair tickets you logged, in one place — from pending drop-offs to completed receipts."
+        }
         meta={`${pageData ? fmtNumber(stats.total) : "—"} ticket${
           stats.total === 1 ? "" : "s"
-        } in your queue`}
+        } ${isAdminPortal ? "across all personnel" : "in your queue"}`}
         actions={
           <div className={styles.actions}>
             <Button
@@ -575,7 +584,9 @@ function PersonnelRepairsContent() {
               {pageData ? fmtNumber(stats.total) : "—"}
             </p>
             <p className={stockStyles.summaryMeta}>
-              Repair tickets you logged
+              {isAdminPortal
+                ? "All repair tickets across personnel"
+                : "Repair tickets you logged"}
             </p>
           </div>
         </div>

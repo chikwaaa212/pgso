@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { toast } from "sonner";
+import { Check, RotateCcw, UserX } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -11,7 +12,19 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { ActionButton } from "@/components/ui/action-button";
+import { Button } from "@/components/ui/button";
 import { approveEmployee, rejectEmployee, setUserActive } from "./actions";
+
+/** 24px table action buttons — same rhythm as Assets / Stocks rows. */
+const BTN_BASE =
+  "inline-flex items-center justify-center gap-1 whitespace-nowrap h-7 rounded-[4px] px-3 text-xs font-semibold transition-colors disabled:opacity-50";
+
+const BTN_REACTIVATE = `${BTN_BASE} border border-yellow-500 bg-yellow-500 text-navy-900 hover:bg-yellow-400`;
+const BTN_DEACTIVATE = `${BTN_BASE} border border-red-300 bg-white text-red-700 hover:bg-red-50`;
+const BTN_APPROVE = `${BTN_BASE} border border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-700`;
+const BTN_REJECT = `${BTN_BASE} border border-red-300 bg-white text-red-700 hover:bg-red-50`;
+const BTN_SECONDARY =
+  "h-8 rounded-[4px] border border-navy-200 bg-white px-3.5 text-xs font-semibold text-navy-700 hover:bg-navy-50";
 
 export function ActiveToggle({
   userId,
@@ -54,8 +67,9 @@ export function ActiveToggle({
         onClick={() => runToggle(true)}
         loadingLabel="Reactivating…"
         disabled={busy}
-        style={btnPrimary}
+        className={BTN_REACTIVATE}
       >
+        <RotateCcw size={13} aria-hidden="true" />
         Reactivate
       </ActionButton>
     );
@@ -66,8 +80,9 @@ export function ActiveToggle({
       <button
         type="button"
         onClick={() => setDeactivateOpen(true)}
-        style={btnDanger}
+        className={BTN_DEACTIVATE}
       >
+        <UserX size={13} aria-hidden="true" />
         Deactivate
       </button>
 
@@ -81,19 +96,21 @@ export function ActiveToggle({
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <button
+            <Button
               type="button"
+              variant="outline"
               onClick={() => setDeactivateOpen(false)}
-              style={btnSecondary}
+              className={BTN_SECONDARY}
             >
               Cancel
-            </button>
+            </Button>
             <ActionButton
               onClick={() => runToggle(false)}
               loadingLabel="Deactivating…"
               disabled={busy}
-              style={btnDanger}
+              className={BTN_DEACTIVATE}
             >
+              <UserX size={13} aria-hidden="true" />
               Confirm deactivate
             </ActionButton>
           </DialogFooter>
@@ -102,17 +119,6 @@ export function ActiveToggle({
     </>
   );
 }
-
-const btnPrimary: React.CSSProperties = {
-  padding: "0.375rem 0.75rem",
-  fontSize: "0.75rem",
-  fontWeight: 600,
-  borderRadius: "0.375rem",
-  border: "1px solid var(--color-navy-600)",
-  background: "var(--color-navy-900)",
-  color: "#fff",
-  cursor: "pointer",
-};
 
 export function ApprovalActions({
   userId,
@@ -157,37 +163,25 @@ export function ApprovalActions({
   };
 
   return (
-    <span style={{ display: "inline-flex", gap: "0.5rem" }}>
+    <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
       <ActionButton
         onClick={() => run("approve")}
         loadingLabel="Approving…"
         disabled={busy}
-        style={btnPrimary}
+        className={BTN_APPROVE}
       >
+        <Check size={13} aria-hidden="true" />
         Approve
       </ActionButton>
       <ActionButton
         onClick={() => run("reject")}
         loadingLabel="Rejecting…"
         disabled={busy}
-        style={btnDanger}
+        className={BTN_REJECT}
       >
+        <UserX size={13} aria-hidden="true" />
         Reject
       </ActionButton>
     </span>
   );
 }
-
-const btnDanger: React.CSSProperties = {
-  ...btnPrimary,
-  border: "1px solid #b91c1c",
-  background: "#fff",
-  color: "#b91c1c",
-};
-
-const btnSecondary: React.CSSProperties = {
-  ...btnPrimary,
-  border: "1px solid var(--color-navy-200)",
-  background: "transparent",
-  color: "var(--color-navy-700)",
-};

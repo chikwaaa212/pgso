@@ -21,6 +21,7 @@ import { writeAuditLog } from '@/lib/audit'
 import { inspectionHref } from '@/lib/inspection-ref'
 import { stockInspectionItems } from '@/lib/stock'
 import { getActiveCatalogEntries, resolveUnitName } from '@/lib/master-data'
+import { ACCOUNT_CODE_PREFIX, nextAccountCode, type AccountCodeKind } from '@/lib/account-code'
 import type { SignupState } from '@/types'
 
 const deliveryKinds = ['stock', 'asset'] as const
@@ -33,18 +34,6 @@ interface ItemInput {
   unitCost?: string | number
 }
 
-// System-generated account codes: AST-xxx-xx-xx for assets, STK-xxx-xx-xx for
-// stocks. Personnel never allocate or edit these.
-const ACCOUNT_CODE_PREFIX = { asset: 'AST', stock: 'STK' } as const
-type AccountCodeKind = keyof typeof ACCOUNT_CODE_PREFIX
-
-function formatAccountCode(prefix: string, sequence: number): string {
-  const block1 = String(Math.floor(sequence / 10000) % 1000).padStart(3, '0')
-  const block2 = String(Math.floor(sequence / 100) % 100).padStart(2, '0')
-  const block3 = String(sequence % 100).padStart(2, '0')
-  return `${prefix}-${block1}-${block2}-${block3}`
-}
-
 /**
  * Allocate the next system account code for a delivery kind. New codes follow
  * the AST/STK template; legacy catalog-style codes are ignored by the scan.
@@ -53,21 +42,12 @@ export async function generateAccountCode(
   kind: AccountCodeKind
 ): Promise<{ code: string } | { error: string }> {
   const prefix = ACCOUNT_CODE_PREFIX[kind]
-  const pattern = new RegExp(`^${prefix}-(\\d{3})-(\\d{2})-(\\d{2})$`, 'i')
   try {
     const rows = await prisma.delivery.findMany({
       where: { account_code: { startsWith: `${prefix}-`, mode: 'insensitive' } },
       select: { account_code: true },
     })
-    let max = 0
-    for (const row of rows) {
-      const match = pattern.exec((row.account_code ?? '').trim())
-      if (!match) continue
-      const n =
-        Number(match[1]) * 10000 + Number(match[2]) * 100 + Number(match[3])
-      if (n > max) max = n
-    }
-    return { code: formatAccountCode(prefix, max + 1) }
+    return { code: nextAccountCode(kind, rows.map((row) => row.account_code)) }
   } catch (e) {
     console.error('[generateAccountCode]', e)
     return { error: 'Could not generate an account code. Please try again.' }
@@ -278,6 +258,12 @@ export async function logDelivery(
     return { error: 'You must be signed in to log a delivery.' }
   }
 
+  // Only active personnel and super admins may log deliveries. Employees and
+  // inactive accounts fail closed even if they reach the action directly.
+  if (!scope.isPersonnel) {
+    return { error: 'You do not have permission to log deliveries.' }
+  }
+
   try {
     const outcome = await withIdempotency(
       formData.get('idempotencyKey') as string,
@@ -290,7 +276,13 @@ export async function logDelivery(
           data: {
             supplier: supplierName,
             po_reference: poReference,
-            date_delivered: dateSupplied && !Number.isNaN(Date.parse(dateSupplied)) ? new Date(dateSupplied) : null,
+            // Logging is an arrival event: when the optional supply date is
+            // blank, use the same Manila "today" as expected_arrival_date so
+            // the delivery date is never silently lost.
+            date_delivered:
+              dateSupplied && !Number.isNaN(Date.parse(dateSupplied))
+                ? new Date(dateSupplied)
+                : todayArrivalDate(),
             expected_arrival_date: todayArrivalDate(),
             delivery_kind: deliveryKind,
             delivery_status: 'arrival',
@@ -319,6 +311,10 @@ export async function logDelivery(
 
     revalidatePath('/personnel/deliveries')
     revalidatePath('/personnel/dashboard')
+    if (scope.isSuperAdmin) {
+      revalidatePath('/super-admin/deliveries')
+      revalidatePath('/super-admin/dashboard')
+    }
     await writeAuditLog({
       userId: user.id,
       action: 'delivery:create',
@@ -732,10 +728,9 @@ export async function recordInspection(
       return { error: 'Delivery not found.' }
     }
 
-    // Own-data only for personnel; super_admin is read-only.
-    if (inspectionScope.isSuperAdmin) {
-      return { error: 'Super admins have read-only access to deliveries.' }
-    }
+    // Own-data only: you can only inspect deliveries you logged. This applies
+    // to super admins too — admin-logged deliveries stay processable by them,
+    // while other personnel's records stay read-only in the admin UI.
     if (exists.received_by !== user.id) {
       return { error: 'You can only inspect your own logged deliveries.' }
     }
@@ -819,6 +814,11 @@ export async function recordInspection(
     revalidatePath('/personnel/inspections')
     revalidatePath(inspectionHref(deliveryId))
     revalidatePath('/personnel/dashboard')
+    if (inspectionScope.isSuperAdmin) {
+      revalidatePath('/super-admin/deliveries')
+      revalidatePath('/super-admin/inspections')
+      revalidatePath('/super-admin/dashboard')
+    }
     await writeAuditLog({
       userId: user.id,
       action: 'inspection:create',
@@ -1033,6 +1033,8 @@ export interface CachedDeliveryRow {
   expected_arrival_date: string | null;
   /** When the delivery record was logged (shown in the log's Date column). */
   logged_at: string | null;
+  /** Display name of the account that logged the record (admin lists). */
+  logged_by: string | null;
   delivery_kind: string | null;
   delivery_status: string | null;
   inspection_status: string | null;
@@ -1102,6 +1104,7 @@ export async function getDeliveriesPage(
             date_delivered: true,
             expected_arrival_date: true,
             created_at: true,
+            received_by: true,
             delivery_kind: true,
             delivery_status: true,
             inspection_status: true,
@@ -1109,6 +1112,27 @@ export async function getDeliveriesPage(
           },
         }),
       ])
+      // Super-admin oversight lists attribute each row to the account that
+      // logged it. Resolve names in one batch instead of per row.
+      let loggedById = new Map<string, string>()
+      if (scope.isSuperAdmin) {
+        const ids = [
+          ...new Set(
+            deliveries
+              .map((d) => d.received_by)
+              .filter((v): v is string => Boolean(v))
+          ),
+        ]
+        if (ids.length > 0) {
+          const profiles = await prisma.profile.findMany({
+            where: { id: { in: ids } },
+            select: { id: true, full_name: true },
+          })
+          loggedById = new Map(
+            profiles.map((p) => [p.id, p.full_name ?? 'Unknown'])
+          )
+        }
+      }
       return {
         total,
         rows: deliveries.map((d) => ({
@@ -1118,6 +1142,9 @@ export async function getDeliveriesPage(
           date_delivered: d.date_delivered?.toISOString() ?? null,
           expected_arrival_date: d.expected_arrival_date?.toISOString() ?? null,
           logged_at: d.created_at?.toISOString() ?? null,
+          logged_by: d.received_by
+            ? (loggedById.get(d.received_by) ?? null)
+            : null,
           delivery_kind: d.delivery_kind,
           delivery_status: d.delivery_status,
           inspection_status: d.inspection_status,

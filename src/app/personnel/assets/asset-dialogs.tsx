@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, useTransition } from "react";
+import { useMemo, useRef, useState, useTransition } from "react";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -23,12 +23,15 @@ import {
 import { useToast } from "@/components/ui/toaster";
 import {
   createAsset,
+  generateAssetAccountCode,
   importAssetsFromExcel,
   type CreateAssetState,
   type ImportAssetsState,
   type UnifiedAssetRow,
 } from "./actions";
 import { useMasterData } from "@/hooks/use-master-data";
+import { CLIENT_CACHE_KEYS, bustClientCache } from "@/lib/client-cache";
+import { resourcePrefix } from "@/lib/query-keys";
 import { DatePicker } from "@/components/ui/date-picker";
 import { cn } from "@/lib/utils";
 
@@ -203,12 +206,10 @@ export function buildOptimisticAssetRow(formData: FormData): UnifiedAssetRow {
 }
 
 export function AddAssetDialog({
-  categories,
   onSuccess,
   onMutationEvent,
   triggerClassName,
 }: {
-  categories: string[];
   onSuccess?: () => void;
   /**
    * Optimistic lifecycle: `start` (temp row to prepend) → `success`
@@ -225,19 +226,79 @@ export function AddAssetDialog({
   const [error, setError] = useState("");
   const formRef = useRef<HTMLFormElement>(null);
   const { toast } = useToast();
-  // Strict mode: code + unit come from Master Data; title + type auto-fill.
+  // Strict mode: title + type come from Master Data; the code is system-owned
+  // and allocated on the server (same AST-xxx-xx-xx sequence as deliveries).
   const master = useMasterData();
-  const [code, setCode] = useState<string | undefined>(undefined);
+  const [accountTitle, setAccountTitle] = useState<string | undefined>(undefined);
+  const [assetType, setAssetType] = useState<string | undefined>(undefined);
+  const [accountCode, setAccountCode] = useState("");
+  const [generatingCode, setGeneratingCode] = useState(false);
   const [unit, setUnit] = useState<string | undefined>(undefined);
   const [dateAcquired, setDateAcquired] = useState<Date | undefined>(undefined);
   const [dateReceived, setDateReceived] = useState<Date | undefined>(undefined);
-  const selected = master.catalog.find((c) => c.account_code === code);
-  const catalogMode = master.loaded && master.catalog.length > 0;
+  // Only the latest request may write the code (fast open/close never leaves
+  // a stale preview behind).
+  const codeRequestRef = useRef(0);
+
+  const accountTitles = useMemo(() => {
+    const titles = new Map<string, string>();
+    for (const entry of master.catalog) {
+      const title = (entry.account_title ?? "").trim();
+      if (title) titles.set(title.toUpperCase(), title);
+    }
+    return [...titles.values()].sort((a, b) => a.localeCompare(b));
+  }, [master.catalog]);
+
+  const typeOptions = useMemo(() => {
+    const key = (accountTitle ?? "").trim().toUpperCase();
+    if (!key) return [];
+    const types = new Map<string, string>();
+    for (const entry of master.catalog) {
+      if ((entry.account_title ?? "").trim().toUpperCase() !== key) continue;
+      const type = (entry.asset_type ?? "").trim();
+      if (type) types.set(type.toLowerCase(), type);
+    }
+    return [...types.values()].sort((a, b) => a.localeCompare(b));
+  }, [master.catalog, accountTitle]);
+
+  const catalogEmpty = master.loaded && accountTitles.length === 0;
+
+  function handleTitleChange(value: string) {
+    setAccountTitle(value);
+    const key = value.trim().toUpperCase();
+    const types = new Map<string, string>();
+    for (const entry of master.catalog) {
+      if ((entry.account_title ?? "").trim().toUpperCase() !== key) continue;
+      const type = (entry.asset_type ?? "").trim();
+      if (type) types.set(type.toLowerCase(), type);
+    }
+    const list = [...types.values()];
+    setAssetType(list.length === 1 ? list[0] : undefined);
+  }
+
+  async function previewAccountCode() {
+    const requestId = ++codeRequestRef.current;
+    setGeneratingCode(true);
+    const res = await generateAssetAccountCode().catch(() => ({
+      error: "Could not reach the server — try again.",
+    }));
+    if (requestId !== codeRequestRef.current) return;
+    setGeneratingCode(false);
+    if ("error" in res) {
+      toast({ title: "Could not generate a code", description: res.error, variant: "error" });
+      return;
+    }
+    setAccountCode(res.code);
+  }
 
   function handleOpenChange(v: boolean) {
     setOpen(v);
     if (!v) {
-      setCode(undefined);
+      setAccountTitle(undefined);
+      setAssetType(undefined);
+      setAccountCode("");
+      codeRequestRef.current++;
+      setGeneratingCode(false);
       setUnit(undefined);
       setDateAcquired(undefined);
       setDateReceived(undefined);
@@ -247,8 +308,16 @@ export function AddAssetDialog({
 
   function submit(formData: FormData) {
     setError("");
-    if (catalogMode && !code) {
-      setError("Pick an ACCOUNT CODE from Master Data.");
+    if (!accountTitle) {
+      setError("Pick an ACCOUNT TITLE from Master Data.");
+      return;
+    }
+    if (typeOptions.length === 0) {
+      setError("This account title has no asset type in Master Data — ask your Super Admin to update it.");
+      return;
+    }
+    if (typeOptions.length > 1 && !assetType) {
+      setError("Select the ASSET TYPE for this account title.");
       return;
     }
     const temp = buildOptimisticAssetRow(formData);
@@ -258,7 +327,9 @@ export function AddAssetDialog({
       if (res.success) {
         toast({ title: "Asset added", description: "The new asset is now in the registry.", variant: "success" });
         formRef.current?.reset();
-        setCode(undefined);
+        setAccountTitle(undefined);
+        setAssetType(undefined);
+        setAccountCode("");
         setUnit(undefined);
         setDateAcquired(undefined);
         setDateReceived(undefined);
@@ -283,7 +354,10 @@ export function AddAssetDialog({
     <>
       <Button
         type="button"
-        onClick={() => setOpen(true)}
+        onClick={() => {
+          setOpen(true);
+          void previewAccountCode();
+        }}
         className={triggerClassName}
       >
         Add asset
@@ -293,68 +367,99 @@ export function AddAssetDialog({
           <DialogHeader>
             <DialogTitle>Add asset</DialogTitle>
             <DialogDescription>
-              ACCOUNT CODE and ARTICLE are required. Pick the code from Master Data — title and type fill in automatically. PROPERTY No. becomes the QR code — leave it blank to assign later.
+              ACCOUNT TITLE and ARTICLE are required. Pick the title from Master
+              Data — the asset type fills in automatically and the ACCOUNT CODE is
+              generated for you. PROPERTY No. becomes the QR code — leave it blank
+              to assign later.
             </DialogDescription>
           </DialogHeader>
           <form ref={formRef} action={submit}>
             <div className="grid gap-4 sm:grid-cols-2">
-              <Field label="ACCOUNT CODE" required>
-                {catalogMode ? (
+              <Field label="ACCOUNT TITLE" required>
+                {master.loaded && accountTitles.length > 0 ? (
                   <>
-                    <Select value={code} onValueChange={setCode}>
+                    <Select value={accountTitle} onValueChange={handleTitleChange}>
                       <SelectTrigger className={inputCls}>
-                        <SelectValue placeholder="Select account code" />
+                        <SelectValue placeholder="Select account title" />
                       </SelectTrigger>
                       <SelectContent>
-                        {master.catalog.map((c) => (
-                          <SelectItem key={c.account_code} value={c.account_code}>
-                            {c.account_code} — {c.account_title}
+                        {accountTitles.map((title) => (
+                          <SelectItem key={title} value={title}>
+                            {title}
                           </SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
-                    <input type="hidden" name="account_code" value={code ?? ""} />
+                    <input type="hidden" name="account_title" value={accountTitle ?? ""} />
                   </>
                 ) : (
-                  <Input name="account_code" required placeholder="e.g. 1-07-05-010" className={inputCls} />
+                  <Input
+                    value=""
+                    readOnly
+                    disabled
+                    placeholder={master.loaded ? "No account titles in Master Data" : "Loading Master Data…"}
+                    className={inputCls}
+                  />
                 )}
+                {catalogEmpty ? (
+                  <p className="text-xs font-medium text-red-600">
+                    No active account titles — ask your Super Admin to add them in
+                    Master Data.
+                  </p>
+                ) : null}
+              </Field>
+              <Field label="ASSET TYPE">
+                {typeOptions.length > 1 ? (
+                  <>
+                    <Select value={assetType} onValueChange={setAssetType}>
+                      <SelectTrigger className={inputCls}>
+                        <SelectValue placeholder="Select asset type" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {typeOptions.map((type) => (
+                          <SelectItem key={type} value={type}>
+                            {type}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <input type="hidden" name="category" value={assetType ?? ""} />
+                    <p className="text-xs text-navy-500">
+                      This title is linked to more than one asset type — pick one.
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <Input
+                      value={typeOptions[0] ?? ""}
+                      readOnly
+                      placeholder="Select an account title first"
+                      className={cn(inputCls, "bg-navy-50")}
+                    />
+                    <input type="hidden" name="category" value={typeOptions[0] ?? ""} />
+                  </>
+                )}
+              </Field>
+              <Field label="ACCOUNT CODE">
+                <>
+                  <Input
+                    value={generatingCode ? "Generating…" : accountCode}
+                    readOnly
+                    placeholder="Opens with a generated code"
+                    className={cn(inputCls, "bg-navy-50")}
+                  />
+                  <input type="hidden" name="account_code" value={accountCode} />
+                  <p className="text-xs text-navy-500">
+                    Generated automatically in the AST-xxx-xx-xx format — no typing
+                    needed.
+                  </p>
+                </>
               </Field>
               <Field label="PROPERTY No. (QR)">
                 <Input name="qr_code" placeholder="e.g. OFFICE-ITEM 001" className={inputCls} />
               </Field>
-              <Field label="ASSET TYPE">
-                {selected ? (
-                  <>
-                    <Input value={selected.asset_type} disabled className={inputCls} />
-                    <input type="hidden" name="category" value={selected.asset_type} />
-                  </>
-                ) : (
-                  <Input
-                    name="category"
-                    placeholder={categories.length > 0 ? `e.g. ${categories[0]}` : "e.g. Machinery and Equipment"}
-                    className={inputCls}
-                    list="asset-category-options"
-                    disabled={catalogMode}
-                  />
-                )}
-                <datalist id="asset-category-options">
-                  {categories.map((c) => (
-                    <option key={c} value={c} />
-                  ))}
-                </datalist>
-              </Field>
               <Field label="ARTICLE" required>
                 <Input name="article" required placeholder="e.g. TRACTOR" className={inputCls} />
-              </Field>
-              <Field label="ACCOUNT TITLE">
-                {selected ? (
-                  <>
-                    <Input value={selected.account_title} disabled className={inputCls} />
-                    <input type="hidden" name="account_title" value={selected.account_title} />
-                  </>
-                ) : (
-                  <Input name="account_title" placeholder="e.g. MACHINERIES" className={inputCls} disabled={catalogMode} />
-                )}
               </Field>
               <Field label="ACCOUNT NAME">
                 <Input name="account_name" placeholder="e.g. MACHINERY" className={inputCls} />
@@ -532,9 +637,19 @@ export function ImportAssetsDialog({
       const res = await importAssetsFromExcel({} as ImportAssetsState, formData);
       setResult(res);
       if (res.success) {
+        // Imports now save unknown codes to Master Data — drop the cached
+        // catalog so new codes show up in the pickers right away.
+        bustClientCache([
+          "pgso:master-data:active",
+          CLIENT_CACHE_KEYS.adminMasterData,
+          resourcePrefix("super-admin", "master-data"),
+        ]);
         const parts = [
           `${res.created ?? 0} new ${res.created === 1 ? "item" : "items"} added`,
           (res.updated ?? 0) > 0 ? `${res.updated} existing ${res.updated === 1 ? "item" : "items"} updated` : "",
+          (res.masterDataCreated ?? 0) > 0
+            ? `${res.masterDataCreated} new Master Data ${res.masterDataCreated === 1 ? "code" : "codes"} saved`
+            : "",
           res.skipped ? `${res.skipped} ${res.skipped === 1 ? "row" : "rows"} skipped — see the notes below` : "",
         ].filter(Boolean);
         toast({
@@ -578,9 +693,11 @@ export function ImportAssetsDialog({
             <DialogTitle>Import assets from Excel</DialogTitle>
             <DialogDescription>
               Upload your filled-in template and we&apos;ll check each row for you.
-              New items are added, changed items are updated, and rows that are
-              already correct or need a fix are skipped with a clear note telling
-              you what to do next. Nothing is deleted by an import.
+              New items are added, changed items are updated, and any Account
+              Code that isn&apos;t in Master Data yet is saved there automatically.
+              Rows that are already correct or need a fix are skipped with a
+              clear note telling you what to do next. Nothing is deleted by an
+              import.
             </DialogDescription>
           </DialogHeader>
 
@@ -638,6 +755,9 @@ export function ImportAssetsDialog({
                 <p className="mt-1">
                   {result.created ?? 0} new {(result.created ?? 0) === 1 ? "item" : "items"} added
                   {(result.updated ?? 0) > 0 ? ` · ${result.updated} existing ${(result.updated ?? 0) === 1 ? "item" : "items"} updated` : ""}
+                  {(result.masterDataCreated ?? 0) > 0
+                    ? ` · ${result.masterDataCreated} new Master Data ${(result.masterDataCreated ?? 0) === 1 ? "code" : "codes"} saved`
+                    : ""}
                   {(result.skipped ?? 0) > 0 ? ` · ${result.skipped} ${(result.skipped ?? 0) === 1 ? "row" : "rows"} skipped` : ""}
                   .
                 </p>

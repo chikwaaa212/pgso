@@ -1,3 +1,7 @@
+/* Shared desktop left rail used by every portal (personnel, super-admin and
+   employee). One stylesheet keeps the three sidebars pixel-identical: same
+   sticky geometry, grouped headings, yellow active pill and rail marker. */
+
 .sidebar {
   display: none;
 }

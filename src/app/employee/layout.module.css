@@ -1,10 +1,18 @@
-/* Employee app shell — same top-navbar shell as the personnel and
-   super-admin portals (sticky header on top, content below). */
+/* Employee app shell — same chrome as the personnel and super-admin portals:
+   sticky top navbar, desktop left rail, content beside it. */
 .shell {
   display: flex;
   flex-direction: column;
   width: 100%;
   min-height: 100vh;
+}
+
+.body {
+  display: flex;
+  flex: 1;
+  align-items: flex-start;
+  width: 100%;
+  min-width: 0;
 }
 
 .main {
@@ -23,6 +31,14 @@
   }
 
   .shell > header {
+    display: none !important;
+  }
+
+  .body {
+    display: block;
+  }
+
+  .body > aside {
     display: none !important;
   }
 

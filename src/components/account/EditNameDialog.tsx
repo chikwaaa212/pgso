@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
+import { toast } from "sonner";
 import {
   Dialog,
   DialogContent,
@@ -42,7 +43,9 @@ export function EditNameDialog({
 }) {
   const [name, setName] = useState(initialName);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
+  // Guards against a second submit while the first save is still in flight
+  // after the dialog has already closed.
+  const inFlight = useRef(false);
 
   // Fresh value every time the dialog opens (the wrapper stays mounted while
   // only Radix's inner content unmounts, so initial state alone goes stale).
@@ -50,8 +53,7 @@ export function EditNameDialog({
     if (open) {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional form reset from latest prop on open
       setName(initialName);
-      setError("");
-      setSaving(false);
+      if (!inFlight.current) setSaving(false);
     }
   }, [open, initialName]);
 
@@ -59,20 +61,26 @@ export function EditNameDialog({
   const valid = trimmed.length >= 2 && trimmed.length <= 80;
 
   async function submit() {
-    if (!valid || saving) return;
+    if (!valid || inFlight.current) return;
+    const next = trimmed;
+    inFlight.current = true;
     setSaving(true);
-    setError("");
+    // Dismiss immediately on confirm — the save continues in the background
+    // and reports success/failure through the toast layer.
+    onOpenChange(false);
     try {
-      const res = await onSave(trimmed);
+      const res = await onSave(next);
       if (!res.ok) {
-        setError(res.error ?? "Could not update your name.");
-        setSaving(false);
+        toast.error(res.error ?? "Could not update your name.");
         return;
       }
-      onSaved?.(res.name ?? trimmed);
-      onOpenChange(false);
+      onSaved?.(res.name ?? next);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not update your name.");
+      toast.error(
+        e instanceof Error ? e.message : "Could not update your name."
+      );
+    } finally {
+      inFlight.current = false;
       setSaving(false);
     }
   }
@@ -103,14 +111,6 @@ export function EditNameDialog({
           {name.length > 0 && !valid ? (
             <p role="alert" className="text-xs font-medium text-red-700">
               Name must be 2–80 characters.
-            </p>
-          ) : null}
-          {error ? (
-            <p
-              role="alert"
-              className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800"
-            >
-              {error}
             </p>
           ) : null}
         </div>
