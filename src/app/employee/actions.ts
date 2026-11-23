@@ -19,6 +19,8 @@ export interface MyAssetUnit {
   item_code: string
   status: string | null
   assigned_at: string | null
+  /** Full name of the custodian (the signed-in employee). */
+  holder_name: string | null
   qr_data_url: string
 }
 
@@ -167,9 +169,16 @@ export async function getMyAssets(): Promise<MyAssetRow[]> {
         item_code: u.item_code,
         status: u.status,
         assigned_at: u.assigned_at?.toISOString() ?? null,
+        holder_name: null,
         qr_data_url: await generateAssetUnitQrDataUrl(u.id).catch(() => ''),
       }))
     )
+    if (unitRows.length > 0) {
+      const me = await prisma.profile
+        .findUnique({ where: { id: userId }, select: { full_name: true } })
+        .catch(() => null)
+      for (const row of unitRows) row.holder_name = me?.full_name ?? null
+    }
     const unitsByAsset = new Map<string, MyAssetUnit[]>()
     const unitsByInventory = new Map<string, MyAssetUnit[]>()
     myUnits.forEach((u, i) => {

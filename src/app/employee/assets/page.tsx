@@ -9,11 +9,18 @@ import {
   Download,
   FileText,
   Package,
+  Printer,
   Search,
   ShieldCheck,
   X,
 } from "lucide-react";
-import { getMyAssets, getMyAssetRequests, getMyDocs, getMyIssuanceDetail } from "../actions";
+import {
+  getMyAssets,
+  getMyAssetRequests,
+  getMyDocs,
+  getMyIssuanceDetail,
+  type MyAssetUnit,
+} from "../actions";
 import { requestTypeLabel } from "@/app/personnel/requests/request-types";
 import { RequestQrButton } from "@/components/personnel/RequestQrButton";
 import { useCachedAction } from "@/hooks/use-cached-action";
@@ -23,6 +30,7 @@ import type { IssuanceDetail } from "@/app/personnel/issuances/actions";
 import { ParReportSheet } from "@/app/personnel/documents/par-report";
 import { IcsReportSheet } from "@/app/personnel/documents/ics-report";
 import { DocSheetSkeleton, EmployeeDocModal } from "./doc-view-modal";
+import { UnitTagOverlay, type UnitTagParent } from "./unit-tag-overlay";
 import receipt from "@/app/personnel/inspections/components/receipt.module.css";
 import AssetsLoading from "./loading";
 import shell from "../page-shell.module.css";
@@ -98,6 +106,11 @@ export default function EmployeeAssetsPage() {
   // Client-side lens over the cached snapshot - no extra round-trips.
   const [kind, setKind] = useState<KindFilter>("all");
   const [query, setQuery] = useState("");
+  // Piece tag preview: opening a tracked piece shows the printable tag overlay.
+  const [tagPiece, setTagPiece] = useState<{
+    unit: MyAssetUnit;
+    parent: UnitTagParent;
+  } | null>(null);
 
   const visibleAssets = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -387,31 +400,52 @@ export default function EmployeeAssetsPage() {
                     </p>
                     <ul className="space-y-2">
                       {a.units.map((unit) => (
-                        <li
-                          key={unit.id}
-                          className="flex items-center gap-2.5 rounded-md border border-slate-200 bg-white p-2"
-                        >
-                          {unit.qr_data_url ? (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img
-                              src={unit.qr_data_url}
-                              alt={`QR code for ${unit.item_code}`}
-                              width={56}
-                              height={56}
-                              className="h-14 w-14 shrink-0"
-                              loading="lazy"
-                              decoding="async"
-                            />
-                          ) : null}
-                          <div className="min-w-0">
-                            <code className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-semibold text-navy-900">
-                              {unit.item_code}
-                            </code>
-                            <p className="mt-0.5 text-[10px] capitalize text-slate-500">
-                              {unit.status ?? "assigned"}
-                              {unit.assigned_at ? ` · ${fmtDate(unit.assigned_at)}` : ""}
-                            </p>
-                          </div>
+                        <li key={unit.id}>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setTagPiece({
+                                unit,
+                                parent: {
+                                  article: a.article,
+                                  description: a.description,
+                                  account_code: a.account_code,
+                                  property_number: a.property_number,
+                                  location: a.location,
+                                  unit: a.unit,
+                                },
+                              })
+                            }
+                            className="flex w-full items-center gap-2.5 rounded-md border border-slate-200 bg-white p-2 text-left transition-colors hover:border-slate-300 hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-yellow-500"
+                            aria-label={`Open printable tag for ${unit.item_code}`}
+                            title="Open / print this tag"
+                          >
+                            {unit.qr_data_url ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img
+                                src={unit.qr_data_url}
+                                alt={`QR code for ${unit.item_code}`}
+                                width={56}
+                                height={56}
+                                className="h-14 w-14 shrink-0"
+                                loading="lazy"
+                                decoding="async"
+                              />
+                            ) : null}
+                            <div className="min-w-0 flex-1">
+                              <code className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-semibold text-navy-900">
+                                {unit.item_code}
+                              </code>
+                              <p className="mt-0.5 text-[10px] capitalize text-slate-500">
+                                {unit.status ?? "assigned"}
+                                {unit.assigned_at ? ` · ${fmtDate(unit.assigned_at)}` : ""}
+                              </p>
+                            </div>
+                            <span className="flex shrink-0 items-center gap-1 rounded border border-slate-200 px-1.5 py-1 text-[10px] font-semibold text-slate-500">
+                              <Printer size={11} aria-hidden="true" />
+                              Tag
+                            </span>
+                          </button>
                         </li>
                       ))}
                     </ul>
@@ -605,6 +639,13 @@ export default function EmployeeAssetsPage() {
           </div>
         )}
       </EmployeeDocModal>
+
+      <UnitTagOverlay
+        open={tagPiece !== null}
+        unit={tagPiece?.unit ?? null}
+        parent={tagPiece?.parent ?? null}
+        onClose={() => setTagPiece(null)}
+      />
     </section>
   );
 }

@@ -1,12 +1,6 @@
 "use client";
 
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import overlay from "@/app/personnel/documents/receipt-overlay.module.css";
+import { ReceiptOverlay } from "@/app/personnel/documents/receipt-overlay";
 import acc from "@/app/personnel/issuances/issuance.module.css";
 
 function Pulse({ className = "" }: { className?: string }) {
@@ -131,31 +125,29 @@ export function DocSheetSkeleton({
 /**
  * Wide + tall modal viewport shared with the personnel documents page
  * (same overlay css) so PAR/ICS sheets render identically for employees.
+ * Printable: adds the Print button and scopes browser printing to the sheet.
  */
 export function EmployeeDocModal({
   open,
   title,
   onClose,
+  printable = true,
   children,
 }: {
   open: boolean;
   title: string;
   onClose: () => void;
+  printable?: boolean;
   children: React.ReactNode;
 }) {
   return (
-    <Dialog
+    <ReceiptOverlay
       open={open}
-      onOpenChange={(v) => {
-        if (!v) onClose();
-      }}
+      title={title}
+      onClose={onClose}
+      printable={printable}
     >
-      <DialogContent className={`${overlay.overlayContent} w-full sm:max-w-5xl`}>
-        <DialogHeader>
-          <DialogTitle>{title}</DialogTitle>
-        </DialogHeader>
-        {children}
-      </DialogContent>
-    </Dialog>
+      {children}
+    </ReceiptOverlay>
   );
 }
