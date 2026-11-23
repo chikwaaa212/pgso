@@ -12,13 +12,18 @@ const MAX_BYTES = 10 * 1024 * 1024;
 // xlsx is a zip archive: PK\x03\x04
 const ZIP_MAGIC = [0x50, 0x4b, 0x03, 0x04];
 
-function revalidatePath(path: string) {
+async function revalidatePath(path: string) {
   nextRevalidatePath(path);
   // Narrow bust: PPMP writes touch only the file list (super_admin sees
   // all, personnel see own rows — the key's scope segments isolate callers).
-  void import("@/lib/personnel-cache")
-    .then((m) => m.bustCachePrefixes(["ppmp:"]))
-    .catch(() => {});
+  // Awaited so the client's follow-up refresh (right after the import
+  // response) cannot read the previous 30s cache entry and miss the new file.
+  try {
+    const m = await import("@/lib/personnel-cache");
+    await m.bustCachePrefixes(["ppmp:"]);
+  } catch {
+    /* best-effort */
+  }
 }
 
 export interface ImportPpmpState {
@@ -265,7 +270,7 @@ export async function importPpmpFromExcel(
     },
   });
 
-  revalidatePath("/personnel/ppmp");
+  await revalidatePath("/personnel/ppmp");
   return { success: true, imported: rowCount, fileId: createdId, fileHash: hash };
 }
 
@@ -380,6 +385,6 @@ export async function deletePpmpFile(
     },
   });
 
-  revalidatePath("/personnel/ppmp");
+  await revalidatePath("/personnel/ppmp");
   return { success: true };
 }

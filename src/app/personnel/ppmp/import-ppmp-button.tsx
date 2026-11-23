@@ -116,10 +116,25 @@ export function ImportPpmpButton({ onImported }: { onImported?: () => void }) {
         type="button"
         variant="warning"
         className={YELLOW_BTN}
-        onClick={() => setOpen(true)}
+        onClick={() => {
+          // Never show a previous attempt's result when reopening.
+          setResult(null);
+          setFileName("");
+          setOpen(true);
+        }}
+        disabled={pending}
       >
-        <Upload size={13} aria-hidden="true" />
-        Import Excel
+        {pending ? (
+          <>
+            <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
+            Importing…
+          </>
+        ) : (
+          <>
+            <Upload size={13} aria-hidden="true" />
+            Import Excel
+          </>
+        )}
       </Button>
 
       <Dialog
@@ -141,7 +156,18 @@ export function ImportPpmpButton({ onImported }: { onImported?: () => void }) {
             </DialogDescription>
           </DialogHeader>
 
-          <form ref={formRef} action={submit} className={styles.form}>
+          <form
+            ref={formRef}
+            // Deliberately not a React form `action`: actions run inside a
+            // transition, which can hold the close state until the upload
+            // finishes. A plain submit handler closes the dialog immediately
+            // while the import keeps running in the background.
+            onSubmit={(e) => {
+              e.preventDefault();
+              submit(new FormData(e.currentTarget));
+            }}
+            className={styles.form}
+          >
             <label className={styles.dropzone} data-has-file={fileName ? "true" : "false"}>
               <input
                 name="file"
