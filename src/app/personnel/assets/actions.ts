@@ -843,6 +843,13 @@ export async function getUnifiedAssetsPage(
           }`)
         }
         if (wantStocks) {
+          // A lot can exist in both tables under the same id. When the asset
+          // branch is also present, list it once (as the registry asset).
+          if (wantAssets) {
+            stockConds.push(
+              Prisma.sql`NOT EXISTS (SELECT 1 FROM assets a2 WHERE a2.id = s.id)`
+            )
+          }
           branches.push(Prisma.sql`SELECT ${stockCols} FROM inventory s ${
             stockConds.length > 0 ? Prisma.sql`WHERE ${Prisma.join(stockConds, ' AND ')}` : Prisma.empty
           }`)

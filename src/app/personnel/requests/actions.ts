@@ -508,11 +508,16 @@ export async function getRequestFormOptions(
     } catch {
       /* catalog unavailable — fall back to stored values */
     }
+    // An inspected lot can share its id with a registry asset row. Listing both
+    // would emit two options with the same key (and value), so the asset record
+    // wins and the stock copy is skipped.
+    const assetIdSet = new Set(assetRows.map((a) => a.id))
+    const uniqueStockRows = stockRows.filter((s) => !assetIdSet.has(s.id))
     // Keep the original casing for the DB lookup (`account_code` is
     // case-sensitive); lowercase only when building the map key below.
     const stockCodes = [
       ...new Set(
-        stockRows
+        uniqueStockRows
           .map((s) => s.account_code?.trim())
           .filter((v): v is string => Boolean(v))
       ),
@@ -590,7 +595,7 @@ export async function getRequestFormOptions(
           condition: a.condition,
         }),
       })),
-      ...stockRows.map((s) => ({
+      ...uniqueStockRows.map((s) => ({
         id: s.id,
         kind: 'stock' as const,
         // A passed inspection stocks asset-kind deliveries as quantity lots

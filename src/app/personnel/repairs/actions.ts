@@ -470,8 +470,12 @@ export async function getRepairFormOptions(
       ])
 
       // Only lots with units on hand can be sent for repair — depleted
-      // stock rows (0 on hand) are hidden from the pick list.
-      const inStockRows = stockRows.filter((s) => s.quantity > 0)
+      // stock rows (0 on hand) are hidden from the pick list. A row whose id
+      // is also a registry asset is listed once, as the asset.
+      const assetIds = new Set(assetRows.map((a) => a.id))
+      const inStockRows = stockRows.filter(
+        (s) => s.quantity > 0 && !assetIds.has(s.id)
+      )
 
       // Stock rows carry no title/name columns — resolve them from the
       // inspection's custom-field bag, then Master Data by account code.
