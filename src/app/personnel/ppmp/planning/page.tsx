@@ -201,21 +201,27 @@ export default function PpmpPlanningPage() {
     setRunError("");
     stopPolling();
     startInspect(async () => {
-      const res = await inspectPpmpFiles(selected);
-      if (!res.success || !res.files) {
-        setError(res.error ?? "Inspection failed. Try again.");
-        return;
-      }
-      setInspected(res.files);
-      const errors = res.files.flatMap((f) =>
-        f.profile.issues.filter((i) => i.severity === "error")
-      );
-      if (errors.length > 0) {
-        toast({
-          title: "Validation issues found",
-          description: `${errors.length} sheet(s) need attention before planning.`,
-          variant: "error",
-        });
+      try {
+        const res = await inspectPpmpFiles(selected);
+        if (!res.success || !res.files) {
+          setError(res.error ?? "Inspection failed. Try again.");
+          return;
+        }
+        setInspected(res.files);
+        const errors = res.files.flatMap((f) =>
+          f.profile.issues.filter((i) => i.severity === "error")
+        );
+        if (errors.length > 0) {
+          toast({
+            title: "Validation issues found",
+            description: `${errors.length} sheet(s) need attention before planning.`,
+            variant: "error",
+          });
+        }
+      } catch {
+        setError(
+          "Validation could not reach the server. Check your connection and try again."
+        );
       }
     });
   }

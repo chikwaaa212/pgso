@@ -46,21 +46,34 @@ export function ImportPpmpButton({ onImported }: { onImported?: () => void }) {
       description: `${name || "The PPMP workbook"} is being processed.`,
     });
     startTransition(async () => {
-      const res = await importPpmpFromExcel({} as ImportPpmpState, formData);
-      setResult(res);
-      if (res.success) {
-        toast({
-          title: res.duplicate ? "Workbook already imported" : "Import complete",
-          description: res.duplicate
-            ? "The same file is already in your library."
-            : `${res.imported ?? 0} row(s) imported.`,
-          variant: "success",
+      try {
+        const res = await importPpmpFromExcel({} as ImportPpmpState, formData);
+        setResult(res);
+        if (res.success) {
+          toast({
+            title: res.duplicate ? "Workbook already imported" : "Import complete",
+            description: res.duplicate
+              ? "The same file is already in your library."
+              : `${res.imported ?? 0} row(s) imported.`,
+            variant: "success",
+          });
+          onImported?.();
+        } else if (res.error) {
+          toast({
+            title: "Import failed",
+            description: res.error,
+            variant: "error",
+          });
+        }
+      } catch {
+        // A dropped request must not surface as an unhandled "Failed to fetch".
+        setResult({
+          error:
+            "The upload could not reach the server. Check your connection and try again — the file was not saved.",
         });
-        onImported?.();
-      } else if (res.error) {
         toast({
           title: "Import failed",
-          description: res.error,
+          description: "Could not reach the server. Check your connection and try again.",
           variant: "error",
         });
       }

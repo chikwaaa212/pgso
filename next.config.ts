@@ -8,7 +8,9 @@ const nextConfig: NextConfig = {
   // to 10 MB files) exceed the 1 MB default action payload limit.
   experimental: {
     serverActions: {
-      bodySizeLimit: "10mb",
+      // Includes multipart overhead on top of the 10 MB file itself; a file at
+      // the cap would otherwise fail the action with a bare "Failed to fetch".
+      bodySizeLimit: "12mb",
     },
   },
   images: {
