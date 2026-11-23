@@ -991,3 +991,339 @@ export async function getAssetAvailabilityReport(): Promise<AssetAvailabilityRep
     }
   )
 }
+
+// ─── Disposal requests ─────────────────────────────────────────────────────
+
+export interface DisposalReportRow {
+  id: string
+  assetId: string | null
+  assetLabel: string
+  propertyNumber: string | null
+  accountCode: string | null
+  employeeId: string
+  employeeName: string
+  office: string | null
+  status: string | null
+  requestedAt: string | null
+  resolvedAt: string | null
+  reason: string
+}
+
+export interface DisposalReport {
+  generatedAt: string
+  total: number
+  pending: number
+  approved: number
+  completed: number
+  rejected: number
+  rows: DisposalReportRow[]
+}
+
+function disposalLabel(asset: {
+  property_number: string | null
+  qr_code: string | null
+  account_code: string | null
+  article: string | null
+  description: string | null
+} | null): string {
+  if (!asset) return 'Asset removed from registry'
+  const bits = [
+    asset.property_number ?? asset.qr_code ?? asset.account_code,
+    asset.article,
+    asset.description,
+  ].filter(Boolean) as string[]
+  return bits.length > 0 ? bits.join(' — ').slice(0, 100) : 'Asset'
+}
+
+/**
+ * Disposal requests (request_type = 'disposal') with the asset and requester
+ * resolved, newest first. Personnel see the requests addressed to them; Super
+ * Admin sees every disposal across the province.
+ */
+export async function getDisposalReport(): Promise<DisposalReport> {
+  const generatedAt = new Date().toISOString()
+  const empty: DisposalReport = {
+    generatedAt,
+    total: 0,
+    pending: 0,
+    approved: 0,
+    completed: 0,
+    rejected: 0,
+    rows: [],
+  }
+  const scope = await getPersonnelScope()
+  if (scope.isEmpty || !scope.userId) return empty
+
+  return withScopedCache('personnel:reports:disposals', REPORT_TTL, async () => {
+    try {
+      const requests = await prisma.request
+        .findMany({
+          where: {
+            request_type: 'disposal',
+            ...(scope.isSuperAdmin ? {} : { recipient_id: scope.userId }),
+          },
+          orderBy: { date_requested: 'desc' },
+          take: 1000,
+          select: {
+            id: true,
+            asset_id: true,
+            employee_id: true,
+            status: true,
+            description: true,
+            date_requested: true,
+            date_resolved: true,
+          },
+        })
+        .catch(() => [])
+
+      const assetIds = [
+        ...new Set(requests.map((r) => r.asset_id).filter((v): v is string => Boolean(v))),
+      ]
+      const employeeIds = [...new Set(requests.map((r) => r.employee_id))]
+      const [assets, profiles] = await Promise.all([
+        assetIds.length > 0
+          ? prisma.asset
+              .findMany({
+                where: { id: { in: assetIds } },
+                select: {
+                  id: true,
+                  property_number: true,
+                  qr_code: true,
+                  account_code: true,
+                  article: true,
+                  description: true,
+                },
+              })
+              .catch(() => [])
+          : Promise.resolve([]),
+        employeeIds.length > 0
+          ? prisma.profile
+              .findMany({
+                where: { id: { in: employeeIds } },
+                select: { id: true, full_name: true, office: true },
+              })
+              .catch(() => [])
+          : Promise.resolve([]),
+      ])
+      const assetById = new Map(assets.map((a) => [a.id, a]))
+      const profileById = new Map(profiles.map((p) => [p.id, p]))
+
+      const rows: DisposalReportRow[] = requests.map((r) => {
+        const asset = r.asset_id ? assetById.get(r.asset_id) ?? null : null
+        const profile = profileById.get(r.employee_id)
+        return {
+          id: r.id,
+          assetId: r.asset_id,
+          assetLabel: disposalLabel(asset),
+          propertyNumber: asset?.property_number ?? null,
+          accountCode: asset?.account_code ?? null,
+          employeeId: r.employee_id,
+          employeeName: profile?.full_name ?? 'Unknown employee',
+          office: profile?.office ?? null,
+          status: r.status,
+          requestedAt: toIso(r.date_requested),
+          resolvedAt: toIso(r.date_resolved),
+          // The first line is the machine-readable marker; the reason the
+          // requester typed follows it. Approval appends a `Note (...)` line,
+          // so stop there and keep the requester's own words.
+          reason: r.description
+            .split('\n')
+            .map((line) => line.trim())
+            .filter(
+              (line) =>
+                line &&
+                !/^Disposal requested$/i.test(line) &&
+                !/^Note \(/i.test(line)
+            )
+            .join(' '),
+        }
+      })
+
+      const countBy = (status: string) =>
+        rows.filter((row) => (row.status ?? 'pending') === status).length
+      return {
+        generatedAt,
+        total: rows.length,
+        pending: countBy('pending'),
+        approved: countBy('approved'),
+        completed: countBy('completed'),
+        rejected: countBy('rejected'),
+        rows,
+      }
+    } catch (e) {
+      console.error('[getDisposalReport]', e)
+      return empty
+    }
+  })
+}
+
+// ─── Assigned assets (custody per employee) ────────────────────────────────
+
+export interface AssignedEmployeeRow {
+  employeeId: string
+  employeeName: string
+  office: string | null
+  assets: number
+  units: number
+  recordedCost: number
+}
+
+export interface AssignedAssetRow {
+  id: string
+  label: string
+  propertyNumber: string | null
+  accountCode: string | null
+  employeeId: string | null
+  employeeName: string
+  office: string | null
+  location: string | null
+  condition: string | null
+  status: string | null
+  dateAcquired: string | null
+}
+
+export interface AssignedAssetsReport {
+  generatedAt: string
+  totalAssets: number
+  totalUnits: number
+  assignedAssets: number
+  assignedUnits: number
+  assignedEmployees: number
+  unassignedAssets: number
+  employees: AssignedEmployeeRow[]
+  rows: AssignedAssetRow[]
+}
+
+/**
+ * Custody report: every asset with an assigned employee, grouped per employee
+ * for the count table and listed row-by-row for the detail table. The asset
+ * registry is a shared pool, so both portals see the same custody picture.
+ */
+export async function getAssignedAssetsReport(): Promise<AssignedAssetsReport> {
+  const generatedAt = new Date().toISOString()
+  const empty: AssignedAssetsReport = {
+    generatedAt,
+    totalAssets: 0,
+    totalUnits: 0,
+    assignedAssets: 0,
+    assignedUnits: 0,
+    assignedEmployees: 0,
+    unassignedAssets: 0,
+    employees: [],
+    rows: [],
+  }
+  const scope = await getPersonnelScope()
+  if (scope.isEmpty || !scope.userId) return empty
+
+  return withScopedCache('personnel:reports:assigned-assets', REPORT_TTL, async () => {
+    try {
+      const [assetRows, totals] = await Promise.all([
+        prisma.asset
+          .findMany({
+            where: { assigned_to: { not: null } },
+            orderBy: { created_at: 'desc' },
+            take: 5000,
+            select: {
+              id: true,
+              property_number: true,
+              qr_code: true,
+              account_code: true,
+              article: true,
+              description: true,
+              assigned_to: true,
+              location: true,
+              condition: true,
+              status: true,
+              quantity: true,
+              total_cost: true,
+              unit_cost: true,
+              date_acquired: true,
+            },
+          })
+          .catch(() => []),
+        Promise.all([
+          prisma.asset.count().catch(() => 0),
+          prisma.asset.aggregate({ _sum: { quantity: true } }).catch(() => null),
+          prisma.asset.count({ where: { assigned_to: null } }).catch(() => 0),
+        ]),
+      ])
+      const [totalAssets, quantitySum, unassignedAssets] = totals
+
+      const employeeIds = [
+        ...new Set(assetRows.map((a) => a.assigned_to).filter((v): v is string => Boolean(v))),
+      ]
+      const profiles = employeeIds.length > 0
+        ? await prisma.profile
+            .findMany({
+              where: { id: { in: employeeIds } },
+              select: { id: true, full_name: true, office: true },
+            })
+            .catch(() => [])
+        : []
+      const profileById = new Map(profiles.map((p) => [p.id, p]))
+
+      const rows: AssignedAssetRow[] = assetRows.map((a) => {
+        const profile = a.assigned_to ? profileById.get(a.assigned_to) : undefined
+        return {
+          id: a.id,
+          label: disposalLabel(a),
+          propertyNumber: a.property_number,
+          accountCode: a.account_code,
+          employeeId: a.assigned_to,
+          employeeName: profile?.full_name ?? 'Unknown employee',
+          office: profile?.office ?? null,
+          location: a.location,
+          condition: a.condition,
+          status: a.status,
+          dateAcquired: toIso(a.date_acquired),
+        }
+      })
+
+      const employeeMap = new Map<string, AssignedEmployeeRow>()
+      let assignedUnits = 0
+      for (const a of assetRows) {
+        const units = Math.max(1, Number(a.quantity ?? 1))
+        assignedUnits += units
+        const id = a.assigned_to ?? ''
+        const profile = id ? profileById.get(id) : undefined
+        const entry = employeeMap.get(id) ?? {
+          employeeId: id,
+          employeeName: profile?.full_name ?? 'Unknown employee',
+          office: profile?.office ?? null,
+          assets: 0,
+          units: 0,
+          recordedCost: 0,
+        }
+        entry.assets += 1
+        entry.units += units
+        const cost =
+          a.total_cost != null
+            ? Number(a.total_cost)
+            : a.unit_cost != null
+              ? Number(a.unit_cost) * Number(a.quantity ?? 1)
+              : 0
+        entry.recordedCost += Number.isFinite(cost) ? cost : 0
+        employeeMap.set(id, entry)
+      }
+      const employees = [...employeeMap.values()].sort(
+        (a, b) => b.assets - a.assets || a.employeeName.localeCompare(b.employeeName)
+      )
+
+      const assignedAssets = rows.length
+      return {
+        generatedAt,
+        totalAssets: Number(totalAssets ?? 0),
+        totalUnits: Number(quantitySum?._sum.quantity ?? 0),
+        assignedAssets,
+        assignedUnits,
+        assignedEmployees: employeeMap.size,
+        unassignedAssets: Number(unassignedAssets ?? 0),
+        employees,
+        rows,
+      }
+    } catch (e) {
+      console.error('[getAssignedAssetsReport]', e)
+      return empty
+    }
+  })
+}

@@ -1,6 +1,12 @@
 import styles from './reports.module.css'
 
-type SkeletonTab = 'aging' | 'quarterly' | 'availability'
+type SkeletonTab =
+  | 'aging'
+  | 'quarterly'
+  | 'availability'
+  | 'disposal'
+  | 'assigned'
+  | 'condition'
 
 function Bar({
   w = '100%',
@@ -237,6 +243,38 @@ function AvailabilitySkeleton() {
   )
 }
 
+function TableReportSkeleton({ columns }: { columns: number }) {
+  return (
+    <>
+      <div className={styles.kpis}>
+        {Array.from({ length: 4 }).map((_, index) => (
+          <KpiSkeleton key={index} />
+        ))}
+      </div>
+
+      <div className={styles.panel}>
+        <PanelHeadSkeleton />
+        <TableSkeleton
+          widths={Array.from({ length: columns }).map((_, index) =>
+            index === 0 ? 28 : 12
+          )}
+          rows={7}
+        />
+      </div>
+
+      <div className={styles.panel}>
+        <PanelHeadSkeleton />
+        <TableSkeleton
+          widths={Array.from({ length: columns }).map((_, index) =>
+            index === 0 ? 28 : 12
+          )}
+          rows={5}
+        />
+      </div>
+    </>
+  )
+}
+
 /**
  * Layout-matched skeleton for the report tabs. Mirrors the real toolbar,
  * KPI tiles, panels, charts and tables so the first paint never jumps.
@@ -248,6 +286,10 @@ export function ReportsContentSkeleton({ tab = 'aging' as SkeletonTab }: { tab?:
         <AgingSkeleton />
       ) : tab === 'quarterly' ? (
         <QuarterlySkeleton />
+      ) : tab === 'disposal' ? (
+        <TableReportSkeleton columns={8} />
+      ) : tab === 'assigned' ? (
+        <TableReportSkeleton columns={5} />
       ) : (
         <AvailabilitySkeleton />
       )}
@@ -282,6 +324,8 @@ export function ReportsPageSkeleton() {
         <div className={styles.tabs}>
           <Bar w="7rem" h={24} />
           <Bar w="8.5rem" h={24} />
+          <Bar w="7.5rem" h={24} />
+          <Bar w="7.5rem" h={24} />
           <Bar w="7.5rem" h={24} />
         </div>
       </div>

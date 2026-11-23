@@ -4,9 +4,15 @@ import { requirePersonnelScope } from '@/lib/personnel-scope'
 import {
   getAgingReport,
   getAssetAvailabilityReport,
+  getAssetConditionReport,
+  getAssignedAssetsReport,
+  getDisposalReport,
   getQuarterlyIssuanceReport,
   type AgingReport,
   type AssetAvailabilityReport,
+  type AssetConditionReport,
+  type AssignedAssetsReport,
+  type DisposalReport,
   type QuarterlyIssuanceReport,
   type ReportPortal,
 } from '@/lib/reporting-queries'
@@ -42,4 +48,19 @@ export async function fetchQuarterlyIssuanceReport(opts: {
 export async function fetchAssetAvailabilityReport(): Promise<AssetAvailabilityReport> {
   await requirePersonnelScope()
   return getAssetAvailabilityReport()
+}
+
+export async function fetchAssetConditionReport(): Promise<AssetConditionReport> {
+  await requirePersonnelScope()
+  return getAssetConditionReport()
+}
+
+export async function fetchDisposalReport(): Promise<DisposalReport> {
+  await requirePersonnelScope()
+  return getDisposalReport()
+}
+
+export async function fetchAssignedAssetsReport(): Promise<AssignedAssetsReport> {
+  await requirePersonnelScope()
+  return getAssignedAssetsReport()
 }

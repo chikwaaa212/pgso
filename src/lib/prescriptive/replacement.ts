@@ -175,7 +175,7 @@ export function buildReplacementRecommendations(
       if (!disposalDocumentAssetIds.has(asset.id)) {
         out.push({
           id: `replacement:retired-docs:${asset.id}`,
-          group: 'replacement',
+          group: 'dispose',
           rule: 'RETIRED_DOCUMENTATION',
           title: `Verify disposal documents — ${label}`,
           subject: asset.description ?? asset.accountTitle ?? label,
@@ -213,7 +213,7 @@ export function buildReplacementRecommendations(
     if (condition === 'unserviceable') {
       out.push({
         id: `replacement:dispose:${asset.id}`,
-        group: 'replacement',
+        group: 'dispose',
         rule: 'DISPOSE_UNSERVICEABLE',
         title: `Disposal review — ${label}`,
         subject: asset.description ?? asset.accountTitle ?? label,

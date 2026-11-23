@@ -27,7 +27,9 @@ import {
   Hourglass,
   PackageSearch,
   ShieldCheck,
+  Trash2,
   TriangleAlert,
+  Users,
   Wallet,
   X,
 } from 'lucide-react'
@@ -55,11 +57,15 @@ import {
   REPORT_MODULES,
   agingBucketLabel,
   availabilityLabel,
+  percentage,
   type AvailabilityClass,
+  type ConditionClass,
 } from '@/lib/reporting'
 import {
   fetchAgingReport,
-  fetchAssetAvailabilityReport,
+  fetchAssetConditionReport,
+  fetchAssignedAssetsReport,
+  fetchDisposalReport,
   fetchQuarterlyIssuanceReport,
 } from '@/lib/reporting-actions'
 
@@ -67,7 +73,12 @@ import { ReportsContentSkeleton } from './ReportsSkeleton'
 import styles from './reports.module.css'
 
 type Portal = 'personnel' | 'super-admin'
-type ReportTab = 'aging' | 'quarterly' | 'availability'
+type ReportTab =
+  | 'aging'
+  | 'quarterly'
+  | 'disposal'
+  | 'assigned'
+  | 'condition'
 type AgingModuleFilter = 'all' | 'inspections' | 'requests' | 'repairs'
 type AgingBucketFilter = 'all' | '0-3' | '4-7' | '8-14' | '15+'
 
@@ -124,6 +135,19 @@ function availabilityTone(cls: AvailabilityClass): 'ok' | 'info' | 'bad' | 'warn
   if (cls === 'available') return 'ok'
   if (cls === 'in-use') return 'info'
   if (cls === 'unavailable') return 'bad'
+  return 'warn'
+}
+
+/** Map a condition bucket onto the donut's visual classes. */
+function conditionClassForDonut(cls: ConditionClass): AvailabilityClass {
+  if (cls === 'serviceable') return 'available'
+  if (cls === 'unserviceable') return 'unavailable'
+  return 'unspecified'
+}
+
+function conditionTone(cls: ConditionClass): 'ok' | 'bad' | 'warn' {
+  if (cls === 'serviceable') return 'ok'
+  if (cls === 'unserviceable') return 'bad'
   return 'warn'
 }
 
@@ -770,24 +794,52 @@ export function ReportsWorkspace({ portal }: { portal: Portal }) {
     { staleTime: 60_000, enabled: tab === 'quarterly' }
   )
 
-  const availability = useCachedAction(
+  const disposal = useCachedAction(
     buildQueryKey({
       module: portal,
-      resource: 'reports-availability',
+      resource: 'reports-disposal',
       page: 1,
       pageSize: PAGE_SIZE,
       filters: {},
       role,
     }),
-    () => fetchAssetAvailabilityReport(),
-    // Registry counts change as soon as an asset is assigned or stocked, so
-    // never serve a client-cached snapshot as fresh — paint it, then revalidate.
-    { staleTime: 0, refetchOnFocus: true, enabled: tab === 'availability' }
+    () => fetchDisposalReport(),
+    { staleTime: 60_000, enabled: tab === 'disposal' }
+  )
+
+  const assigned = useCachedAction(
+    buildQueryKey({
+      module: portal,
+      resource: 'reports-assigned',
+      page: 1,
+      pageSize: PAGE_SIZE,
+      filters: {},
+      role,
+    }),
+    () => fetchAssignedAssetsReport(),
+    // Custody counts change as soon as an asset is assigned, so never serve a
+    // client-cached snapshot as fresh — paint it, then revalidate.
+    { staleTime: 0, refetchOnFocus: true, enabled: tab === 'assigned' }
+  )
+
+  const condition = useCachedAction(
+    buildQueryKey({
+      module: portal,
+      resource: 'reports-condition',
+      page: 1,
+      pageSize: PAGE_SIZE,
+      filters: {},
+      role,
+    }),
+    () => fetchAssetConditionReport(),
+    { staleTime: 60_000, enabled: tab === 'condition' }
   )
 
   const age = aging.data
   const quarter = quarterly.data
-  const status = availability.data
+  const disposalData = disposal.data
+  const assignedData = assigned.data
+  const conditionData = condition.data
 
   const agingTotals = age?.summaries.reduce(
     (acc, s) => ({
@@ -812,8 +864,18 @@ export function ReportsWorkspace({ portal }: { portal: Portal }) {
       icon: <ChartColumn size={13} />,
     },
     {
-      key: 'availability' as const,
-      label: 'Asset availability',
+      key: 'disposal' as const,
+      label: 'Disposals',
+      icon: <Trash2 size={13} />,
+    },
+    {
+      key: 'assigned' as const,
+      label: 'Assigned assets',
+      icon: <Users size={13} />,
+    },
+    {
+      key: 'condition' as const,
+      label: 'Asset condition',
       icon: <ShieldCheck size={13} />,
     },
   ]
@@ -829,9 +891,9 @@ export function ReportsWorkspace({ portal }: { portal: Portal }) {
           )}
           <h1 className={styles.title}>Reports</h1>
           <p className={styles.subtitle}>
-            Delayed and aging transactions, quarterly supply issuance, and
-            asset availability &amp; status analytics — scoped to what you are
-            allowed to see.
+            Delayed and aging transactions, quarterly supply issuance, disposal
+            requests, asset custody counts, and asset condition analytics —
+            scoped to what you are allowed to see.
           </p>
         </div>
       </header>
@@ -1465,13 +1527,371 @@ export function ReportsWorkspace({ portal }: { portal: Portal }) {
         </>
       )}
 
-      {tab === 'availability' && (
+      {tab === 'disposal' && (
         <>
-          {!status ? (
-            availability.error ? (
-              <ErrorNote message={availability.error} />
+          {!disposalData ? (
+            disposal.error ? (
+              <ErrorNote message={disposal.error} />
             ) : (
-              <ReportsContentSkeleton tab="availability" />
+              <ReportsContentSkeleton tab="disposal" />
+            )
+          ) : (
+            <>
+              <div className={styles.kpis}>
+                <StatCard
+                  icon={<Trash2 size={16} />}
+                  label="Disposal requests"
+                  value={disposalData.total.toLocaleString('en-PH')}
+                  sub="Filed by employees and personnel"
+                />
+                <StatCard
+                  icon={<Clock3 size={16} />}
+                  label="Pending"
+                  value={disposalData.pending.toLocaleString('en-PH')}
+                  sub="Awaiting a decision"
+                  tone={disposalData.pending > 0 ? 'warn' : 'ok'}
+                />
+                <StatCard
+                  icon={<CircleCheck size={16} />}
+                  label="Disposed"
+                  value={disposalData.completed.toLocaleString('en-PH')}
+                  sub="Approved and retired"
+                  tone="ok"
+                />
+                <StatCard
+                  icon={<TriangleAlert size={16} />}
+                  label="Rejected"
+                  value={disposalData.rejected.toLocaleString('en-PH')}
+                  sub="Kept for further review"
+                  tone={disposalData.rejected > 0 ? 'bad' : 'ok'}
+                />
+              </div>
+
+              <div className={styles.panel}>
+                <div className={styles.panelHead}>
+                  <div>
+                    <h2 className={styles.panelTitle}>Disposal records</h2>
+                    <p className={styles.panelSub}>
+                      Every disposal request with the asset, requester and
+                      decision status.
+                    </p>
+                  </div>
+                  <span className={styles.panelChip}>
+                    {disposalData.total === 1
+                      ? '1 record'
+                      : `${disposalData.total} records`}
+                  </span>
+                </div>
+                {disposalData.rows.length === 0 ? (
+                  <div className={styles.emptyBox}>
+                    <PackageSearch size={20} aria-hidden="true" />
+                    <p>No disposal requests yet.</p>
+                  </div>
+                ) : (
+                  <div className={styles.tableWrap}>
+                    <table className={styles.table}>
+                      <thead>
+                        <tr>
+                          <th>Asset</th>
+                          <th>Property no.</th>
+                          <th>Requester</th>
+                          <th>Office</th>
+                          <th>Status</th>
+                          <th>Requested</th>
+                          <th>Resolved</th>
+                          <th>Reason</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {disposalData.rows.map((row) => (
+                          <tr key={row.id}>
+                            <td>
+                              <span
+                                className={styles.cellText}
+                                title={row.assetLabel}
+                              >
+                                {row.assetLabel}
+                              </span>
+                            </td>
+                            <td>
+                              <span className={`${styles.cellText} ${styles.mono}`}>
+                                {row.propertyNumber || '—'}
+                              </span>
+                            </td>
+                            <td>{row.employeeName}</td>
+                            <td>{row.office || '—'}</td>
+                            <td>
+                              <span
+                                className={styles.status}
+                                data-tone={statusTone(row.status)}
+                              >
+                                {humanize(row.status)}
+                              </span>
+                            </td>
+                            <td className={styles.nowrap}>
+                              {fmtDate(row.requestedAt)}
+                            </td>
+                            <td className={styles.nowrap}>
+                              {fmtDate(row.resolvedAt)}
+                            </td>
+                            <td>
+                              <span
+                                className={`${styles.cellText} ${styles.subject}`}
+                                title={row.reason || undefined}
+                              >
+                                {row.reason || '—'}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+        </>
+      )}
+
+      {tab === 'assigned' && (
+        <>
+          {!assignedData ? (
+            assigned.error ? (
+              <ErrorNote message={assigned.error} />
+            ) : (
+              <ReportsContentSkeleton tab="assigned" />
+            )
+          ) : (
+            <>
+              <div className={styles.kpis}>
+                <StatCard
+                  icon={<PackageSearch size={16} />}
+                  label="Assigned assets"
+                  value={assignedData.assignedAssets.toLocaleString('en-PH')}
+                  sub={`of ${assignedData.totalAssets.toLocaleString('en-PH')} registered assets`}
+                />
+                <StatCard
+                  icon={<Users size={16} />}
+                  label="Employees with custody"
+                  value={assignedData.assignedEmployees.toLocaleString('en-PH')}
+                  sub="Distinct assignees in the report"
+                />
+                <StatCard
+                  icon={<ClipboardList size={16} />}
+                  label="Units in custody"
+                  value={assignedData.assignedUnits.toLocaleString('en-PH')}
+                  sub={`${assignedData.totalUnits.toLocaleString('en-PH')} units in the registry`}
+                />
+                <StatCard
+                  icon={<Hourglass size={16} />}
+                  label="Unassigned assets"
+                  value={assignedData.unassignedAssets.toLocaleString('en-PH')}
+                  sub="No custodian on record"
+                />
+              </div>
+
+              <div className={styles.twoCol}>
+                <div className={styles.panel}>
+                  <div className={styles.panelHead}>
+                    <div>
+                      <h2 className={styles.panelTitle}>Custody by employee</h2>
+                      <p className={styles.panelSub}>
+                        How many assets and units each employee holds, with the
+                        recorded cost.
+                      </p>
+                    </div>
+                    <span className={styles.panelChip}>
+                      {assignedData.employees.length} employee
+                      {assignedData.employees.length === 1 ? '' : 's'}
+                    </span>
+                  </div>
+                  {assignedData.employees.length === 0 ? (
+                    <div className={styles.emptyBox}>
+                      <PackageSearch size={20} aria-hidden="true" />
+                      <p>No assets are assigned to an employee yet.</p>
+                    </div>
+                  ) : (
+                    <div className={styles.tableWrap}>
+                      <table className={styles.table}>
+                        <thead>
+                          <tr>
+                            <th>Employee</th>
+                            <th>Office</th>
+                            <th className={styles.num}>Assets</th>
+                            <th className={styles.num}>Units</th>
+                            <th className={styles.num}>Recorded cost</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {assignedData.employees.map((row) => (
+                            <tr key={row.employeeId}>
+                              <td>
+                                <span
+                                  className={styles.cellText}
+                                  title={row.employeeName}
+                                >
+                                  {row.employeeName}
+                                </span>
+                              </td>
+                              <td>{row.office || '—'}</td>
+                              <td className={styles.num}>{row.assets}</td>
+                              <td className={styles.num}>{row.units}</td>
+                              <td className={styles.num}>
+                                {formatPeso(row.recordedCost)}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+
+                <div className={styles.panel}>
+                  <div className={styles.panelHead}>
+                    <div>
+                      <h2 className={styles.panelTitle}>Condition snapshot</h2>
+                      <p className={styles.panelSub}>
+                        Condition of the assigned units. Serviceability is
+                        classified from the recorded value.
+                      </p>
+                    </div>
+                  </div>
+                  <ul className={styles.statusBanners}>
+                    {Array.from(
+                      assignedData.rows.reduce((map, row) => {
+                        const key = (row.condition || 'Unspecified').trim()
+                        map.set(key, (map.get(key) ?? 0) + 1)
+                        return map
+                      }, new Map<string, number>())
+                    )
+                      .sort((a, b) => b[1] - a[1])
+                      .map(([label, count]) => {
+                        const pct = percentage(count, assignedData.assignedAssets)
+                        return (
+                          <li
+                            key={label}
+                            className={styles.statusBanner}
+                            data-tone="info"
+                          >
+                            <span
+                              className={styles.statusBannerIcon}
+                              data-tone="info"
+                              aria-hidden="true"
+                            >
+                              <ClipboardList size={16} />
+                            </span>
+                            <div className={styles.statusBannerBody}>
+                              <span className={styles.statusBannerLabel}>
+                                {label}
+                              </span>
+                              <span className={styles.statusBannerMeta}>
+                                {count} asset{count === 1 ? '' : 's'} ·{' '}
+                                {pct}% of assigned
+                              </span>
+                              <span
+                                className={styles.shareBar}
+                                role="img"
+                                aria-label={`${label}: ${pct}% of assigned assets`}
+                              >
+                                <span
+                                  className={styles.shareFill}
+                                  data-tone="info"
+                                  style={{ width: `${pct}%` }}
+                                />
+                              </span>
+                            </div>
+                          </li>
+                        )
+                      })}
+                  </ul>
+                </div>
+              </div>
+
+              <div className={styles.panel}>
+                <div className={styles.panelHead}>
+                  <div>
+                    <h2 className={styles.panelTitle}>Assigned asset detail</h2>
+                    <p className={styles.panelSub}>
+                      Every asset currently signed out to an employee.
+                    </p>
+                  </div>
+                  <span className={styles.panelChip}>
+                    {assignedData.assignedAssets} asset
+                    {assignedData.assignedAssets === 1 ? '' : 's'}
+                  </span>
+                </div>
+                {assignedData.rows.length === 0 ? (
+                  <div className={styles.emptyBox}>
+                    <PackageSearch size={20} aria-hidden="true" />
+                    <p>No assigned assets to show.</p>
+                  </div>
+                ) : (
+                  <div className={styles.tableWrap}>
+                    <table className={styles.table}>
+                      <thead>
+                        <tr>
+                          <th>Asset</th>
+                          <th>Property no.</th>
+                          <th>Employee</th>
+                          <th>Office</th>
+                          <th>Condition</th>
+                          <th>Status</th>
+                          <th>Location</th>
+                          <th>Acquired</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {assignedData.rows.map((row) => (
+                          <tr key={row.id}>
+                            <td>
+                              <span
+                                className={styles.cellText}
+                                title={row.label}
+                              >
+                                {row.label}
+                              </span>
+                            </td>
+                            <td>
+                              <span className={`${styles.cellText} ${styles.mono}`}>
+                                {row.propertyNumber || '—'}
+                              </span>
+                            </td>
+                            <td>{row.employeeName}</td>
+                            <td>{row.office || '—'}</td>
+                            <td>{row.condition || '—'}</td>
+                            <td>
+                              <span
+                                className={styles.status}
+                                data-tone={statusTone(row.status)}
+                              >
+                                {humanize(row.status)}
+                              </span>
+                            </td>
+                            <td>{row.location || '—'}</td>
+                            <td className={styles.nowrap}>
+                              {fmtDate(row.dateAcquired)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+        </>
+      )}
+
+      {tab === 'condition' && (
+        <>
+          {!conditionData ? (
+            condition.error ? (
+              <ErrorNote message={condition.error} />
+            ) : (
+              <ReportsContentSkeleton tab="condition" />
             )
           ) : (
             <>
@@ -1479,29 +1899,29 @@ export function ReportsWorkspace({ portal }: { portal: Portal }) {
                 <StatCard
                   icon={<PackageSearch size={16} />}
                   label="Total assets"
-                  value={status.total.toLocaleString('en-PH')}
-                  sub={`${status.totalUnits.toLocaleString('en-PH')} units on hand`}
+                  value={conditionData.total.toLocaleString('en-PH')}
+                  sub="Registry rows with a recorded condition"
                 />
                 <StatCard
                   icon={<CircleCheck size={16} />}
-                  label="Available"
-                  value={status.available.toLocaleString('en-PH')}
-                  sub={`${status.availablePct}% ready to issue`}
+                  label="Serviceable"
+                  value={conditionData.serviceable.toLocaleString('en-PH')}
+                  sub={`${conditionData.serviceablePct}% of the registry`}
                   tone="ok"
                 />
                 <StatCard
-                  icon={<ClipboardList size={16} />}
-                  label="In use"
-                  value={status.inUse.toLocaleString('en-PH')}
-                  sub="Assigned to a custodian"
-                  tone={status.inUse > 0 ? 'warn' : 'ok'}
+                  icon={<TriangleAlert size={16} />}
+                  label="Unserviceable"
+                  value={conditionData.unserviceable.toLocaleString('en-PH')}
+                  sub="Damaged, broken, condemned or disposed"
+                  tone={conditionData.unserviceable > 0 ? 'bad' : 'ok'}
                 />
                 <StatCard
-                  icon={<TriangleAlert size={16} />}
-                  label="Unavailable"
-                  value={status.unavailable.toLocaleString('en-PH')}
-                  sub="Out of stock, maintenance, retired, or not recorded"
-                  tone={status.unavailable > 0 ? 'bad' : 'ok'}
+                  icon={<Hourglass size={16} />}
+                  label="Unspecified"
+                  value={conditionData.unspecified.toLocaleString('en-PH')}
+                  sub="No condition recorded"
+                  tone={conditionData.unspecified > 0 ? 'warn' : 'ok'}
                 />
               </div>
 
@@ -1510,22 +1930,28 @@ export function ReportsWorkspace({ portal }: { portal: Portal }) {
                   <div className={styles.panelHead}>
                     <div>
                       <h2 className={styles.panelTitle}>
-                        Status distribution
+                        Condition distribution
                       </h2>
                       <p className={styles.panelSub}>
                         Normalized values — case and spacing are ignored.
                       </p>
                     </div>
                   </div>
-                  {status.rows.length === 0 ? (
+                  {conditionData.rows.length === 0 ? (
                     <div className={styles.emptyBox}>
                       <PackageSearch size={20} aria-hidden="true" />
                       <p>No assets registered yet.</p>
                     </div>
                   ) : (
                     <AvailabilityDonut
-                      rows={status.rows}
-                      total={status.total}
+                      rows={conditionData.rows.map((row) => ({
+                        status: row.condition,
+                        label: row.label,
+                        items: row.count,
+                        pct: row.pct,
+                        cls: conditionClassForDonut(row.cls),
+                      }))}
+                      total={conditionData.total}
                     />
                   )}
                 </div>
@@ -1533,19 +1959,25 @@ export function ReportsWorkspace({ portal }: { portal: Portal }) {
                 <div className={styles.panel}>
                   <div className={styles.panelHead}>
                     <div>
-                      <h2 className={styles.panelTitle}>Status breakdown</h2>
+                      <h2 className={styles.panelTitle}>Condition breakdown</h2>
                       <p className={styles.panelSub}>
                         Distribution only — the registry stores the current
-                        status, so a historical trend is not available.
+                        condition, so a historical trend is not available.
                       </p>
                     </div>
                   </div>
                   <ul className={styles.statusBanners}>
-                    {status.rows.map((row) => {
-                      const tone = availabilityTone(row.cls)
+                    {conditionData.rows.map((row) => {
+                      const tone = conditionTone(row.cls)
+                      const clsLabel =
+                        row.cls === 'serviceable'
+                          ? 'Serviceable'
+                          : row.cls === 'unserviceable'
+                            ? 'Unserviceable'
+                            : 'Unspecified'
                       return (
                         <li
-                          key={row.status}
+                          key={row.condition}
                           className={styles.statusBanner}
                           data-tone={tone}
                         >
@@ -1554,26 +1986,25 @@ export function ReportsWorkspace({ portal }: { portal: Portal }) {
                             data-tone={tone}
                             aria-hidden="true"
                           >
-                            <AvailabilityIcon cls={row.cls} />
+                            <AvailabilityIcon cls={conditionClassForDonut(row.cls)} />
                           </span>
                           <div className={styles.statusBannerBody}>
                             <span className={styles.statusBannerLabel}>
-                              {row.label || availabilityLabel(row.cls)}
+                              {row.label || availabilityLabel(conditionClassForDonut(row.cls))}
                             </span>
                             <span className={styles.statusBannerMeta}>
                               <span className={styles.status} data-tone={tone}>
-                                {availabilityLabel(row.cls)}
+                                {clsLabel}
                               </span>
                               <span>
-                                {row.items} item{row.items === 1 ? '' : 's'} ·{' '}
-                                {row.units.toLocaleString('en-PH')} unit
-                                {row.units === 1 ? '' : 's'}
+                                {row.count} asset{row.count === 1 ? '' : 's'} ·{' '}
+                                {row.pct}%
                               </span>
                             </span>
                             <span
                               className={styles.shareBar}
                               role="img"
-                              aria-label={`${row.label || availabilityLabel(row.cls)}: ${row.pct}% of items`}
+                              aria-label={`${row.label}: ${row.pct}% of assets`}
                             >
                               <span
                                 className={styles.shareFill}
@@ -1587,6 +2018,62 @@ export function ReportsWorkspace({ portal }: { portal: Portal }) {
                     })}
                   </ul>
                 </div>
+              </div>
+
+              <div className={styles.panel}>
+                <div className={styles.panelHead}>
+                  <div>
+                    <h2 className={styles.panelTitle}>Condition detail</h2>
+                    <p className={styles.panelSub}>
+                      Every recorded condition value, its serviceability
+                      classification, and its share of the registry.
+                    </p>
+                  </div>
+                  <span className={styles.panelChip}>
+                    {conditionData.rows.length} condition
+                    {conditionData.rows.length === 1 ? '' : 's'}
+                  </span>
+                </div>
+                {conditionData.rows.length === 0 ? (
+                  <div className={styles.emptyBox}>
+                    <PackageSearch size={20} aria-hidden="true" />
+                    <p>No assets registered yet.</p>
+                  </div>
+                ) : (
+                  <div className={styles.tableWrap}>
+                    <table className={styles.table}>
+                      <thead>
+                        <tr>
+                          <th>Condition</th>
+                          <th>Classification</th>
+                          <th className={styles.num}>Assets</th>
+                          <th className={styles.num}>Share</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {conditionData.rows.map((row) => {
+                          const tone = conditionTone(row.cls)
+                          return (
+                            <tr key={row.condition}>
+                              <td>{row.label || '—'}</td>
+                              <td>
+                                <span className={styles.status} data-tone={tone}>
+                                  {row.cls === 'serviceable'
+                                    ? 'Serviceable'
+                                    : row.cls === 'unserviceable'
+                                      ? 'Unserviceable'
+                                      : 'Unspecified'}
+                                </span>
+                              </td>
+                              <td className={styles.num}>{row.count}</td>
+                              <td className={styles.num}>{row.pct}%</td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
             </>
           )}

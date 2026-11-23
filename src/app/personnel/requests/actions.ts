@@ -683,7 +683,6 @@ export async function createRequest(
   const quantity = Math.floor(Number(input.quantity) || 0)
   const transferTo = input.transferTo?.trim() ?? ''
   const newLocation = input.newLocation?.trim() ?? ''
-  const itemNeeded = input.itemNeeded?.trim() ?? ''
   const reason = input.reason?.trim() ?? ''
 
   if (!REQUEST_TYPES.includes(requestType as RequestType))
@@ -763,6 +762,9 @@ export async function createRequest(
     if (!asset && !stock) return { error: 'Selected item no longer exists.' }
     pickedKind = asset ? 'asset' : 'stock'
     stockOnHand = stock?.quantity ?? 0
+    if (requestType === 'disposal') {
+      if (!asset) return { error: 'Select a registered asset to dispose.' }
+    }
     if (requestType === 'transfer') {
       if (asset) {
         // Previous holder before this transfer: assigned employee → end_user.
@@ -923,6 +925,10 @@ export async function createRequest(
     if (!assetId || !pickedKind)
       return { error: 'Select the item needing repair.' }
     description = `Repair needed\n${reason}`
+  } else if (requestType === 'disposal') {
+    if (!assetId || pickedKind !== 'asset')
+      return { error: 'Select a registered asset to dispose.' }
+    description = `Disposal requested\n${reason}`
   } else {
     const summary = validLines
       .map((l) => (l.quantity > 1 ? `${l.description} (Qty: ${l.quantity})` : l.description))
@@ -1253,6 +1259,20 @@ export async function setRequestStatus(
             })
           }
         }
+      } else if (current.request_type === 'disposal') {
+        // Disposal retires the asset: it leaves the custodian's hands and is
+        // marked retired (the canonical registry status for an asset that is
+        // no longer issuable). The request row stays as the audit trail for
+        // the disposal report.
+        await prisma.asset
+          .update({
+            where: { id: current.asset_id },
+            data: {
+              status: 'retired',
+              assigned_to: null,
+            },
+          })
+          .catch(() => null)
       } else if (current.request_type === 'new_assignment') {
         const employee = await prisma.profile.findUnique({
           where: { id: current.employee_id },

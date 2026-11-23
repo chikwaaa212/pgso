@@ -191,8 +191,9 @@ export default function EmployeeRequestsPage() {
           </span>
           <h1 className={shell.title}>My Requests</h1>
           <p className={shell.subtitle}>
-            Transfer or report an item for repair, or request a new assignment.
-            PGSO personnel review every request and update its status here.
+            Transfer or report an item for repair, request disposal of a
+            serviceable-out item, or request a new assignment. PGSO personnel
+            review every request and update its status here.
           </p>
         </div>
         <div className={shell.headActions}>

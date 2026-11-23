@@ -12,6 +12,7 @@ import {
   PackagePlus,
   ShieldCheck,
   Sparkles,
+  Trash2,
   Wrench,
 } from 'lucide-react'
 import { useCachedAction } from '@/hooks/use-cached-action'
@@ -73,6 +74,10 @@ const GROUP_META: Record<
     label: 'Repair or replace',
     blurb: 'Assets that are broken, costly to repair, or missing paperwork.',
   },
+  dispose: {
+    label: 'Disposal review',
+    blurb: 'Unserviceable or retired assets ready for condemnation.',
+  },
   idle: {
     label: 'Unused assets',
     blurb: 'Items sitting idle that another office may need.',
@@ -85,6 +90,7 @@ const GROUP_META: Record<
 
 const GROUP_ORDER: RecommendationGroupKey[] = [
   'replenishment',
+  'dispose',
   'replacement',
   'idle',
   'consumption',
@@ -94,6 +100,7 @@ const GROUP_ORDER: RecommendationGroupKey[] = [
 const LINK_LABEL: Record<RecommendationGroupKey, string> = {
   replenishment: 'Open inventory',
   replacement: 'Open asset',
+  dispose: 'Open asset',
   idle: 'Open asset',
   consumption: 'Open buying plan',
 }
@@ -118,6 +125,7 @@ function GroupIcon({
 }) {
   if (group === 'all') return <Sparkles size={size} aria-hidden="true" />
   if (group === 'replenishment') return <PackagePlus size={size} aria-hidden="true" />
+  if (group === 'dispose') return <Trash2 size={size} aria-hidden="true" />
   if (group === 'replacement') return <Wrench size={size} aria-hidden="true" />
   if (group === 'idle') return <Boxes size={size} aria-hidden="true" />
   return <ChartColumn size={size} aria-hidden="true" />
@@ -385,7 +393,7 @@ export function RecommendationsWorkspace({ portal }: { portal: Portal }) {
   const summary =
     counts.total === 0
       ? 'I watch stock levels, asset condition and past usage. When something crosses a threshold, it will show up here.'
-      : `I found ${counts.total} in total: ${counts.replenishment} for restocking, ${counts.replacement} for repair or disposal, ${counts.idle} for unused assets and ${counts.consumption} for planning purchases. Every suggestion is already expanded below — click a tab at the bottom and I'll add a focused answer to the conversation.`
+      : `I found ${counts.total} in total: ${counts.replenishment} for restocking, ${counts.dispose} for disposal review, ${counts.replacement} for repair or replacement, ${counts.idle} for unused assets and ${counts.consumption} for planning purchases. Every suggestion is already expanded below — click a tab at the bottom and I'll add a focused answer to the conversation.`
 
   return (
     <section className={styles.page}>

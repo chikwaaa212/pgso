@@ -1114,14 +1114,20 @@ export async function createMyRequest(
   // not in anyone's hand, so they cannot be transferred or repaired away.
   // (The form only offers held items, but the assetId can be spoofed, so the
   // ownership check must live here, not just in the UI.)
-  if (input.requestType === 'transfer' || input.requestType === 'repair') {
+  if (
+    input.requestType === 'transfer' ||
+    input.requestType === 'repair' ||
+    input.requestType === 'disposal'
+  ) {
     const pickedId = input.assetId?.trim() || null
     if (!pickedId) {
       return {
         error:
           input.requestType === 'transfer'
             ? 'Select one of your assigned items to transfer.'
-            : 'Select one of your assigned items to repair.',
+            : input.requestType === 'repair'
+              ? 'Select one of your assigned items to repair.'
+              : 'Select one of your assigned items to dispose.',
       }
     }
     try {
@@ -1134,7 +1140,9 @@ export async function createMyRequest(
           error:
             input.requestType === 'transfer'
               ? 'You can only transfer items currently assigned to you.'
-              : 'You can only request repair for items currently assigned to you.',
+              : input.requestType === 'repair'
+                ? 'You can only request repair for items currently assigned to you.'
+                : 'You can only request disposal for items currently assigned to you.',
         }
       }
     } catch (e) {

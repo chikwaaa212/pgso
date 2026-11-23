@@ -105,6 +105,7 @@ const TYPE_FILTERS = [
   { value: "transfer", label: "Transfer" },
   { value: "new_assignment", label: "New Assignment" },
   { value: "repair", label: "Repair" },
+  { value: "disposal", label: "Disposal" },
   { value: "stock_replenishment", label: "Stock Replenishment" },
 ] as const;
 
@@ -859,7 +860,9 @@ function PersonnelRequestsContent() {
                 transferQtyNum <= transferStockMax))
           : requestType === "repair"
             ? assetId !== ""
-            : newAssignmentValid));
+            : requestType === "disposal"
+              ? assetId !== "" && pickedAsset?.kind === "asset"
+              : newAssignmentValid));
 
   return (
     <section className={req.section}>
@@ -1193,9 +1196,10 @@ function PersonnelRequestsContent() {
           <DialogHeader>
             <DialogTitle>New request</DialogTitle>
             <DialogDescription>
-              File a transfer, new-asset assignment, or repair request for an
-              employee — or a stock replenishment request for the admin to
-              restock inventory. Repair approvals create a repair ticket.
+              File a transfer, new-asset assignment, repair, or disposal
+              request for an employee — or a stock replenishment request for
+              the admin to restock inventory. Repair approvals create a repair
+              ticket; disposal approvals retire the asset.
             </DialogDescription>
           </DialogHeader>
 
@@ -1270,6 +1274,9 @@ function PersonnelRequestsContent() {
                       <SelectItem value="repair">
                         Repair — report an asset for repair
                       </SelectItem>
+                      <SelectItem value="disposal">
+                        Disposal — retire an unserviceable or obsolete asset
+                      </SelectItem>
                       <SelectItem value="stock_replenishment">
                         Stock replenishment — request add stock / restock from
                         admin
@@ -1318,7 +1325,7 @@ function PersonnelRequestsContent() {
                       <span className={req.itemTabText}>
                         <span className={req.itemTabTitle}>Asset</span>
                         <span className={req.itemTabHint}>
-                          Registered assets — transfer, assign, or repair
+                          Registered assets — transfer, assign, repair, or dispose
                         </span>
                       </span>
                     </button>
@@ -1684,9 +1691,11 @@ function PersonnelRequestsContent() {
                   <Label htmlFor="req-reason">
                     {requestType === "repair"
                       ? "Issue description"
-                      : requestType === "stock_replenishment"
-                        ? "Justification"
-                        : "Reason"}{" "}
+                      : requestType === "disposal"
+                        ? "Disposal justification"
+                        : requestType === "stock_replenishment"
+                          ? "Justification"
+                          : "Reason"}{" "}
                     <span className="text-red-600">*</span>
                   </Label>
                   <textarea
@@ -1696,9 +1705,11 @@ function PersonnelRequestsContent() {
                     placeholder={
                       requestType === "repair"
                         ? "Describe the damage or issue — e.g. Screen flickering, won't power on…"
-                        : requestType === "stock_replenishment"
-                          ? "Why is restocking needed? e.g. Only 5 reams left, classes start next week…"
-                          : "Why is this request needed?"
+                        : requestType === "disposal"
+                          ? "Why should this asset be disposed? — e.g. Beyond repair, obsolete model, condemned by inspection…"
+                          : requestType === "stock_replenishment"
+                            ? "Why is restocking needed? e.g. Only 5 reams left, classes start next week…"
+                            : "Why is this request needed?"
                     }
                     rows={3}
                     className="border-input placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-ring/50 flex w-full rounded-md border bg-transparent px-3 py-2 text-sm shadow-xs outline-none focus-visible:ring-[3px]"

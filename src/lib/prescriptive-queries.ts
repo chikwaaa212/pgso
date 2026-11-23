@@ -372,7 +372,7 @@ export async function getPrescriptiveOverview(
         Date.now() - PRESCRIPTIVE_CONFIG.repairWindowDays * 2 * 86_400_000
       )
       const repairOwner = scope.isSuperAdmin ? {} : { created_by: scope.userId }
-      const [repairRows, disposalDocs, profiles] = await Promise.all([
+      const [repairRows, disposalDocs, disposedRequests, profiles] = await Promise.all([
         assetIds.length === 0
           ? Promise.resolve([])
           : prisma.repair
@@ -406,6 +406,20 @@ export async function getPrescriptiveOverview(
                 select: { related_asset_id: true },
               })
               .catch(() => []),
+        // A completed disposal request is itself the paper trail for the
+        // disposal — don't ask the reader to attach a second document.
+        assetIds.length === 0
+          ? Promise.resolve([])
+          : prisma.request
+              .findMany({
+                where: {
+                  asset_id: { in: assetIds },
+                  request_type: 'disposal',
+                  status: { in: ['approved', 'completed'] },
+                },
+                select: { asset_id: true },
+              })
+              .catch(() => []),
         employeeIds.length === 0
           ? Promise.resolve([])
           : prisma.profile
@@ -428,9 +442,10 @@ export async function getPrescriptiveOverview(
       }))
       const repairsByAsset = summarizeRepairs(repairs)
       const documented = new Set(
-        disposalDocs
-          .map((d) => d.related_asset_id)
-          .filter((v): v is string => Boolean(v))
+        [
+          ...disposalDocs.map((d) => d.related_asset_id),
+          ...disposedRequests.map((d) => d.asset_id),
+        ].filter((v): v is string => Boolean(v))
       )
 
       // ── Personnel ownership scope ─────────────────────────────────────
@@ -522,11 +537,18 @@ export async function getPrescriptiveOverview(
         base
       )
 
-      const replacementRows = buildReplacementRecommendations(
+      // `buildReplacementRecommendations` emits both disposal-review rows and
+      // replacement rows; split them so the workspace gets a dedicated
+      // Disposal tab instead of burying condemnation advice under replacement.
+      const recommendationRows = buildReplacementRecommendations(
         assets,
         repairsByAsset,
         documented,
         base
+      )
+      const disposalRows = recommendationRows.filter((r) => r.group === 'dispose')
+      const replacementRows = recommendationRows.filter(
+        (r) => r.group === 'replacement'
       )
       const idleRows = buildIdleRecommendations(assets, requests, base)
       const consumptionRows = consumptionRecommendations(
@@ -537,6 +559,7 @@ export async function getPrescriptiveOverview(
       const maxRows = PRESCRIPTIVE_CONFIG.maxRowsPerGroup
       const allRows = [
         ...replenishment.rows.map((r) => r.recommendation),
+        ...disposalRows,
         ...replacementRows,
         ...idleRows,
         ...consumptionRows,
@@ -547,6 +570,7 @@ export async function getPrescriptiveOverview(
         medium: allRows.filter((r) => r.priority === 'medium').length,
         low: allRows.filter((r) => r.priority === 'low').length,
         replenishment: replenishment.rows.length,
+        dispose: disposalRows.length,
         replacement: replacementRows.length,
         idle: idleRows.length,
         consumption: consumptionRows.length,
@@ -562,9 +586,17 @@ export async function getPrescriptiveOverview(
           `${replenishment.matchedHistory} item(s) matched 3-year issuance history · ${replenishment.withoutHistory} used a labelled threshold fallback.`
         ),
         group(
+          'dispose',
+          'Disposal review',
+          'Unserviceable assets ready for condemnation, and retired assets missing disposal paperwork. Advisory only — no status is changed.',
+          `${base}/assets`,
+          disposalRows,
+          maxRows
+        ),
+        group(
           'replacement',
-          'Replacement & disposal',
-          'Assets that are unserviceable, repair-heavy, or retired without disposal paperwork. Advisory only — no status is changed.',
+          'Replacement',
+          'Assets that are repair-heavy or unserviceable with an open repair ticket. Compare a repair quote with replacement cost.',
           `${base}/assets`,
           replacementRows,
           maxRows

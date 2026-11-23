@@ -11,6 +11,7 @@ export type Priority = 'high' | 'medium' | 'low'
 
 export type RecommendationGroupKey =
   | 'replenishment'
+  | 'dispose'
   | 'replacement'
   | 'idle'
   | 'consumption'
@@ -55,6 +56,7 @@ export interface PrescriptiveCounts {
   medium: number
   low: number
   replenishment: number
+  dispose: number
   replacement: number
   idle: number
   consumption: number
@@ -72,6 +74,7 @@ export const EMPTY_COUNTS: PrescriptiveCounts = {
   medium: 0,
   low: 0,
   replenishment: 0,
+  dispose: 0,
   replacement: 0,
   idle: 0,
   consumption: 0,

@@ -17,7 +17,7 @@ import { requestTypeLabel } from "@/app/personnel/requests/request-types";
 import type { RequestRow } from "@/app/personnel/requests/actions";
 import { createMyRequest, getMyRequestOptions } from "../actions";
 
-const TYPES = ["transfer", "new_assignment", "repair"] as const;
+const TYPES = ["transfer", "new_assignment", "repair", "disposal"] as const;
 
 const inputStyle: React.CSSProperties = {
   width: "100%",
@@ -70,9 +70,10 @@ export function NewRequestForm({
   const router = useRouter();
   const { toast } = useToast();
 
-  const needsAsset = type === "transfer" || type === "repair";
+  const needsAsset = type === "transfer" || type === "repair" || type === "disposal";
   const isTransfer = type === "transfer";
   const isRepair = type === "repair";
+  const isDisposal = type === "disposal";
   // Server-side item search (small PAGE_SIZE window per source, never the
   // 500-row slice): typing filters the catalog on the server. Held assets
   // always come along, so transfer/repair keep working under any search.
@@ -109,7 +110,7 @@ export function NewRequestForm({
   // only assets currently assigned to this employee can be picked — never
   // other people's items or unassigned PGSO stock.
   const heldAssets = baseAssets.filter((a) => a.kind === "asset" && a.heldByMe);
-  const heldOnly = isTransfer || isRepair;
+  const heldOnly = isTransfer || isRepair || isDisposal;
   const itemOptions = heldOnly ? heldAssets : baseAssets;
   // Every delivered item is an asset; "stock" is just its quantity on hand —
   // transfer / assignment / repair can all pick either kind.
@@ -133,7 +134,9 @@ export function NewRequestForm({
               ? "Select one of your assigned items to transfer."
               : isRepair
                 ? "Select one of your assigned items to repair."
-                : "Select an item for this request type."
+                : isDisposal
+                  ? "Select one of your assigned items to dispose."
+                  : "Select an item for this request type."
           );
           return;
         }
@@ -141,7 +144,9 @@ export function NewRequestForm({
           setError(
             isTransfer
               ? "You can only transfer items currently assigned to you."
-              : "You can only request repair for items currently assigned to you."
+              : isRepair
+                ? "You can only request repair for items currently assigned to you."
+                : "You can only request disposal for items currently assigned to you."
           );
           return;
         }
@@ -297,7 +302,9 @@ export function NewRequestForm({
             <span style={{ fontWeight: 400, fontSize: "0.6875rem", color: "var(--color-navy-500)" }}>
               {isTransfer
                 ? "Only assets currently in your hand can be transferred."
-                : "Only assets currently in your hand can be reported for repair."}
+                : isRepair
+                  ? "Only assets currently in your hand can be reported for repair."
+                  : "Only assets currently in your hand can be requested for disposal."}
             </span>
           )}
         </span>
@@ -362,7 +369,19 @@ export function NewRequestForm({
       </div>
       <label style={labelStyle}>
         Reason *
-        <textarea name="reason" required rows={3} placeholder="Why do you need this?" style={inputStyle} />
+        <textarea
+          name="reason"
+          required
+          rows={3}
+          placeholder={
+            isDisposal
+              ? "Why should this item be disposed? e.g. beyond repair, obsolete, condemned…"
+              : isRepair
+                ? "What is wrong with the item? e.g. screen flickering, won't power on…"
+                : "Why do you need this?"
+          }
+          style={inputStyle}
+        />
       </label>
       {error && <p role="alert" style={{ fontSize: "0.8125rem", color: "#b91c1c" }}>{error}</p>}
       <div>
