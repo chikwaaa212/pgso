@@ -406,31 +406,6 @@
   color: var(--color-navy-600);
 }
 
-.pastePanel {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-.textarea {
-  width: 100%;
-  min-height: 5.5rem;
-  resize: vertical;
-  border: 1px solid var(--color-navy-200);
-  border-radius: 0.5rem;
-  padding: 0.625rem 0.75rem;
-  font-family: var(--font-mono), ui-monospace, monospace;
-  font-size: 0.75rem;
-  line-height: 1.5;
-  color: var(--color-navy-900);
-  background: var(--color-white);
-}
-
-.textarea:focus-visible {
-  outline: 2px solid var(--color-yellow-500);
-  outline-offset: 1px;
-}
-
 .recent {
   display: flex;
   flex-direction: column;

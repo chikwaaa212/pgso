@@ -9,7 +9,6 @@ import {
   ArrowUpRight,
   Camera,
   ClipboardList,
-  ClipboardPaste,
   Copy,
   FileText,
   History,
@@ -234,10 +233,14 @@ export function QrScanner({
   center?: boolean;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const rafRef = useRef<number>(0);
+  const timerRef = useRef<number>(0);
+  // True only while a camera session is live, so a decode pass queued right
+  // before Stop does not restart the loop.
+  const scanningRef = useRef(false);
 
   const [scanning, setScanning] = useState(false);
   const [starting, setStarting] = useState(false);
@@ -246,8 +249,6 @@ export function QrScanner({
   const [notice, setNotice] = useState("");
   const [result, setResult] = useState<ScanResult | null>(null);
   const [recent, setRecent] = useState<RecentScan[]>([]);
-  const [pasteOpen, setPasteOpen] = useState(false);
-  const [pasteText, setPasteText] = useState("");
 
   const pathname = usePathname();
   const portal: ScanPortal = pathname?.startsWith("/super-admin")
@@ -257,7 +258,9 @@ export function QrScanner({
       : "public";
 
   const stopCamera = useCallback(() => {
+    scanningRef.current = false;
     cancelAnimationFrame(rafRef.current);
+    window.clearTimeout(timerRef.current);
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
     if (videoRef.current) videoRef.current.srcObject = null;
@@ -329,13 +332,21 @@ export function QrScanner({
 
   const tick = useCallback(
     function frame() {
+      if (!scanningRef.current) return;
       const video = videoRef.current;
-      const canvas = canvasRef.current;
-      if (!video || !canvas || video.readyState !== video.HAVE_ENOUGH_DATA) {
+      if (
+        !video ||
+        video.readyState < video.HAVE_CURRENT_DATA ||
+        video.videoWidth === 0 ||
+        video.videoHeight === 0
+      ) {
         rafRef.current = requestAnimationFrame(frame);
         return;
       }
-      const scale = Math.min(1, 720 / (video.videoWidth || 720));
+      // Offscreen canvas — the decoder never needs to be in the DOM.
+      if (!canvasRef.current) canvasRef.current = document.createElement("canvas");
+      const canvas = canvasRef.current;
+      const scale = Math.min(1, 720 / video.videoWidth);
       canvas.width = Math.max(1, Math.floor(video.videoWidth * scale));
       canvas.height = Math.max(1, Math.floor(video.videoHeight * scale));
       const ctx = canvas.getContext("2d", { willReadFrequently: true });
@@ -351,7 +362,11 @@ export function QrScanner({
           return;
         }
       }
-      rafRef.current = requestAnimationFrame(frame);
+      // jsQR is heavy; decode about 8 times a second instead of on every frame
+      // so the preview stays smooth and the tab stays responsive.
+      timerRef.current = window.setTimeout(() => {
+        if (scanningRef.current) rafRef.current = requestAnimationFrame(frame);
+      }, 120);
     },
     [handleDecoded, stopCamera]
   );
@@ -374,14 +389,22 @@ export function QrScanner({
         },
         audio: false,
       });
-      streamRef.current = stream;
       const video = videoRef.current;
-      if (video) {
-        video.srcObject = stream;
-        await video.play();
+      if (!video) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
       }
+      streamRef.current = stream;
+      video.srcObject = stream;
+      // Some browsers skip frame rendering for a `display: none` video, so
+      // reveal it before play() and start decoding only after it can paint.
+      video.style.display = "block";
       setScanning(true);
-      rafRef.current = requestAnimationFrame(tick);
+      scanningRef.current = true;
+      await video.play();
+      timerRef.current = window.setTimeout(() => {
+        if (scanningRef.current) rafRef.current = requestAnimationFrame(tick);
+      }, 150);
     } catch {
       stopCamera();
       setCamError(
@@ -448,8 +471,6 @@ export function QrScanner({
     setResult(null);
     setNotice("");
     setCamError("");
-    setPasteOpen(false);
-    setPasteText("");
   }
 
   const sectionClass = [styles?.section, s.section].filter(Boolean).join(" ");
@@ -509,8 +530,8 @@ export function QrScanner({
                   </span>
                   <p className={s.idleTitle}>Camera is off</p>
                   <p className={s.idleText}>
-                    Start the camera for live scanning, upload a photo, or paste a
-                    QR payload manually.
+                    Start the camera for live scanning, or upload a photo of the
+                    QR code.
                   </p>
                 </div>
               ) : (
@@ -557,15 +578,6 @@ export function QrScanner({
                 <Upload size={14} aria-hidden="true" />
                 Upload image
               </button>
-              <button
-                type="button"
-                className={s.actionSecondary}
-                onClick={() => setPasteOpen((v) => !v)}
-                aria-expanded={pasteOpen}
-              >
-                <ClipboardPaste size={14} aria-hidden="true" />
-                {pasteOpen ? "Hide paste box" : "Paste code"}
-              </button>
               {result ? (
                 <button type="button" className={s.actionSecondary} onClick={scanAnother}>
                   <RotateCcw size={14} aria-hidden="true" />
@@ -586,40 +598,6 @@ export function QrScanner({
                 event.target.value = "";
               }}
             />
-
-            {pasteOpen ? (
-              <div className={s.pastePanel}>
-                <label className={s.fieldLabel} htmlFor="qr-paste">
-                  Paste a QR payload
-                </label>
-                <textarea
-                  id="qr-paste"
-                  className={s.textarea}
-                  value={pasteText}
-                  onChange={(event) => setPasteText(event.target.value)}
-                  placeholder={'Paste the QR text here, e.g. {"kind":"PGSO-REQUEST",…}'}
-                  spellCheck={false}
-                />
-                <div className={s.controls}>
-                  <button
-                    type="button"
-                    className={s.actionPrimary}
-                    disabled={!pasteText.trim() || reading}
-                    onClick={() => handleDecoded(pasteText, "QR decoded from pasted data.")}
-                  >
-                    Decode pasted code
-                  </button>
-                  <button
-                    type="button"
-                    className={s.actionSecondary}
-                    onClick={() => setPasteText("")}
-                    disabled={!pasteText}
-                  >
-                    Clear text
-                  </button>
-                </div>
-              </div>
-            ) : null}
 
             {camError ? (
               <p className={s.alert} role="alert">
