@@ -58,6 +58,7 @@ export async function getScannedAssetOption(
           unit: true,
           assigned_to: true,
           end_user: true,
+          condition: true,
         },
       })
       .catch(() => null);
@@ -97,6 +98,7 @@ export async function getScannedAssetOption(
               status: asset.status,
               quantity: asset.quantity,
               assigned_to: asset.assigned_to,
+              condition: asset.condition,
             }),
           },
           assignedToId: asset.assigned_to ?? null,

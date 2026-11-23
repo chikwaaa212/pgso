@@ -34,6 +34,7 @@ import { CLIENT_CACHE_KEYS, bustClientCache } from "@/lib/client-cache";
 import { resourcePrefix } from "@/lib/query-keys";
 import { DatePicker } from "@/components/ui/date-picker";
 import { cn } from "@/lib/utils";
+import { classifyCondition } from "@/lib/reporting";
 
 const CONDITION_OPTIONS = ["serviceable", "unserviceable"];
 const STATUS_OPTIONS = ["available", "in use", "maintenance", "retired"];
@@ -106,16 +107,24 @@ function OptionSelect({  name,
   placeholder,
   options,
   defaultValue,
+  onValueChange,
 }: {
   name: string;
   placeholder: string;
   options: string[];
   defaultValue?: string;
+  onValueChange?: (value: string) => void;
 }) {
   const [value, setValue] = useState<string | undefined>(defaultValue);
   return (
     <>
-      <Select value={value} onValueChange={setValue}>
+      <Select
+        value={value}
+        onValueChange={(next) => {
+          setValue(next);
+          onValueChange?.(next);
+        }}
+      >
         <SelectTrigger className={inputCls}>
           <SelectValue placeholder={placeholder} />
         </SelectTrigger>
@@ -160,6 +169,14 @@ export function buildOptimisticAssetRow(formData: FormData): UnifiedAssetRow {
     return Number.isNaN(n) ? null : Math.trunc(n);
   };
   const tempId = `optimistic-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  // Mirror the server rule so the temp row never shows an unserviceable item
+  // as Available while the create request is in flight.
+  const condition = get("condition") ?? "serviceable";
+  const status =
+    classifyCondition(condition) === "unserviceable" &&
+    (get("status") ?? "available").toLowerCase() === "available"
+      ? "maintenance"
+      : get("status") ?? "available";
   return {
     id: tempId,
     source: "asset",
@@ -176,7 +193,7 @@ export function buildOptimisticAssetRow(formData: FormData): UnifiedAssetRow {
     location: get("location"),
     total_cost: get("total_cost") != null ? Number(get("total_cost")) : null,
     remarks: get("remarks"),
-    condition: get("condition") ?? "serviceable",
+    condition,
     unit_cost: get("unit_cost") != null ? Number(get("unit_cost")) : null,
     end_user: get("end_user"),
     brand: get("brand"),
@@ -188,7 +205,7 @@ export function buildOptimisticAssetRow(formData: FormData): UnifiedAssetRow {
     color: get("color"),
     plate_number: get("plate_number"),
     fund: get("fund"),
-    status: get("status") ?? "available",
+    status,
     dv_tracking_number: get("dv_tracking_number"),
     supplier_payee: get("supplier_payee"),
     account_name_charge: get("account_name_charge"),
@@ -236,6 +253,10 @@ export function AddAssetDialog({
   const [unit, setUnit] = useState<string | undefined>(undefined);
   const [dateAcquired, setDateAcquired] = useState<Date | undefined>(undefined);
   const [dateReceived, setDateReceived] = useState<Date | undefined>(undefined);
+  // Live condition drives the Status choices: an unserviceable item can never
+  // be created as Available.
+  const [condition, setCondition] = useState("serviceable");
+  const unserviceable = classifyCondition(condition) === "unserviceable";
   // Only the latest request may write the code (fast open/close never leaves
   // a stale preview behind).
   const codeRequestRef = useRef(0);
@@ -302,6 +323,7 @@ export function AddAssetDialog({
       setUnit(undefined);
       setDateAcquired(undefined);
       setDateReceived(undefined);
+      setCondition("serviceable");
       setError("");
     }
   }
@@ -333,6 +355,7 @@ export function AddAssetDialog({
         setUnit(undefined);
         setDateAcquired(undefined);
         setDateReceived(undefined);
+        setCondition("serviceable");
         setOpen(false);
         onMutationEvent?.({
           phase: "success",
@@ -492,10 +515,26 @@ export function AddAssetDialog({
                 )}
               </Field>
               <Field label="CONDITION">
-                <OptionSelect name="condition" placeholder="Select condition" options={CONDITION_OPTIONS} defaultValue="serviceable" />
+                <OptionSelect
+                  name="condition"
+                  placeholder="Select condition"
+                  options={CONDITION_OPTIONS}
+                  defaultValue="serviceable"
+                  onValueChange={setCondition}
+                />
               </Field>
               <Field label="STATUS">
-                <OptionSelect name="status" placeholder="Select status" options={STATUS_OPTIONS} defaultValue="available" />
+                <OptionSelect
+                  key={unserviceable ? "status-unserviceable" : "status-serviceable"}
+                  name="status"
+                  placeholder="Select status"
+                  options={
+                    unserviceable
+                      ? STATUS_OPTIONS.filter((o) => o !== "available")
+                      : STATUS_OPTIONS
+                  }
+                  defaultValue={unserviceable ? "maintenance" : "available"}
+                />
               </Field>
               <div className="grid gap-1.5 sm:col-span-2">
                 <Field label="DESCRIPTION">

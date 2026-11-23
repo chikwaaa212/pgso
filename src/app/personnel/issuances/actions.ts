@@ -12,6 +12,7 @@ import {
   type AccountabilityDocType,
 } from '@/lib/issuance-rules'
 import { assetOptionDisabledReason } from '@/lib/asset-option'
+import { classifyCondition } from '@/lib/reporting'
 
 // ─── Raw data layer ──────────────────────────────────────────────────────────
 // NOTE: uses $queryRaw/$executeRaw instead of prisma.issuanceRecord so this
@@ -259,23 +260,26 @@ function assetDisabledReason(a: {
   status?: string | null
   quantity?: number | null
   assigned_to?: string | null
+  condition?: string | null
 }): string | null {
   return assetOptionDisabledReason({ source: 'asset', ...a })
 }
 
-function stockDisabledReason(quantity: number): string | null {
-  return assetOptionDisabledReason({ source: 'stock', quantity })
+function stockDisabledReason(quantity: number, condition?: string | null): string | null {
+  return assetOptionDisabledReason({ source: 'stock', quantity, condition })
 }
 
 /** Human-readable refusal when an asset fails the assignability check. */
 function assetRefusal(
   label: string,
-  a: { status?: string | null; quantity?: number | null; assigned_to?: string | null }
+  a: { status?: string | null; quantity?: number | null; assigned_to?: string | null; condition?: string | null }
 ): string {
   const reason = assetDisabledReason(a)
   if (reason === 'Already assigned')
     return `${label} is already assigned and cannot be assigned again.`
   if (reason === 'Out of stock') return `${label} is out of stock.`
+  if (reason === 'Unserviceable')
+    return `${label} is unserviceable and cannot be assigned until it is marked serviceable again.`
   if (reason) return `${label} is currently ${reason.toLowerCase()} and cannot be assigned.`
   return `${label} cannot be assigned.`
 }
@@ -545,6 +549,7 @@ export async function getIssuanceFormOptions(): Promise<{
           total_cost: true,
           status: true,
           assigned_to: true,
+          condition: true,
         },
       }),
       prisma.inventoryItem.findMany({
@@ -560,6 +565,17 @@ export async function getIssuanceFormOptions(): Promise<{
         },
       }),
     ])
+    // Inspected lots keep their condition on the linked asset record (same id).
+    const stockIds = stocks.map((s) => s.id)
+    const linkedStockConditions = stockIds.length
+      ? await prisma.asset
+          .findMany({
+            where: { id: { in: stockIds } },
+            select: { id: true, condition: true },
+          })
+          .catch(() => [] as { id: string; condition: string | null }[])
+      : []
+    const stockConditionById = new Map(linkedStockConditions.map((a) => [a.id, a.condition]))
     return {
       employees: profRows.map((p) => ({
         id: p.id,
@@ -588,7 +604,7 @@ export async function getIssuanceFormOptions(): Promise<{
           unit_cost: num(s.unit_cost),
           total_cost: num(s.total_cost),
           account_code: s.account_code,
-          disabledReason: stockDisabledReason(s.quantity),
+          disabledReason: stockDisabledReason(s.quantity, stockConditionById.get(s.id) ?? null),
         })),
       ],
     }
@@ -748,6 +764,7 @@ async function evaluateAndAssign(
           status: true,
           quantity: true,
           assigned_to: true,
+          condition: true,
         },
       })
       if (!asset) return { error: 'Selected asset no longer exists.' }
@@ -784,6 +801,14 @@ async function evaluateAndAssign(
         },
       })
       if (!stock) return { error: 'Selected stock item no longer exists.' }
+      // Inspected lots share their condition with the linked asset record.
+      const linked = await prisma.asset
+        .findUnique({ where: { id: inventoryId }, select: { condition: true } })
+        .catch(() => null)
+      if (classifyCondition(linked?.condition) === 'unserviceable')
+        return {
+          error: `${stock.item_name} is unserviceable and cannot be assigned until it is marked serviceable again.`,
+        }
       if (!Number.isInteger(quantity) || quantity < 1)
         return { error: 'Enter a quantity of at least 1.' }
       if (stock.quantity <= 0)
@@ -862,7 +887,7 @@ async function evaluateAndAssign(
       if (assetId) {
         const cur = await tx.asset.findUnique({
           where: { id: assetId },
-          select: { quantity: true, status: true, assigned_to: true },
+          select: { quantity: true, status: true, assigned_to: true, condition: true },
         })
         if (!cur) throwRefusal('Selected asset no longer exists.')
         if (assetDisabledReason(cur))
@@ -1187,12 +1212,13 @@ export async function approveRequestWithIssuance(
     id: string; qr_code: string | null; property_number: string | null
     account_code: string | null; article: string | null; description: string | null
     unit: string | null; unit_cost: unknown; total_cost: unknown
-    date_acquired: Date | null; status: string | null
+    date_acquired: Date | null; status: string | null; condition: string | null
     quantity: number | null; assigned_to: string | null
   }[] = []
   let stockRows: {
     id: string; item_name: string; account_code: string | null; quantity: number
     unit: string | null; unit_cost: unknown; total_cost: unknown
+    condition?: string | null; status?: string | null
   }[] = []
   try {
     ;[assetRows, stockRows] = await Promise.all([
@@ -1203,7 +1229,7 @@ export async function approveRequestWithIssuance(
               id: true, qr_code: true, property_number: true, account_code: true,
               article: true, description: true, unit: true, unit_cost: true,
               total_cost: true, date_acquired: true, status: true,
-              quantity: true, assigned_to: true,
+              quantity: true, assigned_to: true, condition: true,
             },
           })
         : Promise.resolve([]),
@@ -1222,7 +1248,20 @@ export async function approveRequestWithIssuance(
     return { error: 'Failed to read the selected items. Please try again.' }
   }
   const assetMap = new Map(assetRows.map((a) => [a.id, a]))
-  const stockMap = new Map(stockRows.map((s) => [s.id, s]))
+  // Inspected lots read condition/status from the linked asset record (same id).
+  const stockMap = new Map(
+    stockRows.map((s) => {
+      const linked = assetMap.get(s.id)
+      return [
+        s.id,
+        {
+          ...s,
+          condition: linked?.condition ?? null,
+          status: linked?.status ?? 'available',
+        },
+      ]
+    })
+  )
 
   const resolved: ResolvedApprovalLine[] = []
   for (let i = 0; i < candidates.length; i++) {
@@ -1287,6 +1326,10 @@ export async function approveRequestWithIssuance(
       const qty = Math.max(1, Math.floor(Number(c.quantity) || 1))
       if (!Number.isInteger(qty) || qty < 1)
         return { error: `${tag}: enter a quantity of at least 1.` }
+      if (classifyCondition(stock.condition) === 'unserviceable')
+        return {
+          error: `${tag} (${stock.item_name}) is unserviceable and cannot be assigned until it is marked serviceable again.`,
+        }
       if (stock.quantity <= 0)
         return { error: `${tag} (${stock.item_name}) is out of stock.` }
       if (qty > stock.quantity)
@@ -1417,7 +1460,7 @@ export async function approveRequestWithIssuance(
         if (line.assetId) {
           const cur = await tx.asset.findUnique({
             where: { id: line.assetId },
-            select: { quantity: true, status: true, assigned_to: true },
+            select: { quantity: true, status: true, assigned_to: true, condition: true },
           })
           if (!cur) throwRefusal('Selected asset no longer exists.')
           if (assetDisabledReason(cur))

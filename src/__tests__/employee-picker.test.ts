@@ -12,6 +12,20 @@ describe("assetOptionDisabledReason parity (personnel + employee share it)", () 
     assert.equal(assetOptionDisabledReason({ source: "stock", quantity: 5 }), null);
     assert.equal(assetOptionDisabledReason({ source: "stock", quantity: 0 }), "Out of stock");
   });
+  it("stock: an unserviceable inspected lot is never assignable", () => {
+    assert.equal(
+      assetOptionDisabledReason({
+        source: "stock",
+        quantity: 5,
+        condition: "unserviceable",
+      }),
+      "Unserviceable"
+    );
+    assert.equal(
+      assetOptionDisabledReason({ source: "stock", quantity: 5, condition: "serviceable" }),
+      null
+    );
+  });
   it("asset: assigned and out-of-stock first", () => {
     assert.equal(
       assetOptionDisabledReason({ source: "asset", status: "available", assigned_to: "u1" }),
@@ -29,6 +43,29 @@ describe("assetOptionDisabledReason parity (personnel + employee share it)", () 
     );
     assert.equal(
       assetOptionDisabledReason({ source: "asset", status: "available" }),
+      null
+    );
+  });
+  it("asset: unserviceable is never assignable, even when marked available", () => {
+    assert.equal(
+      assetOptionDisabledReason({
+        source: "asset",
+        status: "available",
+        condition: "unserviceable",
+      }),
+      "Unserviceable"
+    );
+    // Other "bad" condition words classify as unserviceable too.
+    assert.equal(
+      assetOptionDisabledReason({ source: "asset", status: "available", condition: "Damaged" }),
+      "Unserviceable"
+    );
+    assert.equal(
+      assetOptionDisabledReason({
+        source: "asset",
+        status: "available",
+        condition: "serviceable",
+      }),
       null
     );
   });

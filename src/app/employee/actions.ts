@@ -863,6 +863,7 @@ export async function getMyRequestOptions(
             description: true,
             status: true,
             quantity: true,
+            condition: true,
           },
         })
         .catch(() => []),
@@ -880,6 +881,7 @@ export async function getMyRequestOptions(
             status: true,
             quantity: true,
             assigned_to: true,
+            condition: true,
           },
         })
         .catch(() => []),
@@ -923,6 +925,7 @@ export async function getMyRequestOptions(
       status: string | null
       quantity: number | null
       assigned_to?: string | null
+      condition?: string | null
     }) => {
       if (seen.has(row.id)) return
       seen.add(row.id)
@@ -930,6 +933,8 @@ export async function getMyRequestOptions(
       assets.push({
         id: row.id,
         label: `${labelOf(row)} · Asset`,
+        // A held asset that turned unserviceable must not be offered as the
+        // source of a new transfer/repair assignment.
         disabledReason: heldByMe
           ? null
           : assetOptionDisabledReason({
@@ -937,6 +942,7 @@ export async function getMyRequestOptions(
               status: row.status,
               quantity: row.quantity,
               assigned_to: row.assigned_to ?? null,
+              condition: row.condition,
             }),
         kind: 'asset',
         quantity: row.quantity,

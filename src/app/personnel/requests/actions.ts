@@ -476,7 +476,7 @@ export async function getRequestFormOptions(
             id: true, qr_code: true, account_code: true, article: true,
             description: true, account_title: true, account_name: true,
             category: true, location: true, status: true, quantity: true,
-            unit_cost: true, assigned_to: true,
+            unit_cost: true, assigned_to: true, condition: true,
           },
         })
         .catch(() => []),
@@ -587,6 +587,7 @@ export async function getRequestFormOptions(
           status: a.status,
           quantity: a.quantity,
           assigned_to: a.assigned_to,
+          condition: a.condition,
         }),
       })),
       ...stockRows.map((s) => ({
@@ -819,6 +820,7 @@ export async function createRequest(
               status: true,
               quantity: true,
               assigned_to: true,
+              condition: true,
             },
           }),
           prisma.inventoryItem.findMany({
@@ -853,6 +855,7 @@ export async function createRequest(
             status: asset.status,
             quantity: asset.quantity,
             assigned_to: asset.assigned_to,
+            condition: asset.condition,
           })
           if (blocked) {
             const name = asset.article ?? asset.description ?? 'Selected asset'
@@ -862,7 +865,9 @@ export async function createRequest(
                   ? `${lineNo} (${name}) is already assigned and cannot be assigned again.`
                   : blocked === 'Out of stock'
                     ? `${lineNo} (${name}) is out of stock.`
-                    : `${lineNo} (${name}) is currently ${blocked.toLowerCase()} and cannot be assigned.`,
+                    : blocked === 'Unserviceable'
+                      ? `${lineNo} (${name}) is unserviceable and cannot be assigned until it is marked serviceable again.`
+                      : `${lineNo} (${name}) is currently ${blocked.toLowerCase()} and cannot be assigned.`,
             }
           }
         }

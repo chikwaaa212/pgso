@@ -1,6 +1,5 @@
 "use client";
 
-import { useEffect } from "react";
 import { Printer } from "lucide-react";
 import {
   Dialog,
@@ -9,6 +8,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import overlay from "./receipt-overlay.module.css";
+import { useDialogPrintMode } from "@/hooks/use-dialog-print-mode";
 
 /**
  * Shared document-preview dialog.
@@ -32,20 +32,7 @@ export function ReceiptOverlay({
   children: React.ReactNode;
 }) {
   // Flag the document so print CSS can scope itself to this overlay.
-  // Radix portals the dialog straight into <body>; marking its wrapper lets
-  // the print stylesheet hide every other body child without relying on
-  // `:has()` support in the print engine.
-  useEffect(() => {
-    if (!open || !printable) return;
-    const root = document.querySelector('[data-print-root="true"]');
-    const portal = root?.parentElement ?? null;
-    document.body.dataset.printActive = "true";
-    portal?.setAttribute("data-print-portal", "true");
-    return () => {
-      delete document.body.dataset.printActive;
-      portal?.removeAttribute("data-print-portal");
-    };
-  }, [open, printable]);
+  useDialogPrintMode(open && printable);
 
   return (
     <Dialog

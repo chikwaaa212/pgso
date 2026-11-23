@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition, type FormEvent } from "react";
 import Link from "next/link";
 import {
   ArrowLeft,
@@ -29,6 +29,7 @@ import {
 } from "@/components/ui/select";
 import { DatePicker } from "@/components/ui/date-picker";
 import { useToast } from "@/components/ui/toaster";
+import { classifyCondition } from "@/lib/reporting";
 import { patchRowInPage } from "@/lib/list-patch";
 import { updateUnifiedAsset, type AssetHistory, type EditState, type UnifiedAssetRow } from "../actions";
 import { CustomDetailSection } from "../custom-columns";
@@ -41,7 +42,7 @@ import { cn } from "@/lib/utils";
 type EditFieldType = {
   key: keyof UnifiedAssetRow;
   label: string;
-  type: "text" | "number" | "currency" | "date" | "textarea" | "select";
+  type: "text" | "number" | "currency" | "date" | "textarea" | "select" | "datalist";
   options?: string[];
   readOnly?: boolean;
 };
@@ -61,7 +62,7 @@ const FIELD_SECTIONS: { title: string; fields: EditFieldType[] }[] = [
       { label: "Identifier", key: "identifier", type: "text" },
       { label: "Account Title", key: "account_title", type: "text" },
       { label: "Account Name", key: "account_name", type: "text" },
-      { label: "Asset Type", key: "category", type: "select" },
+      { label: "Asset Type", key: "category", type: "datalist" },
       { label: "Article", key: "article", type: "text" },
     ],
   },
@@ -173,18 +174,22 @@ function statusLabel(status: string | null): string {
 
 function statusTone(status: string | null): "ok" | "warn" | "info" {
   if (status === "available") return "ok";
-  if (status === "retired") return "warn";
+  if (status === "retired" || status === "not available") return "warn";
   return "info";
 }
 
 /**
  * Display status for the record: an asset with a holder (or no units left)
  * reads "Assigned", never "Available" — there is nothing left to issue.
- * Non-available states (maintenance/retired) are shown as stored.
+ * Unserviceable equipment reads "Not available"; other non-available states
+ * (maintenance/retired) are shown as stored.
  */
 function effectiveStatus(asset: UnifiedAssetRow): string | null {
   const stored = (asset.status ?? "available").trim().toLowerCase();
   if (stored !== "available") return asset.status;
+  // Unserviceable equipment is never Available — read "Not available" so the
+  // badge agrees with the assignment gate (stored value stays maintenance).
+  if (classifyCondition(asset.condition) === "unserviceable") return "not available";
   const qty = asset.quantity;
   if (asset.assigned_to || (typeof qty === "number" && qty <= 0)) {
     return "assigned";
@@ -286,12 +291,17 @@ function SelectEditField({
   asset,
   disabled = false,
   noun = "asset",
+  valueOverride,
+  onValueChange,
 }: {
   field: EditFieldType;
   asset: UnifiedAssetRow;
   disabled?: boolean;
   /** Record noun shown in placeholders ("asset" / "stock"). */
   noun?: string;
+  /** Forces the selection (used when condition makes a status invalid). */
+  valueOverride?: string;
+  onValueChange?: (value: string | undefined) => void;
 }) {
   const { key, label, options } = field;
   const rawValue = asset[key];
@@ -300,13 +310,28 @@ function SelectEditField({
   const [value, setValue] = useState<string | undefined>(
     rawString.trim() ? rawString : undefined
   );
+  // Keep a forced value in sync (e.g. Available → Maintenance when the item
+  // is marked unserviceable). Only runs when the override itself changes so a
+  // manual selection is never stomped.
+  useEffect(() => {
+    if (valueOverride === undefined) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- sync forced selection
+    setValue((current) => (current === valueOverride ? current : valueOverride));
+  }, [valueOverride]);
 
   return (
     <div className={assetStyles.detailField}>
       <Label htmlFor={inputId} className={assetStyles.detailLabel}>
         {label}
       </Label>
-      <Select value={value} onValueChange={setValue} disabled={disabled}>
+      <Select
+        value={value}
+        onValueChange={(next) => {
+          setValue(next);
+          onValueChange?.(next);
+        }}
+        disabled={disabled}
+      >
         <SelectTrigger
           id={inputId}
           className={cn(inputCls, disabled && "bg-navy-50")}
@@ -339,12 +364,16 @@ function EditField({
   asset,
   disabled = false,
   noun = "asset",
+  selectValueOverride,
+  onSelectChange,
 }: {
   field: EditFieldType;
   asset: UnifiedAssetRow;
   disabled?: boolean;
   /** Record noun shown in placeholders ("asset" / "stock"). */
   noun?: string;
+  selectValueOverride?: string;
+  onSelectChange?: (value: string | undefined) => void;
 }) {
   const { key, label, type } = field;
   const rawValue = asset[key];
@@ -378,7 +407,34 @@ function EditField({
         asset={asset}
         disabled={disabled}
         noun={noun}
+        valueOverride={selectValueOverride}
+        onValueChange={onSelectChange}
       />
+    );
+  }
+
+  // Free-text with suggestions: an existing Master Data value can be picked,
+  // but a new Asset Type can also be typed. The server adds it to Master Data
+  // automatically, so a new type doesn't need to wait for a Super Admin.
+  if (type === "datalist") {
+    const listId = `${inputId}-options`;
+    return (
+      <div className={assetStyles.detailField}>
+        <Label htmlFor={inputId} className={assetStyles.detailLabel}>
+          {label}
+        </Label>
+        <Input
+          {...commonProps}
+          type="text"
+          list={listId}
+          className={cn(disabled && "bg-navy-50")}
+        />
+        <datalist id={listId}>
+          {field.options?.map((opt) => (
+            <option key={opt} value={opt} />
+          ))}
+        </datalist>
+      </div>
     );
   }
 
@@ -489,10 +545,25 @@ export function AssetDetailEditor({
     [asset, optimistic]
   );
 
+  // Live draft of the condition while editing, so Status can drop "Available"
+  // the moment the item is marked unserviceable (before the server round-trip).
+  const [draftCondition, setDraftCondition] = useState<string | null>(asset.condition);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- resync draft on record change
+    setDraftCondition(asset.condition);
+  }, [asset.id, asset.condition]);
+  const draftUnserviceable = classifyCondition(draftCondition) === "unserviceable";
+
   const sections = FIELD_SECTIONS.map((s) =>
-    s.fields.map((f) =>
-      f.key === "category" ? { ...f, options: categories } : f
-    )
+    s.fields.map((f) => {
+      if (f.key === "category") return { ...f, options: categories };
+      // Unserviceable equipment cannot be Available — hide that option so the
+      // edit form itself enforces the rule (the server enforces it too).
+      if (f.key === "status" && draftUnserviceable) {
+        return { ...f, options: STATUS_OPTIONS.filter((o) => o !== "available") };
+      }
+      return f;
+    })
   );
 
   // Field search: filters the labeled inputs/sections in place. Pure client
@@ -521,7 +592,9 @@ export function AssetDetailEditor({
     };
   }, [fieldNeedle]);
 
-  const handleSubmit = (formData: FormData) => {
+  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const formData = new FormData(event.currentTarget);
     // Snapshot submitted values as the optimistic overlay ("" → null matches
     // the server's normalization, so the display converges on save).
     const overrides: Record<string, string | null> = {};
@@ -530,39 +603,64 @@ export function AssetDetailEditor({
       const s = typeof v === "string" ? v.trim() : "";
       overrides[k] = s === "" ? null : s.slice(0, 500);
     }
+    // Mirror the server rule locally so the optimistic read view is already
+    // consistent: unserviceable equipment cannot stay Available.
+    const nowUnserviceable = classifyCondition(overrides.condition) === "unserviceable";
+    if (nowUnserviceable && (overrides.status ?? "").toLowerCase() === "available") {
+      overrides.status = "maintenance";
+    }
+    // Optimistic-first: close the editor and paint the new values right away,
+    // while the server action runs in the background. On failure the overlay
+    // rolls back to server truth and a message explains what happened.
+    // NOTE: this must be a plain submit handler (not `<form action>`), because
+    // React treats form actions as transitions and would defer these updates
+    // until the server action resolves — leaving the editor open on "Saving…".
     setOptimistic(overrides);
+    setIsEditing(false);
     startTransition(async () => {
-      const result: EditState = await updateUnifiedAsset({} as EditState, formData);
-      if (result.success) {
-        toast({
-          title: "Success",
-          description: `${nounLabel} updated successfully.`,
-          variant: "success",
-        });
-        setIsEditing(false);
-        // Patch every cached registry window holding this row (personnel +
-        // admin lists) — no refetch. Next revalidation converges any
-        // server-side normalization (catalog title snap, unit canonicalization).
-        void import("@/lib/client-cache").then((m) =>
-          import("@/lib/query-keys").then(({ resourcePrefix }) =>
-            m.patchClientCache(
-              [
-                "pgso:assets:unified",
-                "pgso:admin-assets:unified",
-                resourcePrefix("personnel", "assets"),
-                resourcePrefix("super-admin", "assets"),
-              ],
-              (data) => patchRowInPage(data, asset.id, overrides)
+      try {
+        const result: EditState = await updateUnifiedAsset({} as EditState, formData);
+        if (result.success) {
+          toast({
+            title: "Success",
+            description: nowUnserviceable
+              ? `${nounLabel} updated. Unserviceable items are kept in Maintenance and cannot be assigned until marked serviceable.`
+              : `${nounLabel} updated successfully.`,
+            variant: "success",
+          });
+          // Patch every cached registry window holding this row (personnel +
+          // admin lists) — no refetch. Next revalidation converges any
+          // server-side normalization (catalog title snap, unit canonicalization).
+          void import("@/lib/client-cache").then((m) =>
+            import("@/lib/query-keys").then(({ resourcePrefix }) =>
+              m.patchClientCache(
+                [
+                  "pgso:assets:unified",
+                  "pgso:admin-assets:unified",
+                  resourcePrefix("personnel", "assets"),
+                  resourcePrefix("super-admin", "assets"),
+                ],
+                (data) => patchRowInPage(data, asset.id, overrides)
+              )
             )
-          )
-        );
-      }
-      if (result.error) {
-        // Roll back the optimistic overlay to server truth.
+          );
+        }
+        if (result.error) {
+          // Roll back the optimistic overlay to server truth.
+          setOptimistic(null);
+          toast({
+            title: "Error",
+            description: result.error,
+            variant: "error",
+          });
+        }
+      } catch {
+        // Network/action failure: roll back and say so instead of leaving the
+        // optimistic values on screen.
         setOptimistic(null);
         toast({
           title: "Error",
-          description: result.error,
+          description: `Could not save ${noun}. Please try again.`,
           variant: "error",
         });
       }
@@ -650,6 +748,11 @@ export function AssetDetailEditor({
                   <Button type="button" variant="primary" className={ACTION_BTN} onClick={() => setIsEditing(false)}>
                     <X size={13} aria-hidden="true" />
                     Cancel
+                  </Button>
+                ) : isPending ? (
+                  <Button type="button" variant="primary" className={ACTION_BTN} disabled aria-busy="true">
+                    <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
+                    Saving…
                   </Button>
                 ) : (
                   <Button type="button" variant="primary" className={ACTION_BTN} onClick={() => setIsEditing(true)}>
@@ -774,7 +877,7 @@ export function AssetDetailEditor({
         <Card className={cn(styles.panel, assetStyles.detailPanel)}>
           {isEditing ? (
             <>
-              <form id="asset-edit-form" action={handleSubmit}>
+              <form id="asset-edit-form" onSubmit={handleSubmit}>
                 <input type="hidden" name="id" value={asset.id} />
                 <input type="hidden" name="source" value={asset.source} />
                 {assigned ? (
@@ -819,6 +922,18 @@ export function AssetDetailEditor({
                               asset={displayed}
                               disabled={lockField(f.key)}
                               noun={noun}
+                              onSelectChange={
+                                f.key === "condition"
+                                  ? (value) => setDraftCondition(value ?? null)
+                                  : undefined
+                              }
+                              selectValueOverride={
+                                f.key === "status" &&
+                                draftUnserviceable &&
+                                (displayed.status ?? "").trim().toLowerCase() === "available"
+                                  ? "maintenance"
+                                  : undefined
+                              }
                             />
                           </div>
                         ))}

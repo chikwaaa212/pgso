@@ -6,6 +6,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { PAGE_SIZE } from "@/lib/constants";
 import { assetOptionDisabledReason } from "@/lib/asset-option";
+import { classifyCondition } from "@/lib/reporting";
 import { Boxes, Eye, Layers3, PackageSearch, QrCode, Send, Users } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { PageHeader } from "@/components/personnel/PageHeader";
@@ -411,6 +412,7 @@ export default function SuperAdminAssetsPage() {
         status: selectedRow.status,
         quantity: selectedRow.quantity,
         assigned_to: selectedRow.assigned_to,
+        condition: selectedRow.condition,
       })
     : null;
   const selectedAssignable = selectedRow !== null && selectedAssignReason === null;
@@ -701,7 +703,7 @@ export default function SuperAdminAssetsPage() {
                     <th className={assetStyles.cType}>Type</th>
                     <th className={assetStyles.cTitle}>Asset Title</th>
                     <th className={assetStyles.cQty}>Qty Available</th>
-                    <th className={assetStyles.cAvailability}>Availability</th>
+                    <th className={assetStyles.cAvailability}>Condition</th>
                     <th className={assetStyles.cAssignee}>Assigned to</th>
                     <th className={assetStyles.cStatus}>Status</th>
                     <th className={assetStyles.cActions}>Actions</th>
@@ -711,6 +713,14 @@ export default function SuperAdminAssetsPage() {
                   {visible.map((a) => {
                     const isSelected = selectedId === a.id;
                     const statusKey = (a.status ?? "available").trim().toLowerCase();
+                    const conditionClass = classifyCondition(a.condition);
+                    // Unserviceable equipment cannot be Available. Show it as
+                    // Not available even if legacy data still stores "available".
+                    const unserviceable = conditionClass === "unserviceable";
+                    const displayStatus =
+                      unserviceable && statusKey === "available"
+                        ? "maintenance"
+                        : a.status;
                     const outOfStock = typeof a.quantity === "number" && a.quantity <= 0;
                     // A holder on the asset record or on a PAR/ICS line makes
                     // the lot "Assigned"; an exhausted lot with no holder is
@@ -724,6 +734,7 @@ export default function SuperAdminAssetsPage() {
                       status: a.status,
                       quantity: a.quantity,
                       assigned_to: a.assigned_to,
+                      condition: a.condition,
                     });
                     const assignable = assignBlockReason === null;
                     return (
@@ -770,29 +781,28 @@ export default function SuperAdminAssetsPage() {
                           </span>
                         </td>
                         <td className={assetStyles.cAvailability}>
-                          {/* Mirrors the shared assign rule: a depleted lot with
-                              a holder reads "Assigned"; a depleted lot nobody
-                              holds is out of stock. */}
-                          {outOfStock && alreadyAssigned ? (
+                          {/* Condition drives assignability: an unserviceable
+                              unit is never available and cannot be issued. */}
+                          {a.condition ? (
                             <span
                               className={styles.status}
-                              data-tone="info"
-                              title="Out of stock — no units left, so it cannot be issued to another employee."
+                              data-tone={
+                                unserviceable
+                                  ? "bad"
+                                  : conditionClass === "serviceable"
+                                    ? "ok"
+                                    : "warn"
+                              }
+                              title={
+                                unserviceable
+                                  ? "Unserviceable — cannot be assigned until it is marked serviceable."
+                                  : undefined
+                              }
                             >
-                              Assigned
-                            </span>
-                          ) : assignBlockReason === null ? (
-                            <span className={styles.status} data-tone="ok">
-                              Available
+                              {label(a.condition)}
                             </span>
                           ) : (
-                            <span
-                              className={styles.status}
-                              data-tone={tone(a.status)}
-                              title={assignBlockReason}
-                            >
-                              {assignBlockReason}
-                            </span>
+                            <span className={assetStyles.assigneeEmpty}>—</span>
                           )}
                         </td>
                         <td className={assetStyles.cAssignee}>
@@ -828,24 +838,25 @@ export default function SuperAdminAssetsPage() {
                             <span
                               className={styles.status}
                               data-tone={
-                                outOfStock
+                                unserviceable
                                   ? "bad"
-                                  : tone(
-                                      alreadyAssigned && statusKey === "available"
-                                        ? "in use"
-                                        : a.status
-                                    )
+                                  : outOfStock
+                                    ? "bad"
+                                    : tone(
+                                        alreadyAssigned && statusKey === "available"
+                                          ? "in use"
+                                          : displayStatus
+                                      )
                               }
                             >
-                              {outOfStock
-                                ? "Out of stock"
-                                : alreadyAssigned && statusKey === "available"
-                                  ? "Assigned"
-                                  : label(a.status)}
+                              {unserviceable
+                                ? "Not available"
+                                : outOfStock
+                                  ? "Out of stock"
+                                  : alreadyAssigned && statusKey === "available"
+                                    ? "Assigned"
+                                    : label(displayStatus)}
                             </span>
-                            {a.condition ? (
-                              <span className={assetStyles.conditionSub}>{label(a.condition)}</span>
-                            ) : null}
                           </span>
                         </td>
                         <td className={assetStyles.cActions} onClick={(e) => e.stopPropagation()}>

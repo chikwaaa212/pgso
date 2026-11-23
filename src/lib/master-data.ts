@@ -53,6 +53,129 @@ export async function findCatalogEntry(code: string): Promise<CatalogEntry | nul
   }
 }
 
+export type EnsureCatalogResult =
+  | { ok: true; entry: CatalogEntry; created: boolean }
+  | { ok: false; error: string }
+
+/**
+ * Resolve an account code for a record being saved, adding it to Master Data
+ * when it does not exist yet.
+ *
+ * Existing catalog rows are never modified — the catalog stays authoritative
+ * for codes that were already approved. A code that is missing entirely is
+ * created from the values the user just submitted, so saving an asset never
+ * has to wait for a Super Admin to add it first. Codes that were deactivated
+ * or soft-deleted are reported instead of silently re-activated/overwritten.
+ *
+ * Lookups are case-insensitive so a near-duplicate code (different casing)
+ * resolves to the approved row instead of creating a second entry.
+ */
+export async function ensureCatalogEntry(input: {
+  code: string
+  title?: string | null
+  type?: string | null
+  name?: string | null
+  createdBy?: string | null
+}): Promise<EnsureCatalogResult> {
+  const code = (input.code ?? '').trim()
+  if (!code) return { ok: false, error: 'Account code is required.' }
+  try {
+    const active = await prisma.accountCatalog.findFirst({
+      where: {
+        account_code: { equals: code, mode: 'insensitive' },
+        status: 'active',
+        deleted_at: null,
+      },
+      select: { account_code: true, account_title: true, asset_type: true, account_name: true },
+    })
+    if (active) {
+      return {
+        ok: true,
+        entry: {
+          code: active.account_code,
+          title: active.account_title,
+          type: active.asset_type,
+          name: active.account_name,
+        },
+        created: false,
+      }
+    }
+
+    // A code that exists but is inactive/deleted must be restored explicitly —
+    // an asset edit must not revive or overwrite previously retired master data.
+    const existing = await prisma.accountCatalog.findFirst({
+      where: { account_code: { equals: code, mode: 'insensitive' } },
+      select: { deleted_at: true },
+    })
+    if (existing) {
+      return {
+        ok: false,
+        error: existing.deleted_at
+          ? `Account code "${code}" is in the deleted Master Data records — ask your Super Admin to restore it.`
+          : `Account code "${code}" is inactive in Master Data — ask your Super Admin to reactivate it.`,
+      }
+    }
+
+    const title = (input.title ?? '').trim().toUpperCase() || 'GENERAL'
+    const type = (input.type ?? '').trim() || 'General'
+    const name = (input.name ?? '').trim() || null
+    try {
+      const created = await prisma.accountCatalog.create({
+        data: {
+          account_code: code,
+          account_title: title,
+          account_name: name,
+          asset_type: type,
+          status: 'active',
+          created_by: input.createdBy ?? null,
+        },
+        select: { account_code: true, account_title: true, asset_type: true, account_name: true },
+      })
+      // Pick-lists are cached separately (`catalog:` for server readers,
+      // `master-data:` for the /api/master-data dropdown feed). Refresh both so
+      // the new code/type is selectable immediately (best-effort, never gates
+      // the save).
+      void import('@/lib/personnel-cache')
+        .then((m) => m.bustCachePrefixes(['catalog:', 'master-data:']))
+        .catch(() => {})
+      return {
+        ok: true,
+        entry: {
+          code: created.account_code,
+          title: created.account_title,
+          type: created.asset_type,
+          name: created.account_name,
+        },
+        created: true,
+      }
+    } catch (e) {
+      // Another write raced the same new code — the winner is authoritative.
+      const raced = await prisma.accountCatalog.findFirst({
+        where: { account_code: { equals: code, mode: 'insensitive' } },
+        select: { account_code: true, account_title: true, asset_type: true, account_name: true, status: true, deleted_at: true },
+      })
+      if (raced && raced.status === 'active' && !raced.deleted_at) {
+        return {
+          ok: true,
+          entry: {
+            code: raced.account_code,
+            title: raced.account_title,
+            type: raced.asset_type,
+            name: raced.account_name,
+          },
+          created: false,
+        }
+      }
+      console.error('[ensureCatalogEntry]', e)
+      return { ok: false, error: `Could not save account code "${code}" to Master Data. Please try again.` }
+    }
+  } catch (e) {
+    console.error('[ensureCatalogEntry]', e)
+    return { ok: false, error: `Could not save account code "${code}" to Master Data. Please try again.` }
+  }
+}
+
+
 export async function getActiveUnitNames(): Promise<string[]> {
   const { withCache, cacheKey } = await import('@/lib/personnel-cache')
   return withCache(cacheKey('catalog:units'), 300, async () => {

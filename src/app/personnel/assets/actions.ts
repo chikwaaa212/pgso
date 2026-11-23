@@ -15,7 +15,8 @@ import ExcelJS from "exceljs";
 import prisma from "@/lib/prisma";
 import { generateAssetQrDataUrl, generateStockQrDataUrl } from "@/lib/qrcode";
 import { ASSET_EXCEL_HEADERS, ASSET_TEMPLATE_SHEET } from "@/lib/asset-excel";
-import { findCatalogEntry, getActiveCatalogEntries, resolveUnitName } from "@/lib/master-data";
+import { findCatalogEntry, getActiveCatalogEntries, resolveUnitName, ensureCatalogEntry } from "@/lib/master-data";
+import { classifyCondition } from "@/lib/reporting";
 import { ACCOUNT_CODE_PREFIX, nextAccountCode } from "@/lib/account-code";
 import { fetchCustomBags, type CustomBag } from "./custom-fields";
 
@@ -488,8 +489,19 @@ export async function updateAsset(
   }
 
   // Allowlist already enforced above (ASSET_EDITABLE_KEYS + trim/cap).
-  const before = await prisma.asset.findUnique({ where: { id }, select: { id: true, account_code: true, article: true, status: true } }).catch(() => null)
+  const before = await prisma.asset.findUnique({ where: { id }, select: { id: true, account_code: true, article: true, status: true, condition: true } }).catch(() => null)
   if (!before) return { success: false, error: "Asset not found." }
+
+  // Same invariant as the unified editor: unserviceable equipment cannot stay
+  // Available (and therefore cannot be assigned).
+  const effectiveCondition =
+    typeof data["condition"] === "string" ? data["condition"] : before.condition ?? null
+  if (
+    classifyCondition(effectiveCondition) === "unserviceable" &&
+    (data["status"] === null || data["status"] === "available")
+  ) {
+    data["status"] = "maintenance"
+  }
 
   try {
     const updated = await prisma.asset.update({
@@ -747,10 +759,9 @@ export async function getUnifiedAssetsPage(
         // Origin tabs: `added` is the asset register (assets table only);
         // `inspected` shows asset-kind lots stocked by a passed inspection.
         const wantAssets = !inspected && (source === 'all' || source === 'asset')
-        const wantStocks =
-          (inspected || source === 'all' || source === 'stock') &&
-          (status === 'all' || status === 'available') &&
-          condition === 'all'
+        const wantStocks = inspected || source === 'all' || source === 'stock'
+        // Inspected lots are inventory rows; their condition/status live on the
+        // linked asset record (same id) once the lot has been edited.
         if (!wantAssets && !wantStocks) return empty
 
         const like = q !== '' ? `%${escapeLike(q)}%` : null
@@ -761,6 +772,10 @@ export async function getUnifiedAssetsPage(
         if (unit !== 'all') assetConds.push(Prisma.sql`lower(a.unit) = ${unit}`)
         if (category !== 'all') assetConds.push(Prisma.sql`lower(a.category) = ${category}`)
         const stockConds: InstanceType<typeof Prisma.Sql>[] = []
+        if (status !== 'all')
+          stockConds.push(Prisma.sql`lower(COALESCE((SELECT a2.status FROM assets a2 WHERE a2.id = s.id LIMIT 1), 'available')) = ${status}`)
+        if (condition !== 'all')
+          stockConds.push(Prisma.sql`lower(COALESCE((SELECT a2.condition FROM assets a2 WHERE a2.id = s.id LIMIT 1), '')) = ${condition}`)
         if (unit !== 'all') stockConds.push(Prisma.sql`lower(s.unit) = ${unit}`)
         if (category !== 'all') stockConds.push(Prisma.sql`lower(s.category) = ${category}`)
         if (inspected) {
@@ -797,12 +812,15 @@ export async function getUnifiedAssetsPage(
           NULL::text AS account_name, s.category, s.item_name AS article,
           s.quantity, s.unit, NULL::text AS description,
           NULL::date AS date_acquired, s.location, NULL::numeric AS total_cost,
-          NULL::text AS remarks, NULL::text AS condition, s.unit_cost,
+          NULL::text AS remarks,
+          (SELECT a2.condition FROM assets a2 WHERE a2.id = s.id LIMIT 1) AS condition,
+          s.unit_cost,
           NULL::text AS end_user, NULL::text AS brand, NULL::integer AS cylinders,
           NULL::text AS engine_displacement, NULL::text AS fuel_type,
           NULL::text AS engine_number, NULL::text AS chassis_number,
           NULL::text AS color, NULL::text AS plate_number, NULL::text AS fund,
-          'available' AS status, NULL::text AS dv_tracking_number,
+          COALESCE((SELECT a2.status FROM assets a2 WHERE a2.id = s.id LIMIT 1), 'available') AS status,
+          NULL::text AS dv_tracking_number,
           NULL::text AS supplier_payee, NULL::text AS account_name_charge,
           NULL::text AS account_number, NULL::text AS obr_number,
           NULL::text AS dv_number, NULL::date AS date_received,
@@ -915,21 +933,27 @@ export async function getUnifiedAssetsPage(
           if (r.source === 'stock') {
             const stockUnitCost = num(r.unit_cost)
             const stockQty = intOrNull(r.quantity) ?? 0
-            return mapStockToUnified({
-              id: r.id,
-              item_name: r.article,
-              category: r.category,
-              account_code: r.account_code,
-              quantity: stockQty,
-              unit: r.unit,
-              unit_cost: stockUnitCost,
-              total_cost: stockUnitCost != null ? stockUnitCost * stockQty : null,
-              reorder_threshold: intOrNull(r.reorder_threshold),
-              location: r.location,
-              updated_at: isoFull(r.updated_at ?? r.created_at),
-              qr_data_url: '',
-              custom_fields: bag,
-            } as StockRow)
+            return {
+              ...mapStockToUnified({
+                id: r.id,
+                item_name: r.article,
+                category: r.category,
+                account_code: r.account_code,
+                quantity: stockQty,
+                unit: r.unit,
+                unit_cost: stockUnitCost,
+                total_cost: stockUnitCost != null ? stockUnitCost * stockQty : null,
+                reorder_threshold: intOrNull(r.reorder_threshold),
+                location: r.location,
+                updated_at: isoFull(r.updated_at ?? r.created_at),
+                qr_data_url: '',
+                custom_fields: bag,
+              } as StockRow),
+              // Condition/status come from the linked asset record (same id);
+              // mapStockToUnified defaults them for un-edited lots.
+              condition: r.condition,
+              status: r.status ?? 'available',
+            }
           }
           return mapAssetToUnified({
             id: r.id,
@@ -1574,21 +1598,26 @@ export async function updateUnifiedAsset(
     }
   }
 
-  // Strict mode: account codes and units must come from Master Data.
-  // Title + type snap to the catalog entry so edits can't desync the triple.
+  // Strict mode: known account codes snap Title + Type to the approved
+  // Master Data row so edits can't desync the triple. A code that isn't in the
+  // catalog yet is added from the values just submitted (existing rows are
+  // never edited), so saving never waits on a Super Admin.
   if (data["account_code"] !== undefined && data["account_code"] !== null) {
     const code = String(data["account_code"]).trim();
     if (code) {
-      const hit = await findCatalogEntry(code);
-      if (!hit) {
-        return {
-          success: false,
-          error: `Unknown ACCOUNT CODE "${code}" — ask your Super Admin to add it to Master Data.`,
-        };
+      const ensured = await ensureCatalogEntry({
+        code,
+        title: typeof data["account_title"] === "string" ? data["account_title"] : null,
+        type: typeof data["category"] === "string" ? data["category"] : null,
+        name: typeof data["account_name"] === "string" ? data["account_name"] : null,
+        createdBy: actor.userId,
+      });
+      if (!ensured.ok) {
+        return { success: false, error: ensured.error };
       }
-      data["account_code"] = hit.code;
-      data["account_title"] = hit.title;
-      data["category"] = hit.type;
+      data["account_code"] = ensured.entry.code;
+      data["account_title"] = ensured.entry.title;
+      data["category"] = ensured.entry.type;
     }
   }
   if (data["unit"] !== undefined && data["unit"] !== null) {
@@ -1614,9 +1643,23 @@ export async function updateUnifiedAsset(
         article: true,
         assigned_to: true,
         quantity: true,
+        condition: true,
       },
     })
     .catch(() => null);
+
+  // Unserviceable equipment can never be "available" (and therefore never
+  // assignable). Save-time guard: if the record is unserviceable, force the
+  // status off Available — maintenance is the safe holding state until it is
+  // marked serviceable again.
+  const effectiveCondition =
+    typeof data["condition"] === "string" ? data["condition"] : before?.condition ?? null;
+  if (
+    classifyCondition(effectiveCondition) === "unserviceable" &&
+    (data["status"] === null || data["status"] === "available")
+  ) {
+    data["status"] = "maintenance";
+  }
 
   // An issued unit is owned by its PAR/ICS. Quantity, unit, status and end
   // user must stay in sync with the accountability document, so they are not
@@ -1767,6 +1810,22 @@ function normalizeStatusInput(value: string | null): string | null {
   if (lower.includes("retired") || lower.includes("unservice") || lower.includes("dispos"))
     return "retired";
   return "available";
+}
+
+/**
+ * Unserviceable equipment can never be Available (and so can never be
+ * assigned). Keep those records in Maintenance until the condition is set
+ * back to serviceable.
+ */
+function coerceStatusForCondition(
+  condition: string | null,
+  status: string | null
+): string | null {
+  if (classifyCondition(condition) !== "unserviceable") return status;
+  if (status === null || status.trim().toLowerCase() === "available") {
+    return "maintenance";
+  }
+  return status;
 }
 
 /**
@@ -1927,6 +1986,8 @@ export async function createAsset(
   };
 
   const qrCode = get("qr_code");
+  const condition = normalizeConditionInput(get("condition"));
+  const status = coerceStatusForCondition(condition, normalizeStatusInput(get("status")));
 
   try {
     if (qrCode) {
@@ -1954,7 +2015,7 @@ export async function createAsset(
         location: get("location"),
         total_cost: totalCost,
         remarks: get("remarks"),
-        condition: normalizeConditionInput(get("condition")),
+        condition,
         unit_cost: unitCost,
         end_user: get("end_user"),
         brand: get("brand"),
@@ -1966,7 +2027,7 @@ export async function createAsset(
         color: get("color"),
         plate_number: get("plate_number"),
         fund: get("fund"),
-        status: normalizeStatusInput(get("status")),
+        status,
         dv_tracking_number: get("dv_tracking_number"),
         supplier_payee: get("supplier_payee"),
         account_name_charge: get("account_name_charge"),
@@ -2442,11 +2503,13 @@ export async function importAssetsFromExcel(
         ? "unserviceable"
         : "serviceable";
     const statusLower = (statusRaw ?? "").toLowerCase().trim();
-    const status = ["available", "in use", "maintenance", "retired"].includes(statusLower)
+    const parsedStatus = ["available", "in use", "maintenance", "retired"].includes(statusLower)
       ? statusLower
       : statusLower.includes("retir") || statusLower.includes("unservice") || statusLower.includes("dispos")
         ? "retired"
         : "available";
+    // Imported unserviceable rows must not land as Available.
+    const status = coerceStatusForCondition(condition, parsedStatus);
 
     // PROPERTY No. must stay unique — a repeated or already-used tag
     // skips the whole row with a message (first occurrence wins).
