@@ -38,6 +38,7 @@ import {
 } from "../analytics/actions";
 import { FilePicker, MAX_SELECT } from "../analytics/file-picker";
 import { ValidationPreview } from "../analytics/validation-preview";
+import { ImportPpmpButton } from "../import-ppmp-button";
 import { PlanningView } from "./planning-view";
 import { getPlanningItems, type PlanningItem } from "./actions";
 import { fetchIssuanceConsumption } from "@/lib/prescriptive-actions";
@@ -394,16 +395,19 @@ export default function PpmpPlanningPage() {
             : `${selected.length} of ${MAX_SELECT} workbooks selected · planning FY ${yearValid ? targetYearNum : "TBD"}`
         }
         actions={
-          <Button
-            type="button"
-            variant="outline"
-            className={YELLOW_BTN}
-            onClick={refresh}
-            disabled={files === null}
-          >
-            <RefreshCw size={13} aria-hidden="true" />
-            Refresh
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <ImportPpmpButton onImported={refresh} />
+            <Button
+              type="button"
+              variant="outline"
+              className={YELLOW_BTN}
+              onClick={refresh}
+              disabled={files === null}
+            >
+              <RefreshCw size={13} aria-hidden="true" />
+              Refresh
+            </Button>
+          </div>
         }
       />
 

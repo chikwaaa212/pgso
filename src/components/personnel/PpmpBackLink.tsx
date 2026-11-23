@@ -14,6 +14,16 @@ import styles from "@/app/personnel/ppmp/workspace.module.css";
 export function PpmpBackLink() {
   const pathname = usePathname() ?? "";
   const isSuperAdmin = pathname.startsWith("/super-admin");
+  // The workspace landing page is now the planning screen itself, so there is
+  // nowhere to go "back" to from there.
+  if (
+    pathname === "/personnel/ppmp" ||
+    pathname === "/super-admin/ppmp" ||
+    pathname === "/personnel/ppmp/" ||
+    pathname === "/super-admin/ppmp/"
+  ) {
+    return null;
+  }
   const href = isSuperAdmin ? "/super-admin/ppmp" : "/personnel/ppmp";
 
   return (
