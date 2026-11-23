@@ -1,6 +1,6 @@
 "use client";
 
-import { qtySizeText, type PpmpDraftRow } from "@/lib/ppmp/analytics/planning";
+import { qtyColumnText, type PpmpDraftRow } from "@/lib/ppmp/analytics/planning";
 
 export const GPPB_HEADERS = [
   "General Description and Objective of the Project to be Procured",
@@ -129,7 +129,7 @@ export async function buildGppbWorkbook(
     const cells: (string | number)[] = [
       d.item,
       d.proj_type,
-      qtySizeText(d.qty, d.unit),
+      qtyColumnText(d),
       shortMode(d.mode),
       d.preproc,
       d.start_activity,

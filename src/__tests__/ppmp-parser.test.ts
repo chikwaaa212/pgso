@@ -60,6 +60,25 @@ test("MONTOJO small GPPB sheet parses 3 lines with budgets", async () => {
   );
 });
 
+test("JOSSONE keeps imported Column 3 wording when no quantity parses", async () => {
+  const name = "BM JOSSONE DAYANGHIRANG LnB PPMP 2026 = = =.xlsx";
+  const bytes = await load(name);
+  const profile = await inspectWorkbook(bytes, { filename: name });
+  const sheet = profile.sheets[0];
+  assert.ok(sheet.headerRow !== null);
+  const parsed = await parseLineSheet(
+    bytes,
+    sheet.name,
+    sheet.headerRow as number,
+    ctxFor(name, profile.fiscalYear, profile.office)
+  );
+  const rice = parsed.rows.find((r) => r.qty_text === "Rice (7 Tonner/50 kls.)");
+  assert.ok(rice, "rice size kept: " + JSON.stringify(parsed.rows.map((r) => r.qty_text)));
+  assert.strictEqual(rice.qty, null);
+  const diesel = parsed.rows.find((r) => r.description.includes("Diesel"));
+  assert.strictEqual(diesel?.qty_text, "Diesel Fuel 60.00/liter");
+});
+
 test("DOPH split-qty sheet parses qty/unit/price/total with cross-check", async () => {
   const name = "DOPH-CATEEL = = =.xlsx";
   const bytes = await load(name);

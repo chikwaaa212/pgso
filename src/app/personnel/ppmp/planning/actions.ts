@@ -8,12 +8,14 @@ import type { PpmpHeaderColumn } from "@/lib/ppmp/types";
 const BUCKET = "ppmp-files";
 const MAX_FILES = 3;
 const MAX_BYTES = 10 * 1024 * 1024;
-const PARSER_VERSION = "v2";
+const PARSER_VERSION = "v3";
 
 export interface PlanningItem {
   item_key: string;
   description: string;
   unit: string | null;
+  /** Imported Column 3 wording when no numeric quantity could be parsed. */
+  qty_text: string | null;
   category: string | null;
   office: string | null;
   mode: string | null;
@@ -95,6 +97,7 @@ export async function getPlanningItems(
     description: string;
     qty: number | null;
     unit: string | null;
+    qty_text?: string | null;
     budget_cents: number | null;
     category: string | null;
     office: string | null;
@@ -184,11 +187,19 @@ export async function getPlanningItems(
       }
       return best;
     };
+    // Distinct Column 3 wordings in source order; the workbook layout needs
+    // them verbatim (never replaced by a synthesized quantity).
+    const qtyTexts: string[] = [];
+    for (const r of list) {
+      const t = (r.qty_text ?? "").trim();
+      if (t && !qtyTexts.includes(t)) qtyTexts.push(t);
+    }
     const ev = list.slice(0, 4).map(evidenceOfRow);
     return {
       item_key,
       description: first.description,
       unit: pick((r) => r.unit),
+      qty_text: qtyTexts.length > 0 ? qtyTexts.join("; ") : null,
       category: pick((r) => r.category),
       office: pick((r) => r.office),
       mode: pick((r) => r.mode),

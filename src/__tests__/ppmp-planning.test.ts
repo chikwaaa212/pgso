@@ -14,6 +14,7 @@ import {
   inferExpenseClass,
   inferProjType,
   projectQtyHistory,
+  qtyColumnText,
   qtySizeText,
   recommendMode,
 } from "../lib/ppmp/analytics/planning";
@@ -285,6 +286,12 @@ test("GPPB draft: 12-column mapping, type inference, totals", () => {
     assert.ok(d.remarks.length > 0);
   }
   assert.strictEqual(qtySizeText(10, "reams"), "10 reams");
+  // Column 3 must echo the imported wording rather than inventing a quantity.
+  assert.strictEqual(
+    qtyColumnText({ qty: 4, unit: "lot", qty_text: "Rice (7 Tonner/50 kls.)" }),
+    "Rice (7 Tonner/50 kls.)"
+  );
+  assert.strictEqual(qtyColumnText({ qty: 10, unit: "reams", qty_text: null }), "10 reams");
   assert.strictEqual(inferProjType("Office Supplies"), "Goods");
   assert.strictEqual(inferProjType("Road Infrastructure"), "Infrastructure");
   assert.strictEqual(inferProjType("Consulting Services"), "Consulting Services");

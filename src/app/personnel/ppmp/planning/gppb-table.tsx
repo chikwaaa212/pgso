@@ -2,7 +2,7 @@
 
 import type { PpmpDraftRow } from "@/lib/ppmp/analytics/planning";
 import type { PpmpHeaderColumn } from "@/lib/ppmp/types";
-import { formatPlanningPesos, qtySizeText } from "@/lib/ppmp/analytics/planning";
+import { formatPlanningPesos, qtyColumnText, qtySizeText } from "@/lib/ppmp/analytics/planning";
 
 function shortMode(mode: string): string {
   return (
@@ -39,6 +39,9 @@ function WorkbookLayoutTable({
       case "type":
         return r.proj_type;
       case "qty":
+        // Show the imported Column 3 text exactly when the source stated a
+        // size instead of a numeric quantity (e.g. "Rice (7 Tonner/50 kls.)").
+        if (r.qty_text?.trim()) return r.qty_text;
         return hasUnitColumn
           ? r.qty === null
             ? "—"
@@ -79,18 +82,18 @@ function WorkbookLayoutTable({
   const numeric = new Set(["qty", "price", "total", "budget"]);
 
   return (
-    <div className="overflow-x-auto rounded-lg border border-navy-200">
+    <div className="overflow-hidden rounded-lg border border-navy-200">
       <div className="border-b border-navy-200 bg-navy-50/60 px-3 py-2 text-[11px] text-navy-700">
         {agency || "General"} · Fiscal Year {targetYear ?? "TBD"} · columns follow the
         uploaded workbook
       </div>
-      <table className="w-full border-collapse text-left text-[11px] leading-snug" aria-label="Planning draft in the imported workbook layout">
+      <table className="w-full table-fixed border-collapse break-words text-left text-[11px] leading-snug" aria-label="Planning draft in the imported workbook layout">
         <thead>
           <tr>
             {columns.map((col, i) => (
               <th
                 key={`${col.label}-${i}`}
-                className="border-b border-r border-navy-300 bg-navy-50 px-2 py-2 align-top font-semibold text-navy-900 last:border-r-0"
+                className="border-b border-r border-navy-300 bg-navy-50 px-2 py-2 align-top font-semibold break-words text-navy-900 last:border-r-0"
               >
                 {col.label}
               </th>
@@ -105,9 +108,9 @@ function WorkbookLayoutTable({
                 return (
                   <td
                     key={`${i}-${j}`}
-                    className={`border-b border-r border-navy-200 px-2 py-2 last:border-r-0 ${
+                    className={`border-b border-r border-navy-200 px-2 py-2 align-top break-words last:border-r-0 ${
                       numeric.has(col.field ?? "")
-                        ? "text-right tabular-nums whitespace-nowrap"
+                        ? "text-right tabular-nums"
                         : ""
                     } ${col.field === "total" || col.field === "budget" ? "bg-sky-100 font-semibold" : ""}`}
                   >
@@ -228,7 +231,7 @@ export function GppbTable({
               <tr key={i} className="align-top odd:bg-white even:bg-navy-50/30 hover:bg-amber-50/40">
                 <td className="border-b border-r border-navy-200 px-1.5 py-2 font-medium text-navy-900">{r.item}</td>
                 <td className="border-b border-r border-navy-200 px-1.5 py-2 text-center">{r.proj_type}</td>
-                <td className="border-b border-r border-navy-200 px-1.5 py-2">{qtySizeText(r.qty, r.unit)}</td>
+                <td className="border-b border-r border-navy-200 px-1.5 py-2">{qtyColumnText(r)}</td>
                 <td className="border-b border-r border-navy-200 px-1.5 py-2 text-center">{shortMode(r.mode)}</td>
                 <td className="border-b border-r border-navy-200 px-1.5 py-2 text-center">{r.preproc}</td>
                 <td className="border-b border-r border-navy-200 px-1.5 py-2 text-center tabular-nums">{r.start_activity}</td>

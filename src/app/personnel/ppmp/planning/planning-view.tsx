@@ -5,15 +5,21 @@ import type { ComponentType, ReactNode } from "react";
 import {
   AlertTriangle,
   CalendarRange,
-  FileSpreadsheet,
   Gauge,
   Layers3,
   Lightbulb,
   ListChecks,
   Wallet,
 } from "lucide-react";
+import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from "recharts";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import {
+  ChartContainer,
+  ChartTooltip,
+  ChartTooltipContent,
+  type ChartConfig,
+} from "@/components/ui/chart";
 import { cn } from "@/lib/utils";
 import styles from "../workspace.module.css";
 import type { SessionResult } from "../analytics/actions";
@@ -22,7 +28,6 @@ import { GppbTable } from "./gppb-table";
 import { downloadGppbExcel } from "./gppb-excel";
 import {
   buildForecastsFromItems,
-  buildPlanningBasis,
   buildPlanningForecasts,
   buildPpmpDraft,
   draftToCsv,
@@ -32,10 +37,7 @@ import {
   type PlanningMethod,
   type PlanningOptions,
 } from "@/lib/ppmp/analytics/planning";
-import {
-  compareToPlanned,
-  type ConsumptionResult,
-} from "@/lib/ppmp/analytics/consumption";
+import type { ConsumptionResult } from "@/lib/ppmp/analytics/consumption";
 
 function SectionHead({
   icon: Icon,
@@ -93,16 +95,30 @@ function SectionCard({
   );
 }
 
-const TABLE_HEAD =
-  "bg-navy-50/70 text-[11px] font-semibold uppercase tracking-wide text-navy-500";
-const TABLE_ROW = "border-t border-navy-100 text-navy-900 transition-colors hover:bg-navy-50/40";
-const TABLE_CELL = "px-3 py-2.5 align-top";
+const priorityChartConfig = {
+  planned: { label: "Planned budget", color: "#243b66" },
+} satisfies ChartConfig;
 
-const STATUS_TONE: Record<string, string> = {
-  under: "text-amber-800",
-  over: "text-navy-800",
-  aligned: "text-emerald-800",
-};
+/** Readable axis label: drop long parentheticals and clamp to two short lines. */
+function shortItemLabel(name: string): string {
+  const cleaned = name.replace(/\s*\([^)]*\)\s*/g, " ").replace(/\s+/g, " ").trim() || name;
+  if (cleaned.length <= 22) return cleaned;
+  const words = cleaned.split(" ");
+  let out = "";
+  for (const word of words) {
+    if ((out ? `${out} ${word}` : word).length > 20) break;
+    out = out ? `${out} ${word}` : word;
+  }
+  return out ? `${out}…` : `${cleaned.slice(0, 20)}…`;
+}
+
+/** Compact peso label for the chart axis (values are already in pesos). */
+function compactPeso(value: number): string {
+  if (!Number.isFinite(value)) return "";
+  if (Math.abs(value) >= 1_000_000) return `₱${(value / 1_000_000).toFixed(1)}M`;
+  if (Math.abs(value) >= 1_000) return `₱${Math.round(value / 1_000)}k`;
+  return `₱${Math.round(value)}`;
+}
 
 export function PlanningView({
   result,
@@ -155,16 +171,6 @@ export function PlanningView({
     () => buildPpmpDraft(forecasts, result.report, opts),
     [forecasts, result, opts]
   );
-  // Plain-language basis: what the system applied/raised/defaulted, so the
-  // draft is auditable before anyone signs it.
-  const basis = useMemo(
-    () =>
-      buildPlanningBasis(forecasts, draft, result.report, opts, {
-        files: result.files,
-        items,
-      }),
-    [forecasts, draft, result, opts, items]
-  );
   // Most-recommended highlights: top planned totals deserve first budget attention.
   const recommended = useMemo(() => {
     const ranked = [...draft].sort((a, b) => (b.total_cents ?? 0) - (a.total_cents ?? 0));
@@ -174,6 +180,19 @@ export function PlanningView({
     const share = allTotal > 0 ? Math.round((topTotal / allTotal) * 100) : 0;
     return { top, topTotal, allTotal, share };
   }, [draft]);
+  // Chart-ready shape: pesos (not centavos) so the axis and tooltip read clean.
+  const priorityData = useMemo(
+    () =>
+      recommended.top.map((r) => ({
+        item: r.item,
+        planned: (r.total_cents ?? 0) / 100,
+        share:
+          recommended.allTotal > 0
+            ? ((r.total_cents ?? 0) / recommended.allTotal) * 100
+            : 0,
+      })),
+    [recommended]
+  );
 
   const draftStats = useMemo(() => {
     const totalCents = draft.reduce((a, r) => a + (r.total_cents ?? 0), 0);
@@ -185,40 +204,6 @@ export function PlanningView({
         : null;
     return { totalCents, priced, unpriced, ceilingPct };
   }, [draft, ceilingPesos]);
-
-  // Consumption check: compare every planned quantity against the issuance
-  // history suggestion so a planner can see over/under-planning before export.
-  const consumptionCheck = useMemo(() => {
-    if (!consumption) return null;
-    const byKey = new Map(consumption.suggestions.map((s) => [s.itemKey, s]));
-    const rows = forecasts.map((f) => {
-      const suggestion = byKey.get(f.item_key) ?? null;
-      return {
-        item_key: f.item_key,
-        description: f.description,
-        unit: f.unit,
-        planned: f.qty_base,
-        comparison: compareToPlanned(f.qty_base, suggestion),
-      };
-    });
-    const noticed = rows.filter((r) => r.comparison.status !== "unknown");
-    const under = noticed.filter((r) => r.comparison.status === "under").length;
-    const over = noticed.filter((r) => r.comparison.status === "over").length;
-    const aligned = noticed.filter((r) => r.comparison.status === "aligned").length;
-    const unmatched = rows.length - noticed.length;
-    return {
-      years: consumption.years,
-      matchedItems: consumption.suggestions.length,
-      totalLines: consumption.totalLines,
-      matchedLines: consumption.matchedLines,
-      unmatchedLines: consumption.unmatchedLines,
-      rows: noticed.slice(0, 12),
-      under,
-      over,
-      aligned,
-      unmatched,
-    };
-  }, [consumption, forecasts]);
 
   function downloadCsv() {
     const csv = draftToCsv(draft, targetYear);
@@ -360,181 +345,6 @@ export function PlanningView({
       </Card>
 
       <SectionCard
-        icon={FileSpreadsheet}
-        kicker="Explainability"
-        title="Basis for this planning draft"
-        description="What the system applied from your files, what it increased, how each line was projected, and which values it defaulted — so you can see exactly where this draft comes from before editing or exporting it."
-        aside={
-          <span className="rounded-full border border-navy-200 bg-navy-50 px-2.5 py-1 text-xs font-medium text-navy-800">
-            Projection — not final
-          </span>
-        }
-      >
-        <p className="rounded-lg border border-navy-200 bg-navy-50/60 px-3.5 py-2.5 text-sm leading-relaxed text-navy-900">
-          {basis.headline}
-        </p>
-        <div className="mt-4 grid gap-3 sm:grid-cols-2">
-          {basis.sections.map((section) => (
-            <div key={section.title} className="rounded-lg border border-navy-200 bg-white p-3.5">
-              <h3 className="text-sm font-semibold text-navy-900">{section.title}</h3>
-              <ul className="mt-2 grid gap-1.5 text-sm leading-relaxed text-zinc-700">
-                {section.lines.map((line, i) => (
-                  <li key={`${section.title}-${i}`} className="flex gap-2">
-                    <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-navy-300" aria-hidden="true" />
-                    <span>{line}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ))}
-        </div>
-      </SectionCard>
-
-      {consumptionCheck ? (
-        <SectionCard
-          icon={Gauge}
-          kicker="Usage check"
-          title="Consumption check — actual issuance history"
-          description={
-            <>
-              Planned quantities vs. what was actually issued in FY{" "}
-              {consumptionCheck.years.join(", ") || "—"}. Advisory only: you decide the final quantity.
-            </>
-          }
-          aside={
-            <span className="rounded-full border border-navy-200 bg-navy-50 px-2.5 py-1 text-xs font-medium text-navy-800">
-              {method === "consumption" ? "Applied to this draft" : "Comparison only"}
-            </span>
-          }
-        >
-          <p className="text-sm leading-relaxed text-navy-900">
-            {consumptionCheck.matchedItems} item(s) matched issuance history ·{" "}
-            {consumptionCheck.matchedLines.toLocaleString("en-PH")} of{" "}
-            {consumptionCheck.totalLines.toLocaleString("en-PH")} issuance line(s) matched ·{" "}
-            {consumptionCheck.unmatchedLines.toLocaleString("en-PH")} unmatched or outside the window.
-          </p>
-          <div className="mt-3 flex flex-wrap gap-2 text-xs">
-            <span className="rounded-full border border-amber-300 bg-amber-50 px-2.5 py-1 font-semibold text-amber-900">
-              {consumptionCheck.under} under-planned
-            </span>
-            <span className="rounded-full border border-navy-200 bg-navy-50 px-2.5 py-1 font-semibold text-navy-800">
-              {consumptionCheck.over} over-planned
-            </span>
-            <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 font-semibold text-emerald-800">
-              {consumptionCheck.aligned} aligned
-            </span>
-            <span className="rounded-full border border-zinc-200 bg-zinc-50 px-2.5 py-1 font-semibold text-zinc-600">
-              {consumptionCheck.unmatched} without history
-            </span>
-          </div>
-          {consumptionCheck.rows.length === 0 ? (
-            <p className="mt-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-              No planned line could be matched to issuance history. Imported issuance records and PPMP
-              descriptions must share the same normalized description and unit.
-            </p>
-          ) : (
-            <div className="mt-4 overflow-x-auto rounded-md border border-navy-100">
-              <table className="w-full min-w-[640px] border-collapse text-left text-sm">
-                <thead>
-                  <tr className={TABLE_HEAD}>
-                    <th className="px-3 py-2 font-semibold">Item</th>
-                    <th className="px-3 py-2 font-semibold">Planned</th>
-                    <th className="px-3 py-2 font-semibold">Suggested (base)</th>
-                    <th className="px-3 py-2 font-semibold">Range</th>
-                    <th className="px-3 py-2 font-semibold">Check</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {consumptionCheck.rows.map((row) => (
-                    <tr key={row.item_key} className={TABLE_ROW}>
-                      <td className={cn(TABLE_CELL, "font-medium text-navy-900")}>
-                        {row.description}
-                        {row.unit ? <span className="font-normal text-zinc-500"> ({row.unit})</span> : null}
-                      </td>
-                      <td className={cn(TABLE_CELL, "tabular-nums")}>
-                        {row.planned === null ? "missing" : row.planned.toLocaleString("en-PH")}
-                      </td>
-                      <td className={cn(TABLE_CELL, "tabular-nums")}>
-                        {row.comparison.suggestedBase === null
-                          ? "—"
-                          : row.comparison.suggestedBase.toLocaleString("en-PH")}
-                      </td>
-                      <td className={cn(TABLE_CELL, "tabular-nums text-zinc-600")}>
-                        {row.comparison.suggestedLow === null || row.comparison.suggestedHigh === null
-                          ? "—"
-                          : `${row.comparison.suggestedLow.toLocaleString("en-PH")}–${row.comparison.suggestedHigh.toLocaleString("en-PH")}`}
-                      </td>
-                      <td className={cn(TABLE_CELL, "font-medium", STATUS_TONE[row.comparison.status] ?? "text-zinc-700")}>
-                        {row.comparison.label}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </SectionCard>
-      ) : null}
-
-      <SectionCard
-        icon={Lightbulb}
-        kicker="Priority"
-        title="Most recommended for budget planning"
-        description={
-          <>
-            Top {recommended.top.length} items by planned base total —{" "}
-            <strong className="font-semibold">{formatPlanningPesos(recommended.topTotal)}</strong> of{" "}
-            <strong className="font-semibold">{formatPlanningPesos(recommended.allTotal)}</strong> (
-            {recommended.share}%). Suggestions only — confirm these first with Budget; you decide the final plan.
-          </>
-        }
-      >
-        <div className="grid gap-2">
-          {recommended.top.map((r, i) => {
-            const share =
-              recommended.allTotal > 0
-                ? ((r.total_cents ?? 0) / recommended.allTotal) * 100
-                : 0;
-            return (
-              <div
-                key={i}
-                className="rounded-lg border border-navy-200 bg-white px-3.5 py-3 text-sm leading-relaxed text-navy-900"
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="flex items-center gap-2 font-semibold">
-                      <span className="inline-flex size-5 shrink-0 items-center justify-center rounded-full bg-navy-900 text-[10px] font-bold text-white">
-                        {i + 1}
-                      </span>
-                      <span className="truncate" title={r.item}>{r.item}</span>
-                    </p>
-                    <p className="mt-0.5 text-xs text-zinc-600">
-                      {(r.qty ?? 1).toLocaleString("en-PH")} {r.unit}
-                      {(r.total_cents ?? 0) === 0 ? (
-                        <span className="font-medium text-amber-800"> · needs canvass first</span>
-                      ) : (
-                        <span> · {r.proj_type} · {r.delivery_period}</span>
-                      )}
-                    </p>
-                  </div>
-                  <div className="shrink-0 text-right">
-                    <p className="font-bold tabular-nums">{formatPlanningPesos(r.total_cents)}</p>
-                    <p className="text-[11px] tabular-nums text-zinc-500">{share.toFixed(1)}% of draft</p>
-                  </div>
-                </div>
-                <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-navy-100">
-                  <div
-                    className="h-full rounded-full bg-navy-900"
-                    style={{ width: `${Math.min(100, Math.max(2, share))}%` }}
-                  />
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </SectionCard>
-
-      <SectionCard
         icon={ListChecks}
         kicker="Export"
         title={
@@ -567,6 +377,93 @@ export function PlanningView({
           </p>
         ) : null}
         <GppbTable rows={draft} targetYear={targetYear} agency={agency} columns={columns} />
+      </SectionCard>
+
+      <SectionCard
+        icon={Lightbulb}
+        kicker="Priority"
+        title="Most recommended for budget planning"
+        description={
+          <>
+            Top {recommended.top.length} items by planned base total —{" "}
+            <strong className="font-semibold">{formatPlanningPesos(recommended.topTotal)}</strong> of{" "}
+            <strong className="font-semibold">{formatPlanningPesos(recommended.allTotal)}</strong> (
+            {recommended.share}%). Suggestions only — confirm these first with Budget; you decide the final plan.
+          </>
+        }
+      >
+        {priorityData.length === 0 ? (
+          <p className="rounded-md border border-navy-200 bg-navy-50/60 px-3 py-2 text-sm text-navy-700">
+            No planned lines yet — build a draft to see the budget priorities.
+          </p>
+        ) : (
+          <ChartContainer config={priorityChartConfig} className="h-[320px] w-full">
+            <AreaChart
+              accessibilityLayer
+              data={priorityData}
+              margin={{ top: 8, right: 12, left: 0, bottom: 8 }}
+            >
+              <defs>
+                <linearGradient id="fill-planned-priority" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="var(--color-planned)" stopOpacity={0.45} />
+                  <stop offset="95%" stopColor="var(--color-planned)" stopOpacity={0.04} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid vertical={false} strokeDasharray="3 3" />
+              <XAxis
+                dataKey="item"
+                tickLine={false}
+                axisLine={false}
+                tickMargin={12}
+                interval={0}
+                tick={{ fontSize: 11 }}
+                tickFormatter={shortItemLabel}
+              />
+              <YAxis
+                tickLine={false}
+                axisLine={false}
+                width={68}
+                tick={{ fontSize: 11 }}
+                tickFormatter={compactPeso}
+              />
+              <ChartTooltip
+                cursor={{ stroke: "#cbd5e1", strokeDasharray: "4 4" }}
+                content={
+                  <ChartTooltipContent
+                    hideIndicator
+                    formatter={(value, _name, item) => {
+                      const share = Number(
+                        (item.payload as { share?: number } | undefined)?.share ?? 0
+                      );
+                      return (
+                        <div className="grid w-full gap-0.5">
+                          <div className="flex w-full items-center justify-between gap-4">
+                            <span className="text-zinc-500">Planned budget</span>
+                            <span className="font-semibold tabular-nums text-navy-900">
+                              {formatPlanningPesos(Math.round(Number(value) * 100))}
+                            </span>
+                          </div>
+                          <span className="text-[11px] text-zinc-500">
+                            {share.toFixed(1)}% of the planned total
+                          </span>
+                        </div>
+                      );
+                    }}
+                  />
+                }
+              />
+              <Area
+                dataKey="planned"
+                type="monotone"
+                stroke="var(--color-planned)"
+                strokeWidth={2}
+                fill="url(#fill-planned-priority)"
+                dot={{ r: 3, strokeWidth: 2, fill: "#ffffff" }}
+                activeDot={{ r: 5 }}
+              />
+            </AreaChart>
+          </ChartContainer>
+        )}
       </SectionCard>
     </div>
   );

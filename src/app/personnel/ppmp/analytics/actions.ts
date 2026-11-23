@@ -14,7 +14,7 @@ import { createClient } from "@/lib/supabase/server";
 const BUCKET = "ppmp-files";
 const MAX_FILES = 3;
 const MAX_BYTES = 10 * 1024 * 1024;
-const PARSER_VERSION = "v2";
+const PARSER_VERSION = "v3";
 
 export interface InspectedFile {
   fileId: string;

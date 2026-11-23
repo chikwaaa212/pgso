@@ -31,6 +31,8 @@ export interface PlanningForecastRow {
   item_key: string;
   description: string;
   unit: string | null;
+  /** Imported Column 3 wording when the source had no parseable quantity. */
+  qty_text?: string | null;
   category: string | null;
   office: string | null;
   mode: string | null;
@@ -56,6 +58,8 @@ export interface PpmpDraftRow {
   item: string;
   category: string | null;
   unit: string;
+  /** Exact Column 3 text from the imported workbook, when it had no quantity. */
+  qty_text?: string | null;
   qty: number | null;
   q1: number | null;
   q2: number | null;
@@ -601,6 +605,7 @@ export function buildPpmpDraft(
       item: f.description,
       category: f.category,
       unit,
+      qty_text: f.qty_text?.trim() ? f.qty_text : null,
       qty,
       q1: q1 ?? 0,
       q2: q2 ?? 0,
@@ -1173,6 +1178,8 @@ export interface PlanningItemInput {
   item_key: string;
   description: string;
   unit: string | null;
+  /** Imported Column 3 wording when the source had no parseable quantity. */
+  qty_text?: string | null;
   category: string | null;
   office: string | null;
   mode: string | null;
@@ -1276,6 +1283,7 @@ export function buildForecastsFromItems(
         item_key: it.item_key,
         description: it.description,
         unit: trend?.unit ?? it.unit,
+        qty_text: it.qty_text ?? null,
         category: it.category,
         office: it.office,
         mode: it.mode,
@@ -1321,6 +1329,7 @@ export function buildForecastsFromItems(
           item_key: it.item_key,
           description: it.description,
           unit: trend.unit ?? it.unit,
+          qty_text: it.qty_text ?? null,
           category: it.category,
           office: it.office,
           mode: it.mode,
@@ -1366,6 +1375,7 @@ export function buildForecastsFromItems(
         item_key: it.item_key,
         description: it.description,
         unit: it.unit,
+        qty_text: it.qty_text ?? null,
         category: it.category,
         office: it.office,
         mode: it.mode,
@@ -1403,6 +1413,7 @@ export function buildForecastsFromItems(
         item_key: it.item_key,
         description: it.description,
         unit,
+        qty_text: it.qty_text ?? null,
         category: it.category,
         office: it.office,
         mode: it.mode,
@@ -1446,6 +1457,7 @@ export function buildForecastsFromItems(
         item_key: it.item_key,
         description: it.description,
         unit,
+        qty_text: it.qty_text ?? null,
         category: it.category,
         office: it.office,
         mode: it.mode,
@@ -1496,6 +1508,18 @@ export function qtySizeText(qty: number | null, unit: string | null): string {
 }
 
 /**
+ * Column 3 value for the workbook-layout view/export. When the uploaded
+ * workbook stated a size we could not parse (e.g. "Rice (7 Tonner/50 kls.)"),
+ * keep the planner's own wording verbatim; otherwise show quantity + unit.
+ */
+export function qtyColumnText(
+  row: Pick<PpmpDraftRow, "qty" | "unit" | "qty_text">
+): string {
+  const raw = (row.qty_text ?? "").trim();
+  return raw !== "" ? raw : qtySizeText(row.qty, row.unit);
+}
+
+/**
  * GPPB 12-column CSV export matching the official PPMP sheet layout
  * (Columns 1–12 plus fiscal year / end-user header rows and total budget).
  * Opens directly in Excel.
@@ -1539,7 +1563,7 @@ export function gppbDraftToCsv(
       [
         esc(r.item),
         esc(r.proj_type),
-        esc(qtySizeText(r.qty, r.unit)),
+        esc(qtyColumnText(r)),
         esc(r.mode.replace(/ \(as recorded — confirm with BAC\)| \(no mode in source\)/, "").trim() || r.mode),
         esc(r.preproc),
         esc(r.start_activity),

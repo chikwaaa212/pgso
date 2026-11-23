@@ -97,6 +97,8 @@ interface Candidate {
   type: string | null;
   qty: number | null;
   unit: string | null;
+  /** Raw Column 3 text when no numeric quantity could be parsed. */
+  qtyText: string | null;
   qtyStated: boolean;
   qtyNote: string | null;
   /** Description remnant from the quantity cell ("Diesel Fuel", "Rice"). */
@@ -367,7 +369,7 @@ export async function parseLineSheet(
       stats.sections++;
       candidates.push({
         excelRow: r, descCol: desc, article: null, type: null, qty: null, unit: null,
-        qtyStated: false, qtyNote: null, qtyHead: null, priceCents: null, totalCents: null,
+        qtyText: null, qtyStated: false, qtyNote: null, qtyHead: null, priceCents: null, totalCents: null,
         budgetCents: null, mode: null, start: null, end: null, delivery: null,
         funds: null, office: null,
       });
@@ -420,6 +422,9 @@ export async function parseLineSheet(
       type: typeVal,
       qty: parsed.qty,
       unit,
+      // Preserve the planner's own Column 3 wording when we could not read a
+      // number from it, so the draft never invents "1 lot"/"1 liter".
+      qtyText: parsed.qty === null && qtyRaw.trim() !== "" ? qtyRaw.trim() : null,
       qtyStated,
       qtyNote,
       qtyHead: parsed.head,
@@ -507,6 +512,7 @@ export async function parseLineSheet(
       type: c.type,
       qty: c.qty,
       unit: c.unit,
+      qty_text: c.qtyText,
       budget_cents: c.budgetCents,
       budget_scope: budgetScope,
       price_cents: c.priceCents,

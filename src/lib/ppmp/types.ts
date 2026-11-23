@@ -64,6 +64,12 @@ export interface CanonicalPpmpRow {
   type: string | null;
   qty: number | null;
   unit: string | null;
+  /**
+   * Verbatform of the source "Quantity and Size" cell when the numeric
+   * quantity could not be parsed (e.g. "Rice (7 Tonner/50 kls.)"). Kept so
+   * planning can show the imported Column 3 exactly instead of inventing one.
+   */
+  qty_text?: string | null;
   /** Integer centavos. Lump project budgets carry scope "project-shared". */
   budget_cents: number | null;
   budget_scope: "line" | "project-shared" | null;
