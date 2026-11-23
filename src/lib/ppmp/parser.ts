@@ -8,6 +8,7 @@ import { parseQuantityText } from "./qtyText";
 import type {
   CanonicalPpmpRow,
   LineVariant,
+  PpmpHeaderColumn,
   ValidationIssue,
 } from "./types";
 
@@ -36,6 +37,8 @@ export interface LineParseResult {
   rows: CanonicalPpmpRow[];
   issues: ValidationIssue[];
   variant: LineVariant;
+  /** The header row as recorded in the workbook (label + canonical field). */
+  headers: PpmpHeaderColumn[];
   stats: LineParseStats;
 }
 
@@ -130,6 +133,32 @@ const FIELD_TO_COL: Record<string, keyof ColMap> = {
   code: "code",
   office: "office",
 };
+
+/** Reverse of FIELD_TO_COL: header column index -> canonical field name. */
+const COL_TO_FIELD: Partial<Record<keyof ColMap, string>> = Object.fromEntries(
+  Object.entries(FIELD_TO_COL).map(([field, col]) => [col, field])
+) as Partial<Record<keyof ColMap, string>>;
+
+/** Keep the workbook's own header row so planning can mirror its columns. */
+function headerColumns(
+  headerRaw: string[],
+  map: ColMap
+): PpmpHeaderColumn[] {
+  const byIndex = new Map<number, string>();
+  for (const key of Object.keys(map) as (keyof ColMap)[]) {
+    const idx = map[key];
+    if (idx === null) continue;
+    const field = COL_TO_FIELD[key];
+    if (field) byIndex.set(idx, field);
+  }
+  const out: PpmpHeaderColumn[] = [];
+  headerRaw.forEach((raw, i) => {
+    const label = raw.trim();
+    if (!label) return;
+    out.push({ label, field: byIndex.get(i) ?? null });
+  });
+  return out;
+}
 
 function mapHeaderCells(headerRaw: string[]): { map: ColMap; rawByField: Map<string, number> } {
   const map: ColMap = {
@@ -257,6 +286,7 @@ export async function parseLineSheet(
   }
 
   const variant = detectVariant(map, positionalGuada);
+  const headers = headerColumns(headerRaw, map);
   if (map.desc === null) {
     issues.push({
       severity: "error",
@@ -264,7 +294,7 @@ export async function parseLineSheet(
       code: "HEADER_NO_DESCRIPTION",
       message: `Sheet "${sheetName}" header has no description column; rows cannot be attributed.`,
     });
-    return { rows: [], issues, variant, stats };
+    return { rows: [], issues, variant, headers, stats };
   }
 
   const cell = (row: ExcelJS.Row, idx: number | null): string =>
@@ -503,5 +533,5 @@ export async function parseLineSheet(
     stats.lines++;
   }
 
-  return { rows, issues, variant, stats };
+  return { rows, issues, variant, headers, stats };
 }

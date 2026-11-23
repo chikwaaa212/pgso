@@ -3,11 +3,12 @@
 import prisma from "@/lib/prisma";
 import { createClient } from "@/lib/supabase/server";
 import type { EvidenceRef } from "@/lib/ppmp/analytics/types";
+import type { PpmpHeaderColumn } from "@/lib/ppmp/types";
 
 const BUCKET = "ppmp-files";
 const MAX_FILES = 3;
 const MAX_BYTES = 10 * 1024 * 1024;
-const PARSER_VERSION = "v1";
+const PARSER_VERSION = "v2";
 
 export interface PlanningItem {
   item_key: string;
@@ -56,7 +57,14 @@ function evidenceOfRow(r: {
  */
 export async function getPlanningItems(
   fileIds: string[]
-): Promise<{ success?: boolean; error?: string; items?: PlanningItem[]; totalLines?: number }> {
+): Promise<{
+  success?: boolean;
+  error?: string;
+  items?: PlanningItem[];
+  totalLines?: number;
+  /** Uploaded workbook header row, in order, for a matching draft layout. */
+  columns?: PpmpHeaderColumn[];
+}> {
   if (!Array.isArray(fileIds) || fileIds.length === 0)
     return { error: "Select at least one PPMP file." };
   if (fileIds.length > MAX_FILES)
@@ -98,14 +106,20 @@ export async function getPlanningItems(
     source: { filename: string; sheet: string; row: number; hash8: string };
   };
   const all: Raw[] = [];
+  let columns: PpmpHeaderColumn[] | undefined;
   for (const row of rows) {
     const useParseCache = !!row.file_hash && (row.file_size ?? 0) <= 150000;
     const { cacheGet, cacheKey } = await import("@/lib/personnel-cache");
     const parseKey = cacheKey("ppmp:parse", { h: row.file_hash ?? row.id, v: PARSER_VERSION });
     const cached = useParseCache
-      ? await cacheGet<{ rows: Raw[]; fiscalYear: number | null }>(parseKey)
+      ? await cacheGet<{
+          rows: Raw[];
+          fiscalYear: number | null;
+          headers?: PpmpHeaderColumn[];
+        }>(parseKey)
       : null;
     if (cached && cached.rows.length > 0) {
+      if (!columns && cached.headers && cached.headers.length > 0) columns = cached.headers;
       all.push(...cached.rows);
       continue;
     }
@@ -128,6 +142,7 @@ export async function getPlanningItems(
           fiscalYear,
           officeDefault: profile.office,
         });
+        if (!columns && parsed.headers.length > 0) columns = parsed.headers;
         all.push(...parsed.rows);
       } catch (e) {
         console.error("[getPlanningItems] parse", sheet.name, e);
@@ -191,5 +206,5 @@ export async function getPlanningItems(
   });
 
   items.sort((a, b) => a.description.localeCompare(b.description));
-  return { success: true, items: items.slice(0, 200), totalLines: all.length };
+  return { success: true, items: items.slice(0, 200), totalLines: all.length, columns };
 }

@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import styles from "../workspace.module.css";
 import type { SessionResult } from "../analytics/actions";
+import type { PpmpHeaderColumn } from "@/lib/ppmp/types";
 import { GppbTable } from "./gppb-table";
 import { downloadGppbExcel } from "./gppb-excel";
 import {
@@ -106,6 +107,7 @@ const STATUS_TONE: Record<string, string> = {
 export function PlanningView({
   result,
   items,
+  columns,
   consumption,
   agency,
   targetYear,
@@ -113,10 +115,10 @@ export function PlanningView({
   method,
   growthPct,
   pricePct,
-  categoryFilter,
 }: {
   result: SessionResult;
   items: PlanningItemInput[] | null;
+  columns: PpmpHeaderColumn[] | null;
   consumption: ConsumptionResult | null;
   agency: string;
   targetYear: number | null;
@@ -124,7 +126,6 @@ export function PlanningView({
   method: PlanningMethod;
   growthPct: number;
   pricePct: number;
-  categoryFilter: string;
 }) {
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState("");
@@ -136,10 +137,12 @@ export function PlanningView({
       method,
       growthPct,
       pricePct,
-      categoryFilter,
+      // Category filtering was removed from the UI; the draft always covers
+      // every line in the selected workbooks.
+      categoryFilter: "all",
       consumption: consumption?.suggestions ?? null,
     }),
-    [targetYear, agency, ceilingPesos, method, growthPct, pricePct, categoryFilter, consumption]
+    [targetYear, agency, ceilingPesos, method, growthPct, pricePct, consumption]
   );
   const forecasts = useMemo(
     () =>
@@ -534,8 +537,16 @@ export function PlanningView({
       <SectionCard
         icon={ListChecks}
         kicker="Export"
-        title="Proposed PPMP draft — GPPB format (Columns 1–12)"
-        description="Official PPMP sheet layout, filled automatically from the plan. The .xlsx download matches this on-screen table — same columns, order, budget highlight, and TOTAL BUDGET footer. Milestones are template dates — confirm with BAC."
+        title={
+          columns && columns.length > 0
+            ? "Proposed PPMP draft — your imported workbook layout"
+            : "Proposed PPMP draft — GPPB format (Columns 1–12)"
+        }
+        description={
+          columns && columns.length > 0
+            ? "This table uses the same columns, order, and headers as the workbook you selected, filled with the projected FY plan. The Excel download keeps the official GPPB layout for submission; the CSV downloads remain available for reference."
+            : "Official PPMP sheet layout, filled automatically from the plan. Milestones are template dates — confirm with BAC."
+        }
         aside={
           <div className="flex flex-wrap gap-2">
             <Button type="button" size="sm" onClick={() => void downloadExcel()} disabled={draft.length === 0 || exporting}>
@@ -555,7 +566,7 @@ export function PlanningView({
             {exportError}
           </p>
         ) : null}
-        <GppbTable rows={draft} targetYear={targetYear} agency={agency} />
+        <GppbTable rows={draft} targetYear={targetYear} agency={agency} columns={columns} />
       </SectionCard>
     </div>
   );

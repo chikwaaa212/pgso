@@ -45,6 +45,17 @@ export type LineVariant =
   | "GUADA_NESTED"
   | "LEGACY_7COL";
 
+/**
+ * One column of the uploaded workbook's header row, kept so planning can show
+ * the draft in the same layout the planner imported (label + canonical field).
+ */
+export interface PpmpHeaderColumn {
+  /** Header text exactly as it appears in the workbook. */
+  label: string;
+  /** Canonical planning field, or null when the column is not used. */
+  field: string | null;
+}
+
 /** One normalized procurement line (P3 produces these; P2 only profiles). */
 export interface CanonicalPpmpRow {
   item_key: string;

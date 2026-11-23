@@ -6,7 +6,7 @@ import { normalizeHeader } from "@/lib/ppmp/aliases";
 import { loadConfig } from "@/lib/ppmp/analytics/config";
 import { runAnalysis } from "@/lib/ppmp/analytics/index";
 import type { AnalysisReport, YearFile } from "@/lib/ppmp/analytics/types";
-import type { WorkbookProfile } from "@/lib/ppmp/types";
+import type { PpmpHeaderColumn, WorkbookProfile } from "@/lib/ppmp/types";
 import { writeAuditLog } from "@/lib/audit";
 import prisma from "@/lib/prisma";
 import { createClient } from "@/lib/supabase/server";
@@ -14,7 +14,7 @@ import { createClient } from "@/lib/supabase/server";
 const BUCKET = "ppmp-files";
 const MAX_FILES = 3;
 const MAX_BYTES = 10 * 1024 * 1024;
-const PARSER_VERSION = "v1";
+const PARSER_VERSION = "v2";
 
 export interface InspectedFile {
   fileId: string;
@@ -253,7 +253,12 @@ export async function runPpmpAnalysis(
       const { cacheGet, cacheKey } = await import("@/lib/personnel-cache");
       const parseKey = cacheKey("ppmp:parse", { h: row.file_hash ?? row.id, v: PARSER_VERSION });
       const cached = useParseCache
-        ? await cacheGet<{ rows: YearFile["rows"]; fiscalYear: number | null; office: string | null }>(parseKey)
+        ? await cacheGet<{
+            rows: YearFile["rows"];
+            fiscalYear: number | null;
+            office: string | null;
+            headers?: PpmpHeaderColumn[];
+          }>(parseKey)
         : null;
       if (cached && cached.rows.length > 0) {
         yearFiles.push({ fileId: row.id, filename: row.filename, fiscalYear: cached.fiscalYear, rows: cached.rows });
@@ -284,6 +289,7 @@ export async function runPpmpAnalysis(
       const hash8 = (row.file_hash ?? "").slice(0, 8) || "unknown";
       const { parseLineSheet } = await import("@/lib/ppmp/parser");
       const allRows: YearFile["rows"] = [];
+      let headers: PpmpHeaderColumn[] | undefined;
       for (const sheet of profile.sheets) {
         if (sheet.kind !== "LINE_LIST" || sheet.headerRow === null) continue;
         try {
@@ -294,6 +300,7 @@ export async function runPpmpAnalysis(
             fiscalYear,
             officeDefault: profile.office,
           });
+          if (!headers && parsed.headers.length > 0) headers = parsed.headers;
           allRows.push(...parsed.rows);
         } catch (e) {
           console.error("[runPpmpAnalysis] parse", sheet.name, e);
@@ -305,7 +312,7 @@ export async function runPpmpAnalysis(
       if (useParseCache && allRows.length > 0) {
         try {
           const { cacheKey: makeKey, cacheSet } = await import("@/lib/personnel-cache");
-          const entry = { rows: allRows, fiscalYear, office: profile.office };
+          const entry = { rows: allRows, fiscalYear, office: profile.office, headers };
           if (JSON.stringify(entry).length < 1000000) {
             await cacheSet(makeKey("ppmp:parse", { h: row.file_hash, v: PARSER_VERSION }), entry, 3600);
           }

@@ -54,6 +54,7 @@ export interface PlanningForecastRow {
 
 export interface PpmpDraftRow {
   item: string;
+  category: string | null;
   unit: string;
   qty: number | null;
   q1: number | null;
@@ -598,6 +599,7 @@ export function buildPpmpDraft(
     const total = f.total_base_cents ?? Math.round(qty * unitCost);
     return {
       item: f.description,
+      category: f.category,
       unit,
       qty,
       q1: q1 ?? 0,

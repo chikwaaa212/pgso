@@ -43,6 +43,7 @@ import { getPlanningItems, type PlanningItem } from "./actions";
 import { fetchIssuanceConsumption } from "@/lib/prescriptive-actions";
 import type { ConsumptionResult } from "@/lib/ppmp/analytics/consumption";
 import type { PlanningMethod } from "@/lib/ppmp/analytics/planning";
+import type { PpmpHeaderColumn } from "@/lib/ppmp/types";
 import styles from "../workspace.module.css";
 
 const YELLOW_BTN = "h-7 gap-1.5 rounded-[5px] px-3 text-xs font-semibold";
@@ -124,6 +125,7 @@ export default function PpmpPlanningPage() {
   const [result, setResult] = useState<SessionResult | null>(null);
   const [items, setItems] = useState<PlanningItem[] | null>(null);
   const [itemsNote, setItemsNote] = useState("");
+  const [columns, setColumns] = useState<PpmpHeaderColumn[] | null>(null);
   const [consumption, setConsumption] = useState<ConsumptionResult | null>(null);
   const [consumptionNote, setConsumptionNote] = useState("");
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -135,13 +137,17 @@ export default function PpmpPlanningPage() {
   const [method, setMethod] = useState<PlanningMethod>("growth");
   const [growthPct, setGrowthPct] = useState("5");
   const [pricePct, setPricePct] = useState("3");
-  const [categoryFilter, setCategoryFilter] = useState("all");
 
   const refresh = useCallback(() => {
-    void listPpmpFiles().then((rows) => {
-      setFiles(rows);
-      setSelected((prev) => prev.filter((id) => rows.some((r) => r.id === id)));
-    });
+    void listPpmpFiles()
+      .then((rows) => {
+        setFiles(rows);
+        setSelected((prev) => prev.filter((id) => rows.some((r) => r.id === id)));
+      })
+      .catch(() => {
+        setFiles([]);
+        setRunError("Could not load your PPMP library. Check your connection and refresh.");
+      });
   }, []);
 
   useEffect(() => {
@@ -167,6 +173,7 @@ export default function PpmpPlanningPage() {
         setInspected(null);
         setResult(null);
         setItems(null);
+        setColumns(null);
         return prev.filter((x) => x !== id);
       }
       if (prev.length >= MAX_SELECT) {
@@ -188,6 +195,7 @@ export default function PpmpPlanningPage() {
     setInspected(null);
     setResult(null);
     setItems(null);
+    setColumns(null);
     setItemsNote("");
     setRunError("");
     stopPolling();
@@ -215,6 +223,7 @@ export default function PpmpPlanningPage() {
     setRunError("");
     setResult(null);
     setItems(null);
+    setColumns(null);
     setItemsNote("");
     setConsumption(null);
     setConsumptionNote("");
@@ -228,59 +237,95 @@ export default function PpmpPlanningPage() {
         return;
       }
       const sessionId = started.sessionId;
+      let pollFailures = 0;
       pollRef.current = setInterval(async () => {
-        const status = await getAnalysisStatus(sessionId);
-        if ("error" in status) {
-          stopPolling();
-          setRunError(status.error);
-          setRunning(false);
-          return;
-        }
-        setStage(STAGE_LABEL[status.stage] ?? status.stage);
-        if (status.status === "succeeded") {
-          stopPolling();
-          const res = await getAnalysisResult(sessionId);
-          if ("error" in res) {
-            setRunError(res.error);
-          } else {
-            setResult(res);
-            // Full line coverage for future planning (all rows, not top-10).
-            // Runs after analysis so the parse cache is warm; never blocks the report.
-            void getPlanningItems(selected).then((pi) => {
-              if (pi.success && pi.items) {
-                setItems(pi.items);
-                setItemsNote(
-                  `Full coverage: ${pi.items.length} planned items from ${pi.totalLines ?? 0} uploaded entries.`
-                );
-              } else {
-                setItems(null);
-                setItemsNote(
-                  pi.error ?? "Full item list unavailable — planning falls back to top items."
-                );
-              }
-            });
-            // Issuance history (Objective 5): powers the consumption method and
-            // the consumption-check panel. Failure never blocks the draft.
-            void fetchIssuanceConsumption()
-              .then((res) => {
-                setConsumption(res);
-                setConsumptionNote(
-                  res.suggestions.length > 0
-                    ? `Issuance history: ${res.suggestions.length} item(s) with usage across FY ${res.years.join(", ")}.`
-                    : "No issuance history matched the last three fiscal years."
-                );
-              })
-              .catch(() => {
-                setConsumption(null);
-                setConsumptionNote("Issuance history unavailable — consumption suggestions are off.");
-              });
-            toast({ title: "Planning draft ready", variant: "success" });
+        try {
+          const status = await getAnalysisStatus(sessionId);
+          pollFailures = 0;
+          if ("error" in status) {
+            stopPolling();
+            setRunError(status.error);
+            setRunning(false);
+            return;
           }
-          setRunning(false);
-        } else if (status.status === "failed") {
-          stopPolling();
-          setRunError("Planning run failed. Check the validation preview and try again.");
-          setRunning(false);
+          setStage(STAGE_LABEL[status.stage] ?? status.stage);
+          if (status.status === "succeeded") {
+            stopPolling();
+            let res: Awaited<ReturnType<typeof getAnalysisResult>>;
+            try {
+              res = await getAnalysisResult(sessionId);
+            } catch {
+              setRunError(
+                "The planning result could not be loaded. Run the draft again — your files were not changed."
+              );
+              setRunning(false);
+              return;
+            }
+            if ("error" in res) {
+              setRunError(res.error);
+            } else {
+              setResult(res);
+              // Full line coverage for future planning (all rows, not top-10).
+              // Runs after analysis so the parse cache is warm; never blocks the report.
+              void getPlanningItems(selected)
+                .then((pi) => {
+                  if (pi.success && pi.items) {
+                    setItems(pi.items);
+                    setColumns(pi.columns ?? null);
+                    setItemsNote(
+                      `Full coverage: ${pi.items.length} planned items from ${pi.totalLines ?? 0} uploaded entries.`
+                    );
+                  } else {
+                    setItems(null);
+                    setColumns(null);
+                    setItemsNote(
+                      pi.error ?? "Full item list unavailable — planning falls back to top items."
+                    );
+                  }
+                })
+                .catch(() => {
+                  setItems(null);
+                  setColumns(null);
+                  setItemsNote(
+                    "Full item list unavailable — planning falls back to top items."
+                  );
+                });
+              // Issuance history (Objective 5): powers the consumption method and
+              // the consumption-check panel. Failure never blocks the draft.
+              void fetchIssuanceConsumption()
+                .then((res) => {
+                  setConsumption(res);
+                  setConsumptionNote(
+                    res.suggestions.length > 0
+                      ? `Issuance history: ${res.suggestions.length} item(s) with usage across FY ${res.years.join(", ")}.`
+                      : "No issuance history matched the last three fiscal years."
+                  );
+                })
+                .catch(() => {
+                  setConsumption(null);
+                  setConsumptionNote("Issuance history unavailable — consumption suggestions are off.");
+                });
+              toast({ title: "Planning draft ready", variant: "success" });
+            }
+            setRunning(false);
+          } else if (status.status === "failed") {
+            stopPolling();
+            setRunError("Planning run failed. Check the validation preview and try again.");
+            setRunning(false);
+          }
+        } catch {
+          // A dropped request (server restart, flaky connection, Vercel cold
+          // start) must not crash the page with "Failed to fetch".
+          pollFailures += 1;
+          if (pollFailures >= 5) {
+            stopPolling();
+            setRunError(
+              "Lost connection while preparing the draft. Check your connection and try again — the files were not changed."
+            );
+            setRunning(false);
+          } else {
+            setStage("Reconnecting…");
+          }
         }
       }, 2000);
     } catch {
@@ -483,17 +528,6 @@ export default function PpmpPlanningPage() {
             />
             <span className={styles.fieldHint}>Applied to recorded unit costs.</span>
           </label>
-
-          <label className={styles.field}>
-            <span className={styles.fieldLabel}>Category filter</span>
-            <input
-              className={styles.control}
-              value={categoryFilter}
-              onChange={(e) => setCategoryFilter(e.target.value)}
-              placeholder="all"
-            />
-            <span className={styles.fieldHint}>Use “all” or a category name (supplies first).</span>
-          </label>
         </div>
 
         <div className={styles.divider} style={{ margin: "0.875rem 0" }} />
@@ -617,6 +651,7 @@ export default function PpmpPlanningPage() {
           <PlanningView
             result={result}
             items={items}
+            columns={columns}
             consumption={consumption}
             agency={agency.trim() || "General"}
             targetYear={yearValid ? targetYearNum : null}
@@ -628,7 +663,6 @@ export default function PpmpPlanningPage() {
             method={method}
             growthPct={Number.isFinite(growthNum) ? growthNum : 5}
             pricePct={Number.isFinite(priceNum) ? priceNum : 0}
-            categoryFilter={categoryFilter.trim() || "all"}
           />
         </PpmpPanel>
       ) : null}
