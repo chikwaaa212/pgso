@@ -125,8 +125,12 @@ async function resolveScan(text: string, portal: ScanPortal): Promise<ScanResult
   let asset: PublicAssetTag | null = null;
   let lookupError: string | undefined;
 
+  const endpoint =
+    ref.kind === "unit"
+      ? `/api/public/asset-units/${ref.id}`
+      : `/api/public/assets/${ref.id}`;
   try {
-    const res = await fetch(`/api/public/assets/${ref.id}`, { cache: "no-store" });
+    const res = await fetch(endpoint, { cache: "no-store" });
     if (res.ok) {
       asset = (await res.json()) as PublicAssetTag;
     } else if (res.status !== 404) {
@@ -138,7 +142,9 @@ async function resolveScan(text: string, portal: ScanPortal): Promise<ScanResult
 
   let enrichment: AssetScanEnrichment | null = null;
   let history: AssetHistory | null = null;
-  if (portal !== "public" && asset) {
+  // Unit tags resolve through their own endpoint; staff-only asset enrichment
+  // and custody history are keyed by the parent asset id, not the unit id.
+  if (portal !== "public" && asset && ref.kind !== "unit") {
     const [resolved, trail] = await Promise.allSettled([
       getScannedAssetOption(ref.id),
       getScannedAssetHistory(ref.id),
@@ -932,6 +938,7 @@ function ResultCard({
     }
 
     const isStock = asset.kind === "stock";
+    const isUnit = asset.kind === "unit";
     const title =
       asset.article ?? asset.property_number ?? asset.qr_code ?? "Scanned record";
     const accountCode = asset.account_code ?? null;
@@ -949,7 +956,11 @@ function ResultCard({
             </span>
             <div className={s.resultHeadline}>
               <span className={s.resultType}>
-                {isStock ? "Stock item" : "Property / asset"}
+                {isStock
+                  ? "Stock item"
+                  : isUnit
+                    ? "Tracked piece"
+                    : "Property / asset"}
               </span>
               <h2 className={s.resultTitle}>{title}</h2>
               <p className={s.resultSub}>
@@ -972,7 +983,11 @@ function ResultCard({
             ) : (
               <PersonCard
                 label="Record"
-                name={asset.property_number ?? asset.qr_code ?? "PGSO property"}
+                name={
+                  isUnit
+                    ? asset.item_code ?? asset.qr_code ?? "Tracked piece"
+                    : asset.property_number ?? asset.qr_code ?? "PGSO property"
+                }
                 meta={asset.location}
                 sideLabel="Status"
                 sideValue={asset.status ?? null}
@@ -989,6 +1004,9 @@ function ResultCard({
           )}
 
           <div className={s.grid}>
+            {isUnit ? (
+              <Field label="Item code" value={asset.item_code ?? null} />
+            ) : null}
             <Field
               label="Property no."
               value={asset.property_number ?? asset.qr_code}
@@ -1028,7 +1046,7 @@ function ResultCard({
             ) : null}
           </div>
 
-          {staff ? (
+          {staff && !isUnit ? (
             <AssetHistoryBlock
               key={result.ref.id}
               assetId={result.ref.id}

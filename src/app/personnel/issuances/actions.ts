@@ -13,6 +13,7 @@ import {
 } from '@/lib/issuance-rules'
 import { assetOptionDisabledReason } from '@/lib/asset-option'
 import { classifyCondition } from '@/lib/reporting'
+import { claimUnits } from '@/lib/asset-units'
 
 // ─── Raw data layer ──────────────────────────────────────────────────────────
 // NOTE: uses $queryRaw/$executeRaw instead of prisma.issuanceRecord so this
@@ -922,6 +923,13 @@ async function evaluateAndAssign(
             })
           }
         }
+        // Stamp the assigned physical piece with its unique item code/QR tag.
+        await claimUnits(tx, { assetId }, {
+          count: 1,
+          employeeId,
+          issuanceId: newId,
+          condition: cur?.condition ?? null,
+        })
       } else if (inventoryId) {
         const stock = await tx.inventoryItem.findUnique({
           where: { id: inventoryId },
@@ -935,6 +943,11 @@ async function evaluateAndAssign(
         })
         if (claimed.count === 0)
           throw new Error('Stock quantity changed — reload and try again.')
+        await claimUnits(tx, { inventoryId }, {
+          count: qty,
+          employeeId,
+          issuanceId: newId,
+        })
       }
       return newId
     }, { maxWait: 15_000, timeout: 30_000 })
@@ -1497,6 +1510,12 @@ export async function approveRequestWithIssuance(
               })
             }
           }
+          await claimUnits(tx, { assetId: line.assetId }, {
+            count: 1,
+            employeeId,
+            issuanceId: id,
+            condition: cur?.condition ?? null,
+          })
         } else if (line.inventoryId) {
           const stock = await tx.inventoryItem.findUnique({
             where: { id: line.inventoryId },
@@ -1510,6 +1529,11 @@ export async function approveRequestWithIssuance(
           })
           if (claimed.count === 0)
             throw new Error('Stock quantity changed — reload and try again.')
+          await claimUnits(tx, { inventoryId: line.inventoryId }, {
+            count: qty,
+            employeeId,
+            issuanceId: id,
+          })
         }
       }
       await tx.request.update({

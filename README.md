@@ -220,6 +220,7 @@ The personnel portal is the operational core of the system.
 - Custom columns can be defined and filled per asset.
 - Asset detail page for viewing and editing.
 - QR code generation and display.
+- **Per-piece tracking:** every physical unit gets its own immutable item code (`AST_ITM_CODE_0001`) and QR tag. Creating, importing, editing, or stocking an asset lot keeps the piece records in step, and assigning a lot stamps the holder and issuance on the claimed pieces. Scan a piece tag to open its own detail page with holder and assignment record.
 - Assignment state: available, in use, maintenance, retired.
 - Only available and unassigned assets can be issued.
 
@@ -619,6 +620,7 @@ Viewed state is recorded per user, so the hub can distinguish new from already-r
 QR codes are generated for:
 
 - Assets — resolve to the asset detail page.
+- Tracked pieces — each unit of an asset lot has its own tag resolving to `/personnel/assets/unit/{id}` (holder + assignment record).
 - Stock items — resolve to the stock detail page.
 - Completed requests — resolve to the request handover.
 
@@ -629,6 +631,7 @@ The scanner uses the device camera (it is camera-only — there is no image-uplo
 | Scanned item | Actions (staff portals) |
 | --- | --- |
 | Asset | Open asset details · View history · **Log repair** · **Request transfer** |
+| Tracked piece | Open tracked piece (item code, holder, assignment record) |
 | Stock item | Open stock item · **Request replenishment** |
 
 The actions are portal-aware (`src/lib/scan-actions.ts`): super-admin links stay inside `/super-admin/*` because middleware redirects cross-portal paths. Deep links carry `?asset={id}`; the repairs and requests pages resolve the option, open the create dialog with the asset and current holder prefilled, then strip the query string so refresh/back does not re-open it. The public `/scan` route stays read-only — identification only, with a "sign in to act" hint.

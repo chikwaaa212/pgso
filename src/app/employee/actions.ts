@@ -12,6 +12,15 @@ import {
 } from '@/app/personnel/requests/actions'
 import { isTransferTo, selectIncomingIds } from '@/lib/transfer-target'
 import type { IssuanceDetail } from '@/app/personnel/issuances/actions'
+import { generateAssetUnitQrDataUrl } from '@/lib/qrcode'
+
+export interface MyAssetUnit {
+  id: string
+  item_code: string
+  status: string | null
+  assigned_at: string | null
+  qr_data_url: string
+}
 
 export interface MyAssetRow {
   id: string
@@ -36,6 +45,8 @@ export interface MyAssetRow {
   doc_no: string | null
   doc_type: string | null
   doc_date: string | null
+  /** Individually tracked pieces issued to this employee. */
+  units?: MyAssetUnit[]
 }
 
 export interface MyDocRow {
@@ -109,7 +120,7 @@ export async function getMyAssets(): Promise<MyAssetRow[]> {
     /* fall through to DB */
   }
   try {
-    const [assets, docs] = await Promise.all([
+    const [assets, docs, myUnits] = await Promise.all([
       prisma.asset.findMany({
         where: { assigned_to: userId },
         orderBy: { account_code: 'asc' },
@@ -133,7 +144,42 @@ export async function getMyAssets(): Promise<MyAssetRow[]> {
                request_id::text AS request_id, quantity, issuance_data, created_at
         FROM issuance_records WHERE employee_id = ${userId}::uuid
         ORDER BY created_at DESC`,
+      // Individually tracked pieces currently in this employee's custody.
+      prisma.assetUnit
+        .findMany({
+          where: { assigned_to: userId },
+          orderBy: { assigned_at: 'desc' },
+          select: {
+            id: true,
+            item_code: true,
+            status: true,
+            assigned_at: true,
+            asset_id: true,
+            inventory_id: true,
+          },
+        })
+        .catch(() => []),
     ])
+
+    const unitRows: MyAssetUnit[] = await Promise.all(
+      myUnits.map(async (u) => ({
+        id: u.id,
+        item_code: u.item_code,
+        status: u.status,
+        assigned_at: u.assigned_at?.toISOString() ?? null,
+        qr_data_url: await generateAssetUnitQrDataUrl(u.id).catch(() => ''),
+      }))
+    )
+    const unitsByAsset = new Map<string, MyAssetUnit[]>()
+    const unitsByInventory = new Map<string, MyAssetUnit[]>()
+    myUnits.forEach((u, i) => {
+      const bucket = u.asset_id ? unitsByAsset : unitsByInventory
+      const key = (u.asset_id ?? u.inventory_id) as string
+      if (!key) return
+      const list = bucket.get(key) ?? []
+      list.push(unitRows[i])
+      bucket.set(key, list)
+    })
 
     const assetIds = new Set(assets.map((a) => a.id))
     const docByAsset = new Map<string, MyIssuanceRaw>()
@@ -215,6 +261,7 @@ export async function getMyAssets(): Promise<MyAssetRow[]> {
         doc_no: linked?.doc_no ?? null,
         doc_type: linked?.doc_type ?? null,
         doc_date: linked ? isoDate(linked.doc_date) : null,
+        units: unitsByAsset.get(a.id) ?? [],
       }
     })
 
@@ -277,6 +324,7 @@ export async function getMyAssets(): Promise<MyAssetRow[]> {
           doc_no: d.doc_no,
           doc_type: d.doc_type,
           doc_date: isoDate(d.doc_date),
+          units: lineInvId ? unitsByInventory.get(lineInvId) ?? [] : [],
         })
       })
     })

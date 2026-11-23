@@ -379,6 +379,44 @@ export default function EmployeeAssetsPage() {
                     </div>
                   ) : null}
                 </dl>
+
+                {a.units && a.units.length > 0 ? (
+                  <div className="mt-3 border-t border-slate-200 pt-3">
+                    <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                      My tracked pieces
+                    </p>
+                    <ul className="space-y-2">
+                      {a.units.map((unit) => (
+                        <li
+                          key={unit.id}
+                          className="flex items-center gap-2.5 rounded-md border border-slate-200 bg-white p-2"
+                        >
+                          {unit.qr_data_url ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img
+                              src={unit.qr_data_url}
+                              alt={`QR code for ${unit.item_code}`}
+                              width={56}
+                              height={56}
+                              className="h-14 w-14 shrink-0"
+                              loading="lazy"
+                              decoding="async"
+                            />
+                          ) : null}
+                          <div className="min-w-0">
+                            <code className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-semibold text-navy-900">
+                              {unit.item_code}
+                            </code>
+                            <p className="mt-0.5 text-[10px] capitalize text-slate-500">
+                              {unit.status ?? "assigned"}
+                              {unit.assigned_at ? ` · ${fmtDate(unit.assigned_at)}` : ""}
+                            </p>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
               </article>
             ))}
           </div>

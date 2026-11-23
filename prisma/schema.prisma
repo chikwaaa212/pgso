@@ -75,6 +75,7 @@ model Asset {
   created_at               DateTime? @default(now()) @db.Timestamptz
   documents                Document[]
   custom_fields            Json?     @db.JsonB
+  units                    AssetUnit[]
 
   @@index([status])
   @@index([category])
@@ -85,6 +86,36 @@ model Asset {
   @@index([status, created_at(sort: Desc)])
   @@index([account_code, status])
   @@map("assets")
+}
+
+/// One physical, individually tracked piece of an asset lot.
+///
+/// An asset/inventory row carries a quantity (how many pieces the lot holds);
+/// each piece gets its own immutable `item_code` (`AST_ITM_CODE_0001`) and a
+/// scannable QR tag so assignment, transfer, repair, and disposal can be
+/// traced per piece instead of per lot.
+model AssetUnit {
+  id          String    @id @default(uuid()) @db.Uuid
+  asset_id    String?   @db.Uuid
+  asset       Asset?    @relation(fields: [asset_id], references: [id], onDelete: Cascade)
+  inventory_id String?  @db.Uuid
+  inventory   InventoryItem? @relation(fields: [inventory_id], references: [id], onDelete: Cascade)
+  /// Unique per-piece code. The sequence is database-owned so concurrent
+  /// inserts can never collide; 4-digit padding grows as needed.
+  item_code   String    @unique @default(dbgenerated("'AST_ITM_CODE_' || lpad(nextval('asset_unit_item_code_seq')::text, 4, '0')")) @db.VarChar
+  status      String    @default("available") @db.VarChar
+  condition   String?   @db.VarChar
+  assigned_to String?   @db.Uuid
+  assigned_at DateTime? @db.Timestamptz
+  issuance_id String?   @db.Uuid
+  created_at  DateTime? @default(now()) @db.Timestamptz
+
+  @@index([asset_id])
+  @@index([inventory_id])
+  @@index([assigned_to])
+  @@index([status])
+  @@index([assigned_to, created_at(sort: Desc)])
+  @@map("asset_units")
 }
 
 model Delivery {
@@ -206,6 +237,7 @@ model InventoryItem {
   updated_at       DateTime? @default(now()) @db.Timestamptz
   documents        Document[]
   custom_fields    Json?     @db.JsonB
+  units            AssetUnit[]
 
   @@index([item_name])
   @@index([account_code])

@@ -66,7 +66,12 @@ export function scanActionsFor(
   const actions: ScanAction[] = [
     {
       id: "open",
-      label: ref.kind === "stock" ? "Open stock item" : "Open asset details",
+      label:
+        ref.kind === "stock"
+          ? "Open stock item"
+          : ref.kind === "unit"
+            ? "Open tracked piece"
+            : "Open asset details",
       href: openHref,
       kind: "primary",
     },
@@ -75,6 +80,11 @@ export function scanActionsFor(
   // The public scanner may only identify; acting requires signing in, and the
   // detail page itself redirects to login.
   if (portal === "public") return actions;
+
+  // A unit tag identifies one physical piece. Repair/transfer lists are keyed
+  // by the parent asset, so those actions stay on the parent record instead of
+  // sending a unit id where an asset id is expected.
+  if (ref.kind === "unit") return actions;
 
   const base = portalBase(portal);
   const id = encodeURIComponent(ref.id);

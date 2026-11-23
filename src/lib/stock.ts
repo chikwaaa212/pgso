@@ -1,6 +1,7 @@
 import "server-only";
 
 import prisma from "@/lib/prisma";
+import { ensureInventoryUnits } from "@/lib/asset-units";
 
 interface ItemCheck {
   itemId: string;
@@ -107,6 +108,7 @@ export async function stockInspectionItems(
             category: true,
             unit_cost: true,
             custom_fields: true,
+            quantity: true,
           },
         });
 
@@ -160,8 +162,18 @@ export async function stockInspectionItems(
               data: patch,
             });
           }
+          // Asset-kind lots get one tracked piece per unit on hand.
+          const kind = existing.delivery_kind ?? deliveryKind;
+          if (kind === "asset") {
+            await ensureInventoryUnits(
+              existing.id,
+              existing.quantity + addable,
+              null,
+              tx
+            ).catch(() => {});
+          }
         } else if (addable > 0) {
-          await tx.inventoryItem.create({
+          const createdStock = await tx.inventoryItem.create({
             data: {
               item_name: name,
               unit: item.unit,
@@ -174,7 +186,11 @@ export async function stockInspectionItems(
                 ? { unit_cost: item.unit_cost }
                 : {}),
             },
+            select: { id: true },
           });
+          if (deliveryKind === "asset") {
+            await ensureInventoryUnits(createdStock.id, addable, null, tx).catch(() => {});
+          }
           added += addable;
         }
       }

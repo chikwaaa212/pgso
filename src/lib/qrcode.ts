@@ -26,8 +26,17 @@ export function stockPageUrl(id: string): string {
   return `${appBaseUrl()}/personnel/assets/stock/${id}`;
 }
 
+/** QR tag for one individually tracked piece (asset_units.id). */
+export function assetUnitPageUrl(id: string): string {
+  return `${appBaseUrl()}/personnel/assets/unit/${id}`;
+}
+
 export async function generateAssetQrDataUrl(id: string): Promise<string> {
   return generateQrDataUrl(assetPageUrl(id));
+}
+
+export async function generateAssetUnitQrDataUrl(id: string): Promise<string> {
+  return generateQrDataUrl(assetUnitPageUrl(id));
 }
 
 export async function generateStockQrDataUrl(id: string): Promise<string> {

@@ -13,7 +13,8 @@ function revalidatePath(path: string) {
 }
 import ExcelJS from "exceljs";
 import prisma from "@/lib/prisma";
-import { generateAssetQrDataUrl, generateStockQrDataUrl } from "@/lib/qrcode";
+import { generateAssetQrDataUrl, generateAssetUnitQrDataUrl, generateStockQrDataUrl } from "@/lib/qrcode";
+import { ensureAssetUnits } from "@/lib/asset-units";
 import { ASSET_EXCEL_HEADERS, ASSET_TEMPLATE_SHEET } from "@/lib/asset-excel";
 import { findCatalogEntry, getActiveCatalogEntries, resolveUnitName, ensureCatalogEntry } from "@/lib/master-data";
 import { classifyCondition } from "@/lib/reporting";
@@ -509,6 +510,12 @@ export async function updateAsset(
       data,
       select: { id: true, account_code: true, article: true, status: true, location: true, quantity: true },
     });
+    // Keep per-piece records in step when the declared quantity grows.
+    await ensureAssetUnits(
+      id,
+      updated.quantity,
+      typeof data["condition"] === "string" ? data["condition"] : before.condition ?? null
+    ).catch(() => {});
     // Audit official-record write (who/role/action/id/before-after/timestamp).
     // Fire-and-forget so slow audit writes never block the mutation response.
     void import('@/lib/audit').then((m) =>
@@ -1190,6 +1197,100 @@ export async function getUnifiedAsset(id: string): Promise<UnifiedAssetRow | nul
   } catch (e) {
     console.error("[getUnifiedAsset]", e);
     return null;
+  }
+}
+
+// ─── Per-piece units (unique item code + QR tag) ─────────────────────────────
+
+export interface AssetUnitRow {
+  id: string;
+  item_code: string;
+  status: string | null;
+  condition: string | null;
+  assigned_to: string | null;
+  holder_name: string | null;
+  assigned_at: string | null;
+  created_at: string | null;
+  qr_data_url: string;
+}
+
+/**
+ * Every tracked piece of an asset/inventory lot, each with its own item code,
+ * holder, and QR image. Unit codes are immutable; assignment stamps the holder
+ * and issuance on the piece.
+ */
+export async function getAssetUnits(recordId: string): Promise<AssetUnitRow[]> {
+  if (!recordId) return [];
+  try {
+    const { getPersonnelScope } = await import("@/lib/personnel-scope");
+    const scope = await getPersonnelScope();
+    if (scope.isEmpty || !scope.isPersonnel) return [];
+
+    const asset = await prisma.asset
+      .findUnique({ where: { id: recordId }, select: { id: true, condition: true, quantity: true } })
+      .catch(() => null);
+    const inventory = await prisma.inventoryItem
+      .findUnique({ where: { id: recordId }, select: { id: true, quantity: true } })
+      .catch(() => null);
+    // A stock row can share its id with a linked registry asset. Prefer the
+    // asset's tags only while both records describe the same quantity (see
+    // normalizeRef in lib/asset-units); otherwise fall back to the row's own
+    // inventory tags.
+    const useAsset =
+      !!asset &&
+      (!inventory ||
+        (asset.quantity !== null &&
+          inventory.quantity !== null &&
+          asset.quantity === inventory.quantity));
+    if (!asset && !inventory) return [];
+
+    const units = await prisma.assetUnit
+      .findMany({
+        where: useAsset ? { asset_id: asset!.id } : { inventory_id: inventory!.id },
+        orderBy: [{ assigned_at: "desc" }, { created_at: "asc" }],
+        take: 500,
+        select: {
+          id: true,
+          item_code: true,
+          status: true,
+          condition: true,
+          assigned_to: true,
+          assigned_at: true,
+          created_at: true,
+        },
+      })
+      .catch(() => []);
+
+    const holderIds = [
+      ...new Set(units.map((u) => u.assigned_to).filter((v): v is string => !!v)),
+    ];
+    const holders =
+      holderIds.length > 0
+        ? await prisma.profile
+            .findMany({
+              where: { id: { in: holderIds } },
+              select: { id: true, full_name: true },
+            })
+            .catch(() => [])
+        : [];
+    const names = new Map(holders.map((p) => [p.id, p.full_name ?? "Unknown employee"]));
+
+    return await Promise.all(
+      units.map(async (u) => ({
+        id: u.id,
+        item_code: u.item_code,
+        status: u.status,
+        condition: u.condition ?? asset?.condition ?? null,
+        assigned_to: u.assigned_to,
+        holder_name: u.assigned_to ? names.get(u.assigned_to) ?? "Unknown employee" : null,
+        assigned_at: u.assigned_at?.toISOString() ?? null,
+        created_at: u.created_at?.toISOString() ?? null,
+        qr_data_url: await generateAssetUnitQrDataUrl(u.id).catch(() => ""),
+      }))
+    );
+  } catch (e) {
+    console.error("[getAssetUnits]", e);
+    return [];
   }
 }
 
@@ -2040,6 +2141,9 @@ export async function createAsset(
       select: { id: true, account_code: true, article: true },
     });
 
+    // Every physical piece gets its own item code + QR tag from day one.
+    await ensureAssetUnits(created.id, quantity, condition).catch(() => {});
+
     void import('@/lib/audit').then((m) =>
       m.writeAuditLog({
         userId: actor.userId!,
@@ -2594,12 +2698,14 @@ export async function importAssetsFromExcel(
           id: prior.id,
           fields: { ...prior.fields, ...updateData },
         });
+        await ensureAssetUnits(prior.id, data.quantity, condition).catch(() => {});
         updated++;
       } else {
         const createdRow = await prisma.asset.create({
           data: { property_number: accountCode, ...data },
         });
         assetByKey.set(accountCode, { id: createdRow.id, fields: parsed });
+        await ensureAssetUnits(createdRow.id, data.quantity, condition).catch(() => {});
         created++;
       }
       if (qrCode) existingQrCodes.add(qrCode);

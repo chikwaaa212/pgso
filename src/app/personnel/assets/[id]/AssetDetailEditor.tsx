@@ -34,6 +34,7 @@ import { patchRowInPage } from "@/lib/list-patch";
 import { updateUnifiedAsset, type AssetHistory, type EditState, type UnifiedAssetRow } from "../actions";
 import { CustomDetailSection } from "../custom-columns";
 import { AssetHistorySection } from "./asset-history";
+import { AssetUnitsList } from "@/components/personnel/AssetUnitsList";
 import styles from "../../dashboard/page.module.css";
 import assetStyles from "../page.module.css";
 import tabStyles from "../../inspections/air-section.module.css";
@@ -976,6 +977,16 @@ export function AssetDetailEditor({
             <div className={assetStyles.infoLayout}>
               <aside className={assetStyles.infoAside}>
                 <QrCard asset={displayed} />
+                <div className={assetStyles.qrCard}>
+                  <div className={assetStyles.qrCardHead}>
+                    <span className={assetStyles.qrLabel}>Per-piece tags</span>
+                  </div>
+                  <AssetUnitsList
+                    recordId={displayed.id}
+                    fallbackQr={displayed.qr_data_url}
+                    fallbackCode={displayed.qr_code ?? displayed.account_code}
+                  />
+                </div>
               </aside>
 
               <div className={assetStyles.infoMain}>

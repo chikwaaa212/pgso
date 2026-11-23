@@ -78,8 +78,7 @@ describe("list + QR images: lazy, async decode, sized QRs", () => {
     "../components/personnel/RequestQrButton.tsx",
     "../app/personnel/assets/[id]/AssetDetailEditor.tsx",
     "../app/personnel/assets/stock/[id]/StockDetailEditor.tsx",
-    "../app/personnel/assets/page.tsx",
-    "../app/super-admin/assets/page.tsx",
+    "../components/personnel/AssetUnitsList.tsx",
   ];
   const scans = [
     "../app/personnel/documents/par-report.tsx",
@@ -101,10 +100,13 @@ describe("list + QR images: lazy, async decode, sized QRs", () => {
     for (const f of [
       "../app/personnel/assets/[id]/AssetDetailEditor.tsx",
       "../app/personnel/assets/stock/[id]/StockDetailEditor.tsx",
-      "../app/personnel/assets/page.tsx",
-      "../app/super-admin/assets/page.tsx",
     ]) {
       assert.match(src(f), /width=\{96\}[\s\S]*height=\{96\}/);
     }
+    // Per-piece tag thumbnails render at a fixed 72px.
+    assert.match(
+      src("../components/personnel/AssetUnitsList.tsx"),
+      /width=\{72\}[\s\S]*height=\{72\}/
+    );
   });
 });

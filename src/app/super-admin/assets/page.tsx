@@ -43,6 +43,7 @@ import {
   type IssuanceOptimisticLine,
 } from "@/components/personnel/IssuanceDialog";
 import { Pagination } from "@/components/ui/pagination";
+import { AssetUnitsList } from "@/components/personnel/AssetUnitsList";
 import { EmptySearchState } from "@/components/personnel/EmptySearchState";
 import { useCachedAction } from "@/hooks/use-cached-action";
 import { buildQueryKey, resourcePrefix } from "@/lib/query-keys";
@@ -1023,30 +1024,20 @@ export default function SuperAdminAssetsPage() {
       >
         <DialogContent className="bg-white sm:max-w-xs dark:bg-white">
           <DialogHeader>
-            <DialogTitle>QR code</DialogTitle>
+            <DialogTitle>Unit tags &amp; QR codes</DialogTitle>
             <DialogDescription>
-              {qrRow ? `Asset — ${qrRow.article ?? qrRow.account_code ?? "—"}` : "—"}
+              {qrRow ? `${qrRow.article ?? qrRow.account_code ?? "Asset"} — one item code per piece` : "—"}
             </DialogDescription>
           </DialogHeader>
-          <div className={assetStyles.qrOverlayBody}>
-            {qrRow?.qr_data_url ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={qrRow.qr_data_url}
-                alt={`QR code for ${qrRow.qr_code ?? qrRow.account_code ?? "asset"}`}
-                className={assetStyles.qrOverlayImg}
-                width={96}
-                height={96}
-                loading="lazy"
-                decoding="async"
-              />
-            ) : (
-              <span className={assetStyles.qrPlaceholder}>
-                {qrLoading ? "Generating QR code…" : "No QR code"}
-              </span>
-            )}
-            <p className={assetStyles.qrValue}>{qrRow?.qr_code ?? qrRow?.account_code ?? "—"}</p>
-          </div>
+          {qrRow ? (
+            <AssetUnitsList
+              recordId={qrRow.id}
+              fallbackQr={qrRow.qr_data_url}
+              fallbackCode={qrRow.qr_code ?? qrRow.account_code}
+            />
+          ) : qrLoading ? (
+            <p className={assetStyles.qrPlaceholder}>Generating QR code…</p>
+          ) : null}
           <DialogFooter>
             <Button
               type="button"
