@@ -12,13 +12,23 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useToast } from "@/components/ui/toaster";
-import {
-  importPpmpFromExcel,
-  type ImportPpmpState,
-} from "./actions";
+import type { ImportPpmpState } from "./actions";
 import styles from "./page.module.css";
 
 const YELLOW_BTN = "h-7 gap-1.5 rounded-[5px] px-3 text-xs font-semibold";
+const MAX_BYTES = 10 * 1024 * 1024;
+
+/** Mirrors the server-side check so an oversized file never leaves the browser. */
+function validateFile(file: File | null): string | null {
+  if (!file || file.size === 0) return "Choose an .xlsx file to import.";
+  if (file.size > MAX_BYTES) {
+    return `That workbook is ${(file.size / 1024 / 1024).toFixed(1)} MB. The limit is 10 MB — remove large images or save a smaller copy.`;
+  }
+  if (/\.[^./\\]+$/i.test(file.name) && !/\.xlsx$/i.test(file.name)) {
+    return "Only .xlsx files are supported. Re-save the workbook as .xlsx and try again.";
+  }
+  return null;
+}
 
 /**
  * "Import Excel" action used by the PPMP planning screen (which now lives at
@@ -34,6 +44,15 @@ export function ImportPpmpButton({ onImported }: { onImported?: () => void }) {
   const { toast } = useToast();
 
   function submit(formData: FormData) {
+    const file = formData.get("file");
+    const selected = file instanceof File ? file : null;
+    const problem = validateFile(selected);
+    if (problem) {
+      // Keep the dialog open so the user can pick another file.
+      setResult({ success: false, error: problem });
+      return;
+    }
+
     const name = fileName;
     setResult(null);
     // Close the dialog right away — the upload continues in the background,
@@ -47,7 +66,18 @@ export function ImportPpmpButton({ onImported }: { onImported?: () => void }) {
     });
     startTransition(async () => {
       try {
-        const res = await importPpmpFromExcel({} as ImportPpmpState, formData);
+        // Route handler (not a Server Action): uploads are not capped by the
+        // action body limit, so large workbooks do not fail as "Failed to fetch".
+        const response = await fetch("/api/personnel/ppmp/import", {
+          method: "POST",
+          body: formData,
+        });
+        const res: ImportPpmpState = await response
+          .json()
+          .catch(() => ({ success: false, error: "" }));
+        if (!response.ok && !res.error) {
+          res.error = `Import failed (HTTP ${response.status}). Try again.`;
+        }
         setResult(res);
         if (res.success) {
           toast({
@@ -58,10 +88,10 @@ export function ImportPpmpButton({ onImported }: { onImported?: () => void }) {
             variant: "success",
           });
           onImported?.();
-        } else if (res.error) {
+        } else {
           toast({
             title: "Import failed",
-            description: res.error,
+            description: res.error || "The server could not import that workbook. Try again.",
             variant: "error",
           });
         }

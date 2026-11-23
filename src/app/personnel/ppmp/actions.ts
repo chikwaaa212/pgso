@@ -112,6 +112,19 @@ export async function importPpmpFromExcel(
   } = await supabase.auth.getUser();
   if (!user) return { success: false, error: "Unauthorized." };
 
+  // Uploads are role-scoped; the route handler checks this too, but the action
+  // stays safe when invoked directly as a Server Action.
+  const profile = await prisma.profile
+    .findUnique({ where: { id: user.id }, select: { role: true, status: true } })
+    .catch(() => null);
+  if (
+    !profile ||
+    profile.status !== "active" ||
+    (profile.role !== "pgso_personnel" && profile.role !== "super_admin")
+  ) {
+    return { success: false, error: "You do not have access to PPMP imports." };
+  }
+
   let bytes: Buffer;
   try {
     bytes = Buffer.from(await file.arrayBuffer());

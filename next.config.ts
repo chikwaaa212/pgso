@@ -12,6 +12,11 @@ const nextConfig: NextConfig = {
       // the cap would otherwise fail the action with a bare "Failed to fetch".
       bodySizeLimit: "12mb",
     },
+    // Next 16 buffers request bodies for the proxy/middleware so both it and
+    // the route handler can read them. The default 10 MB truncates larger
+    // workbook uploads (which then look like corrupted files), so keep this
+    // above the 10 MB import cap plus multipart overhead.
+    proxyClientMaxBodySize: "12mb",
   },
   images: {
     remotePatterns: [
