@@ -77,11 +77,6 @@ const STEPS = [
     icon: Upload,
   },
   {
-    title: "Validate & analyze",
-    text: "Confirm the detected structure, then compare categories, quantities, and prices across fiscal years.",
-    icon: ChartColumn,
-  },
-  {
     title: "Plan the next year",
     text: "Build a forecast draft with growth rules and a budget ceiling, then export it back to Excel.",
     icon: Sparkles,
@@ -185,7 +180,7 @@ export default function PpmpPage() {
       <PageHeader
         eyebrow="Procurement planning"
         title="PPMP workspace"
-        subtitle="Turn the agency's PPMP workbook into decisions — validate what you uploaded, compare fiscal years, and build next year's procurement plan in one place."
+        subtitle="Turn the agency's PPMP workbook into next year's procurement plan — import the file, set your growth assumptions, and export the draft."
         meta={
           files === null
             ? "Loading your workspace…"
@@ -228,58 +223,6 @@ export default function PpmpPage() {
 
       <div className={styles.grid}>
         <div className={styles.tools}>
-          <article className={styles.tool} data-accent="blue">
-            <div className={styles.toolHead}>
-              <span className={styles.toolIcon} aria-hidden="true">
-                <ChartColumn size={19} />
-              </span>
-              <div className={styles.toolHeading}>
-                <div className={styles.toolTitleRow}>
-                  <h2 className={styles.toolTitle}>PPMP analytics</h2>
-                  <span className={styles.toolBadge} data-tone="info">
-                    Compare
-                  </span>
-                </div>
-                <p className={styles.toolText}>
-                  Choose up to five workbooks and see how procurement has moved
-                  — total cost, item counts, and year-over-year changes.
-                </p>
-              </div>
-            </div>
-            <ul className={styles.toolList}>
-              <li>
-                <CheckCircle2 size={13} aria-hidden="true" />
-                Structure validation before every run
-              </li>
-              <li>
-                <CheckCircle2 size={13} aria-hidden="true" />
-                Cross-year comparison with clean totals
-              </li>
-              <li>
-                <CheckCircle2 size={13} aria-hidden="true" />
-                Category and item-level breakdowns
-              </li>
-            </ul>
-            <div className={styles.toolFoot}>
-              <span className={styles.toolHint}>
-                {files === null
-                  ? "Checking your library…"
-                  : rows.length === 0
-                    ? "Add a workbook to unlock analysis"
-                    : `${rows.length} workbook${rows.length === 1 ? "" : "s"} in your library`}
-              </span>
-              <Button
-                type="button"
-                variant="warning"
-                className={YELLOW_BTN}
-                onClick={() => router.push("/personnel/ppmp/analytics")}
-              >
-                Open analytics
-                <ArrowRight size={13} aria-hidden="true" />
-              </Button>
-            </div>
-          </article>
-
           <article className={styles.tool} data-accent="amber">
             <div className={styles.toolHead}>
               <span className={styles.toolIcon} aria-hidden="true">
@@ -361,8 +304,7 @@ export default function PpmpPage() {
               </span>
               <p className={styles.emptyTitle}>No workbooks yet</p>
               <p className={styles.emptyText}>
-                Import your first PPMP Excel file to unlock analytics and
-                planning.
+                Import your first PPMP Excel file to unlock planning.
               </p>
               <Button
                 type="button"
@@ -405,9 +347,9 @@ export default function PpmpPage() {
             <button
               type="button"
               className={styles.libraryLink}
-              onClick={() => router.push("/personnel/ppmp/analytics")}
+              onClick={() => router.push("/personnel/ppmp/planning")}
             >
-              Compare these workbooks
+              Plan the next fiscal year
               <ArrowRight size={13} aria-hidden="true" />
             </button>
           ) : null}
