@@ -386,7 +386,7 @@ export function AddAssetDialog({
         Add asset
       </Button>
       <Dialog open={open} onOpenChange={handleOpenChange}>
-        <DialogContent className="pgso-no-scrollbar max-h-[90vh] overflow-y-auto bg-white sm:max-w-3xl dark:bg-white">
+        <DialogContent className="pgso-no-scrollbar max-h-[90dvh] overflow-y-auto bg-white sm:max-w-3xl dark:bg-white">
           <DialogHeader>
             <DialogTitle>Add asset</DialogTitle>
             <DialogDescription>
@@ -727,7 +727,7 @@ export function ImportAssetsDialog({
           }
         }}
       >
-        <DialogContent className="pgso-no-scrollbar max-h-[90vh] overflow-y-auto bg-white sm:max-w-xl dark:bg-white">
+        <DialogContent className="pgso-no-scrollbar max-h-[90dvh] overflow-y-auto bg-white sm:max-w-xl dark:bg-white">
           <DialogHeader>
             <DialogTitle>Import assets from Excel</DialogTitle>
             <DialogDescription>

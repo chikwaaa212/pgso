@@ -429,7 +429,7 @@ export function RepairCreateDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className={`max-h-[92vh] overflow-y-auto sm:max-w-2xl ${rep.dialogScroll}`}>
+      <DialogContent className={`max-h-[92dvh] overflow-y-auto sm:max-w-2xl ${rep.dialogScroll}`}>
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2.5">
             <span className={rep.dialogTitleIcon} aria-hidden="true">

@@ -709,7 +709,7 @@ export function ImportCatalogDialog() {
   return (
     <>
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogContent className={`max-h-[90vh] overflow-y-auto bg-white sm:max-w-xl dark:bg-white ${pageStyles.interFont}`}>
+      <DialogContent className={`max-h-[90dvh] overflow-y-auto bg-white sm:max-w-xl dark:bg-white ${pageStyles.interFont}`}>
         <DialogHeader>
           <DialogTitle>Import account catalog from Excel</DialogTitle>
           <DialogDescription>
@@ -789,7 +789,7 @@ export function ImportCatalogDialog() {
     </Dialog>
 
       <Dialog open={resultOpen} onOpenChange={setResultOpen}>
-        <DialogContent className={`max-h-[90vh] overflow-y-auto bg-white sm:max-w-xl dark:bg-white ${pageStyles.interFont}`}>
+        <DialogContent className={`max-h-[90dvh] overflow-y-auto bg-white sm:max-w-xl dark:bg-white ${pageStyles.interFont}`}>
           <DialogHeader>
             <DialogTitle>{result?.ok ? "Import complete" : "Nothing imported"}</DialogTitle>
             <DialogDescription>
@@ -1324,7 +1324,7 @@ export function DeletedRecordsDialog({
         <span>Archive ({total})</span>
       </button>
       <Dialog open={open} onOpenChange={handleOpenChange}>
-        <DialogContent className={`max-h-[85vh] overflow-y-auto bg-white sm:max-w-xl dark:bg-white ${pageStyles.interFont}`}>
+        <DialogContent className={`max-h-[85dvh] overflow-y-auto bg-white sm:max-w-xl dark:bg-white ${pageStyles.interFont}`}>
           <DialogHeader>
             <DialogTitle>Deleted records</DialogTitle>
             <DialogDescription>

@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist_Mono, Inter } from "next/font/google";
 import "./globals.css";
 import { LayoutClient } from "@/components/layout/LayoutClient";
@@ -13,6 +13,15 @@ const inter = Inter({
   subsets: ["latin"],
   display: "swap",
 });
+
+// Mobile-first viewport. Never disable zoom (maximumScale/userScalable) —
+// it breaks accessibility and pinch-zoom on iOS.
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+  themeColor: "#1b2a4a",
+};
 
 export const metadata: Metadata = {
   title: {

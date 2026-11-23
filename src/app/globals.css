@@ -76,8 +76,132 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* ---------------------------------------------------------------------------
+   Mobile responsiveness foundation (320px → 1920px). Base styles target
+   small screens; layouts scale up with min-width media queries.
+   --------------------------------------------------------------------------- */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  /* Stop iOS from inflating text in landscape. */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  /* Clear the sticky portal headers when jumping to an anchor. */
+  scroll-padding-top: 5rem;
+}
+
+html,
+body {
+  max-width: 100%;
+}
+
+body {
+  /* `clip` (not `hidden`) is a last-resort safety net: real overflow causes
+     are fixed at the component level, and clip keeps position: sticky working. */
+  overflow-x: clip;
+  min-height: 100dvh;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* Media can never force the page wider than the viewport. `height: auto`
+   preserves intrinsic ratio; explicit sizes/classes still win. */
+img,
+picture,
+video,
+canvas,
+iframe {
+  max-width: 100%;
+  height: auto;
+}
+
+/* Long unbroken strings (emails, IDs, URLs, filenames) wrap instead of
+   pushing their container wider than the screen. */
+p,
+li,
+td,
+th,
+a,
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+span,
+label {
+  overflow-wrap: anywhere;
+}
+
+pre,
+code,
+kbd,
+samp {
+  white-space: pre-wrap;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+/* Fluid type scale — small on phones, generous on desktop. Heading rules are
+   element-level, so component/module classes still take precedence. */
+:root {
+  --fs-body: clamp(1rem, 0.97rem + 0.15vw, 1.0625rem);
+  --fs-h1: clamp(1.75rem, 1.2rem + 2.5vw, 3rem);
+  --fs-h2: clamp(1.4rem, 1.05rem + 1.6vw, 2.25rem);
+  --fs-h3: clamp(1.15rem, 1rem + 0.8vw, 1.5rem);
+}
+
+body {
+  font-size: var(--fs-body);
+  line-height: 1.6;
+}
+
+h1 {
+  font-size: var(--fs-h1);
+  line-height: 1.15;
+}
+
+h2 {
+  font-size: var(--fs-h2);
+}
+
+h3 {
+  font-size: var(--fs-h3);
+}
+
+/* 16px form controls: anything smaller makes iOS Safari zoom on focus.
+   `!important` is deliberate and phone-scoped: it overrides component/module
+   font sizes only under 768px, where the zoom bug happens. */
+@media (max-width: 767px) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+}
+
+/* Comfortable thumb targets on touch devices without bloating desktop UI. */
+@media (pointer: coarse) {
+  button,
+  [role="button"],
+  input:not([type="checkbox"]):not([type="radio"]),
+  select,
+  textarea {
+    min-height: 44px;
+  }
+}
+
+/* Full-height sections use dvh so mobile browser chrome never clips content. */
+.min-h-screen {
+  min-height: 100dvh;
+}
+
 .container {
-  width: min(90% + (100% - 64rem) / 2, 64rem);
+  width: min(100% - 2rem, 64rem);
   margin-inline: auto;
 }
 

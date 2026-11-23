@@ -683,7 +683,7 @@ export function IssuanceEvaluateDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="pgso-no-scrollbar flex max-h-[94vh] w-[min(1400px,calc(100vw-1.5rem))] flex-col gap-0 overflow-hidden p-0 sm:max-w-[min(1400px,calc(100vw-1.5rem))]">
+      <DialogContent className="pgso-no-scrollbar flex max-h-[94dvh] w-[min(1400px,calc(100vw-1.5rem))] flex-col gap-0 overflow-hidden p-0 sm:max-w-[min(1400px,calc(100vw-1.5rem))]">
         {/* Header band: title, path badge and the four-step rail. */}
         <div className="shrink-0 border-b border-navy-100 bg-gradient-to-r from-white via-white to-amber-50/70 px-5 py-4 sm:px-6">
           <DialogHeader className="gap-1.5 pr-10 text-left">

@@ -19,6 +19,12 @@ const nextConfig: NextConfig = {
     proxyClientMaxBodySize: "12mb",
   },
   images: {
+    // AVIF/WebP first; Next falls back to the original format automatically.
+    formats: ["image/avif", "image/webp"],
+    deviceSizes: [360, 414, 640, 768, 1024, 1280, 1536, 1920],
+    imageSizes: [16, 32, 64, 96, 128, 256, 384],
+    // Optimized derivatives stay cached for 30 days.
+    minimumCacheTTL: 60 * 60 * 24 * 30,
     remotePatterns: [
       {
         protocol: "https",
@@ -26,6 +32,9 @@ const nextConfig: NextConfig = {
       },
     ],
   },
+  // React strict mode surfaces hydration mismatches (common with ad-hoc
+  // window-width breakpoints) during development.
+  reactStrictMode: true,
   // The stock ledger moved from /inventory to /stocks in both portals.
   // Keep old links (bookmarks, printed QR labels, cached emails) working.
   async redirects() {

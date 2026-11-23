@@ -107,6 +107,7 @@ export function Feature() {
                 alt="Property management dashboard"
                 width={500}
                 height={500}
+                sizes="(max-width: 767px) 92vw, (max-width: 1023px) 44vw, 460px"
                 className={styles.image}
               />
             </motion.div>

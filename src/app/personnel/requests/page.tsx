@@ -1191,7 +1191,7 @@ function PersonnelRequestsContent() {
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent
-          className={`${req.dialogScroll} max-h-[90vh] overflow-x-hidden overflow-y-auto sm:max-w-4xl`}
+          className={`${req.dialogScroll} max-h-[90dvh] overflow-x-hidden overflow-y-auto sm:max-w-4xl`}
         >
           <DialogHeader>
             <DialogTitle>New request</DialogTitle>
@@ -1749,7 +1749,7 @@ function PersonnelRequestsContent() {
           if (!v) setDetailRow(null);
         }}
       >
-        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
+        <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>Request details</DialogTitle>
             <DialogDescription>
@@ -1902,7 +1902,7 @@ function PersonnelRequestsContent() {
       </Dialog>
 
       <Dialog open={actionOpen} onOpenChange={setActionOpen}>
-        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
+        <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>
               {actionStatus === "approved"

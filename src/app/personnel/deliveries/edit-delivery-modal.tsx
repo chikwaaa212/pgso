@@ -112,7 +112,7 @@ export function EditDeliveryModal({
             role="dialog"
             aria-modal="false"
             aria-label="Preview delivery entry"
-            className="fixed top-1/2 left-1/2 z-[60] max-h-[calc(100vh-2rem)] w-[calc(100%-2rem)] max-w-sm -translate-x-1/2 -translate-y-1/2 animate-in overflow-y-auto duration-200 fade-in-0 zoom-in-95 xl:top-1/2 xl:right-8 xl:left-auto xl:translate-x-0"
+            className="fixed top-1/2 left-1/2 z-[60] max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-sm -translate-x-1/2 -translate-y-1/2 animate-in overflow-y-auto duration-200 fade-in-0 zoom-in-95 xl:top-1/2 xl:right-8 xl:left-auto xl:translate-x-0"
           >
             <button
               type="button"

@@ -108,7 +108,7 @@ export function AssetUnitsList({ recordId, fallbackQr, fallbackCode, className }
   }
 
   return (
-    <div className={cn("max-h-[55vh] space-y-2 overflow-y-auto pr-1", className)}>
+    <div className={cn("max-h-[55dvh] space-y-2 overflow-y-auto pr-1", className)}>
       <p className="text-[11px] font-medium text-slate-500">
         {units.length} tracked piece{units.length === 1 ? "" : "s"} · each has its own item code and QR tag
       </p>
