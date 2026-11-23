@@ -30,6 +30,7 @@ export interface AssetUnitDetail {
     doc_type: string | null;
     doc_no: string | null;
     doc_date: string | null;
+    issued_by?: string | null;
   } | null;
 }
 
@@ -87,14 +88,39 @@ export async function getAssetUnitDetail(id: string): Promise<AssetUnitDetail | 
       unit.issuance_id
         ? prisma
             .$queryRaw<
-              Array<{ id: string; doc_type: string | null; doc_no: string | null; doc_date: Date | string | null }>
-            >`SELECT id::text AS id, doc_type, doc_no, doc_date
+              Array<{
+                id: string
+                doc_type: string | null
+                doc_no: string | null
+                doc_date: Date | string | null
+                issuance_data: Record<string, unknown> | null
+                created_by: string | null
+              }>
+            >`SELECT id::text AS id, doc_type, doc_no, doc_date, issuance_data,
+                created_by::text AS created_by
               FROM issuance_records WHERE id = ${unit.issuance_id}::uuid LIMIT 1`
             .then((rows) => rows[0] ?? null)
             .catch(() => null)
         : Promise.resolve(null),
       generateAssetUnitQrDataUrl(unit.id).catch(() => ""),
     ]);
+
+    // "Issued by" is the custodian signatory on the PAR/ICS snapshot, with the
+    // filing account as a fallback for legacy/no-snapshot rows.
+    let issuedBy: string | null = null
+    if (issuance) {
+      const snap = issuance.issuance_data?.["fromName"]
+      issuedBy = typeof snap === "string" && snap.trim() ? snap.trim() : null
+      if (!issuedBy && issuance.created_by) {
+        const filer = await prisma.profile
+          .findUnique({
+            where: { id: issuance.created_by },
+            select: { full_name: true },
+          })
+          .catch(() => null)
+        issuedBy = filer?.full_name ?? null
+      }
+    }
 
     const parent = unit.asset
       ? {
@@ -143,6 +169,7 @@ export async function getAssetUnitDetail(id: string): Promise<AssetUnitDetail | 
             doc_date: issuance.doc_date
               ? new Date(issuance.doc_date).toISOString().slice(0, 10)
               : null,
+            issued_by: issuedBy,
           }
         : null,
     };

@@ -125,11 +125,18 @@ export function AssetUnitDetailView({
               Assignment record
             </h2>
             {unit.issuance ? (
-              <p className="text-sm text-slate-700">
-                {unit.issuance.doc_type ?? "Issuance"}
-                {unit.issuance.doc_no ? ` ${unit.issuance.doc_no}` : ""}
-                {unit.issuance.doc_date ? ` · ${fmtDate(unit.issuance.doc_date)}` : ""}
-              </p>
+              <>
+                <p className="text-sm text-slate-700">
+                  {unit.issuance.doc_type ?? "Issuance"}
+                  {unit.issuance.doc_no ? ` ${unit.issuance.doc_no}` : ""}
+                  {unit.issuance.doc_date ? ` · ${fmtDate(unit.issuance.doc_date)}` : ""}
+                </p>
+                {unit.issuance.issued_by ? (
+                  <p className="mt-1 text-xs text-slate-500">
+                    Issued by <strong className="text-slate-700">{unit.issuance.issued_by}</strong>
+                  </p>
+                ) : null}
+              </>
             ) : unit.assigned_to ? (
               <p className="text-sm text-slate-700">On record as the current holder.</p>
             ) : (

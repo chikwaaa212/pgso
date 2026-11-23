@@ -21,6 +21,8 @@ export interface MyAssetUnit {
   assigned_at: string | null
   /** Full name of the custodian (the signed-in employee). */
   holder_name: string | null
+  /** Personnel who issued/assigned the piece (issuance "Issued by"). */
+  issued_by: string | null
   qr_data_url: string
 }
 
@@ -143,7 +145,8 @@ export async function getMyAssets(): Promise<MyAssetRow[]> {
       prisma.$queryRaw<MyIssuanceRaw[]>`
         SELECT id::text AS id, doc_type, doc_no, doc_date,
                asset_id::text AS asset_id, inventory_id::text AS inventory_id,
-               request_id::text AS request_id, quantity, issuance_data, created_at
+               request_id::text AS request_id, quantity, issuance_data,
+               created_by::text AS created_by, created_at
         FROM issuance_records WHERE employee_id = ${userId}::uuid
         ORDER BY created_at DESC`,
       // Individually tracked pieces currently in this employee's custody.
@@ -158,10 +161,47 @@ export async function getMyAssets(): Promise<MyAssetRow[]> {
             assigned_at: true,
             asset_id: true,
             inventory_id: true,
+            issuance_id: true,
           },
         })
         .catch(() => []),
     ])
+
+    // "Issued by" comes from the issuance snapshot (`fromName` — the custodian
+    // who signed the PAR/ICS), falling back to the account that filed it.
+    const snapIssuerByDoc = new Map<string, string>()
+    for (const d of docs) {
+      const from = str(
+        (d.issuance_data as Record<string, unknown> | null)?.['fromName']
+      )
+      if (from) snapIssuerByDoc.set(d.id, from)
+    }
+    const issuerProfileIds = [
+      ...new Set(
+        docs
+          .map((d) => d.created_by ?? null)
+          .filter((v): v is string => !!v)
+      ),
+    ]
+    const issuerProfiles = issuerProfileIds.length
+      ? await prisma.profile
+          .findMany({
+            where: { id: { in: issuerProfileIds } },
+            select: { id: true, full_name: true },
+          })
+          .catch(() => [] as { id: string; full_name: string | null }[])
+      : []
+    const issuerProfileName = new Map(
+      issuerProfiles.map((p) => [p.id, p.full_name ?? null])
+    )
+    const issuerByDoc = new Map<string, string | null>()
+    for (const d of docs) {
+      issuerByDoc.set(
+        d.id,
+        snapIssuerByDoc.get(d.id) ??
+          (d.created_by ? issuerProfileName.get(d.created_by) ?? null : null)
+      )
+    }
 
     const unitRows: MyAssetUnit[] = await Promise.all(
       myUnits.map(async (u) => ({
@@ -170,6 +210,9 @@ export async function getMyAssets(): Promise<MyAssetRow[]> {
         status: u.status,
         assigned_at: u.assigned_at?.toISOString() ?? null,
         holder_name: null,
+        issued_by: u.issuance_id
+          ? issuerByDoc.get(u.issuance_id) ?? null
+          : null,
         qr_data_url: await generateAssetUnitQrDataUrl(u.id).catch(() => ''),
       }))
     )

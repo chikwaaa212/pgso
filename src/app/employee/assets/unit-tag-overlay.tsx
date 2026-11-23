@@ -111,6 +111,10 @@ export function UnitTagOverlay({
                   <dd>{unit.holder_name ?? "—"}</dd>
                 </div>
                 <div>
+                  <dt>Issued by</dt>
+                  <dd>{unit.issued_by ?? "—"}</dd>
+                </div>
+                <div>
                   <dt>Assigned</dt>
                   <dd>{fmtDate(unit.assigned_at)}</dd>
                 </div>
