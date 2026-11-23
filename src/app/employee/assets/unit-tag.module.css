@@ -182,6 +182,20 @@
 
 /* ── Print: one tag, centred ──────────────────────────────────────────── */
 
+@media (max-width: 420px) {
+  /* Stack the QR panel over the details so the two-column body cannot push
+     the tag past the dialog edge on narrow phones. */
+  .body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .qr,
+  .qrEmpty {
+    width: 160px;
+    height: 160px;
+  }
+}
+
 @media print {
   .stack {
     padding: 0;

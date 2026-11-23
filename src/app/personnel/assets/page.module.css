@@ -1315,6 +1315,21 @@
   overflow: visible;
 }
 
+/* Phones: eight fixed-share columns cannot shrink below the three action
+   buttons, so the rightmost actions were being clipped by the card. Keep the
+   columns readable and let the table scroll inside its card instead. */
+@media (max-width: 767px) {
+  .tableFit {
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .tableFit table {
+    min-width: 46rem;
+  }
+}
+
 /* Narrow screens: give Actions enough room for the three buttons while the
    data columns keep an even share. */
 @media (max-width: 1100px) {

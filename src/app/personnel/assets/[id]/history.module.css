@@ -79,6 +79,25 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Phones: three pills in a row clip their labels; split the sum evenly. */
+@media (max-width: 480px) {
+  .summary {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    max-width: 100%;
+  }
+
+  .stat {
+    justify-content: center;
+    padding-inline: 0.375rem;
+    font-size: 0.625rem;
+  }
+
+  .stat strong {
+    font-size: 0.75rem;
+  }
+}
+
 /* ─── Grid ─────────────────────────────────────────────────────────────── */
 
 .grid {
