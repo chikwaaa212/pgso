@@ -133,7 +133,7 @@
 
 .desktop {
   display: none;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 1.5rem;
 }
 
@@ -150,6 +150,7 @@
   flex-direction: column;
   align-items: center;
   text-align: center;
+  min-width: 0;
 }
 
 .stepIconWrapper {
@@ -181,6 +182,15 @@
   color: var(--color-navy-600);
   opacity: 0.6;
   transform: translateY(-50%);
+}
+
+/* Connector curves only make sense in the side-by-side desktop layout.
+   In the stacked mobile list they escape the step column and widen the
+   page (491px of content in a 375px viewport). */
+@media (max-width: 767.98px) {
+  .arrow {
+    display: none;
+  }
 }
 
 .stepCard {

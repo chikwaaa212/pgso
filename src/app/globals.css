@@ -120,7 +120,9 @@ iframe {
 }
 
 /* Long unbroken strings (emails, IDs, URLs, filenames) wrap instead of
-   pushing their container wider than the screen. */
+   pushing their container wider than the screen. `anywhere` also keeps
+   intrinsic min-widths at one character, which is what guarantees no page
+   can overflow horizontally. */
 p,
 li,
 td,
