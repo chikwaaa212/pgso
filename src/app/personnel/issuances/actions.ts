@@ -577,6 +577,9 @@ export async function getIssuanceFormOptions(): Promise<{
           .catch(() => [] as { id: string; condition: string | null }[])
       : []
     const stockConditionById = new Map(linkedStockConditions.map((a) => [a.id, a.condition]))
+    // An inspected lot can share its id with a registry asset row. Emit one
+    // option per id or the select gets duplicate keys/values.
+    const assetIdSet = new Set(assets.map((a) => a.id))
     return {
       employees: profRows.map((p) => ({
         id: p.id,
@@ -596,7 +599,7 @@ export async function getIssuanceFormOptions(): Promise<{
           account_code: a.account_code,
           disabledReason: assetDisabledReason(a),
         })),
-        ...stocks.map((s) => ({
+        ...stocks.filter((s) => !assetIdSet.has(s.id)).map((s) => ({
           id: s.id,
           kind: 'stock' as const,
           label: labelFor({ account_code: s.account_code, item_name: s.item_name }),

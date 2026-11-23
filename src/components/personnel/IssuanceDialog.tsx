@@ -324,7 +324,16 @@ export function IssuanceEvaluateDialog({
       })
       .then((opts) => {
         setEmployees(opts.employees);
-        setItems(opts.items);
+        // Guard against duplicate ids from any source list: duplicate select
+        // keys/values are unsupported and can drop or double rows.
+        const seenIds = new Set<string>();
+        setItems(
+          opts.items.filter((it) => {
+            if (seenIds.has(it.id)) return false;
+            seenIds.add(it.id);
+            return true;
+          })
+        );
         if (opts.items.length === 0) {
           setOptionsError(
             "No assignable items loaded — close and reopen the evaluation. If this persists, check that deliveries were inspected and stocked."
