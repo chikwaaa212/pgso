@@ -99,9 +99,18 @@ function assetLabel(asset: PrescriptiveAsset): string {
   )
 }
 
+/**
+ * Deep link to the asset registry: the row is pre-highlighted and scrolled to,
+ * so the reader does not have to search for the property number again.
+ * Recommendation rows come from the `assets` table, which the registry lists
+ * on its "From added" tab.
+ */
 function assetsHref(base: string, asset: PrescriptiveAsset): string {
-  const q = asset.propertyNumber?.trim() || asset.description?.trim() || ''
-  return q ? `${base}/assets?q=${encodeURIComponent(q)}` : `${base}/assets`
+  // `highlight` alone is authoritative: the registry locates the row by id and
+  // scrolls to it, so the link cannot be defeated by a search term that does
+  // not appear in the visible columns (e.g. a property number stored apart
+  // from the identifier/account code).
+  return `${base}/assets?${new URLSearchParams({ tab: 'added', highlight: asset.id })}`
 }
 
 function ageEvidence(asset: PrescriptiveAsset, now: Date): string {

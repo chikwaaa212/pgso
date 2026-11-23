@@ -420,8 +420,9 @@ export function RecommendationsWorkspace({ portal }: { portal: Portal }) {
               </p>
               <p className={styles.advisoryNote}>
                 <ShieldCheck size={13} aria-hidden="true" />
-                Advisory only — nothing is changed automatically. Use the normal
-                workflow to act on a suggestion.
+                {portal === 'super-admin'
+                  ? 'Advisory only — this view covers every asset, stock item, repair, issuance and request across the province. Nothing is changed automatically.'
+                  : 'Advisory only — these suggestions are based on the records you handle (your repairs, issuances and requests). Nothing is changed automatically.'}
               </p>
 
               {counts.total === 0 ? (

@@ -279,67 +279,86 @@ export async function getPrescriptiveOverview(
     async () => {
       const base = portalBase(portal)
       const years = recentFiscalYears(PRESCRIPTIVE_CONFIG.consumptionYears)
-      const [assetRows, inventoryRows, consumption, requestRows] = await Promise.all([
-        prisma.asset
-          .findMany({
-            orderBy: { created_at: 'desc' },
-            take: 3000,
-            select: {
-              id: true,
-              property_number: true,
-              description: true,
-              category: true,
-              account_code: true,
-              account_title: true,
-              condition: true,
-              status: true,
-              date_acquired: true,
-              created_at: true,
-              total_cost: true,
-              unit_cost: true,
-              quantity: true,
-              assigned_to: true,
-              end_user: true,
-              location: true,
-            },
-          })
-          .catch(() => []),
-        prisma.inventoryItem
-          .findMany({
-            orderBy: { quantity: 'asc' },
-            take: 1000,
-            select: {
-              id: true,
-              item_name: true,
-              quantity: true,
-              unit: true,
-              reorder_threshold: true,
-              category: true,
-              account_code: true,
-            },
-          })
-          .catch(() => []),
-        loadConsumption(scope, years),
-        prisma.request
-          .findMany({
-            where: { status: 'pending', request_type: 'new_assignment' },
-            orderBy: { date_requested: 'desc' },
-            take: 300,
-            select: {
-              id: true,
-              employee_id: true,
-              date_requested: true,
-              items: {
-                select: {
-                  description: true,
-                  quantity: true,
-                  asset_id: true,
+      const [assetRows, inventoryRows, consumption, requestRows, ownIssuedRows] =
+        await Promise.all([
+          prisma.asset
+            .findMany({
+              orderBy: { created_at: 'desc' },
+              take: 3000,
+              select: {
+                id: true,
+                property_number: true,
+                description: true,
+                category: true,
+                account_code: true,
+                account_title: true,
+                condition: true,
+                status: true,
+                date_acquired: true,
+                created_at: true,
+                total_cost: true,
+                unit_cost: true,
+                quantity: true,
+                assigned_to: true,
+                end_user: true,
+                location: true,
+              },
+            })
+            .catch(() => []),
+          prisma.inventoryItem
+            .findMany({
+              orderBy: { quantity: 'asc' },
+              take: 1000,
+              select: {
+                id: true,
+                item_name: true,
+                quantity: true,
+                unit: true,
+                reorder_threshold: true,
+                category: true,
+                account_code: true,
+              },
+            })
+            .catch(() => []),
+          loadConsumption(scope, years),
+          prisma.request
+            .findMany({
+              where: {
+                status: 'pending',
+                request_type: 'new_assignment',
+                // Personnel only own the requests addressed to them; the
+                // admin sees the whole demand signal.
+                ...(scope.isSuperAdmin ? {} : { recipient_id: scope.userId }),
+              },
+              orderBy: { date_requested: 'desc' },
+              take: 300,
+              select: {
+                id: true,
+                employee_id: true,
+                date_requested: true,
+                items: {
+                  select: {
+                    description: true,
+                    quantity: true,
+                    asset_id: true,
+                  },
                 },
               },
-            },
-          })
-          .catch(() => []),
-      ])
+            })
+            .catch(() => []),
+          // Which assets/stock lots this user has handled (personnel scope).
+          // Only the ids are needed to decide what they "own" for suggestions.
+          scope.isSuperAdmin
+            ? Promise.resolve([])
+            : prisma.issuanceRecord
+                .findMany({
+                  where: { created_by: scope.userId },
+                  orderBy: { created_at: 'desc' },
+                  take: 2000,
+                  select: { asset_id: true, inventory_id: true },
+                })
+                .catch(() => [] as { asset_id: string | null; inventory_id: string | null }[]),
+        ])
 
       const assetIds = assetRows.map((a) => a.id)
       const employeeIds = [
@@ -400,7 +419,52 @@ export async function getPrescriptiveOverview(
         profiles.map((p) => [p.id, { name: p.full_name, office: p.office }])
       )
 
-      const assets: PrescriptiveAsset[] = assetRows.map((a) => ({
+      const repairs: RepairLike[] = repairRows.map((r) => ({
+        assetId: r.asset_id,
+        repairDate: toIso(r.repair_date),
+        status: r.status,
+        costCents: cents(r.cost),
+      }))
+      const repairsByAsset = summarizeRepairs(repairs)
+      const documented = new Set(
+        disposalDocs
+          .map((d) => d.related_asset_id)
+          .filter((v): v is string => Boolean(v))
+      )
+
+      // ── Personnel ownership scope ─────────────────────────────────────
+      // Assets/inventory are shared pools with no owner column, so "the data
+      // this personnel owns" is derived from the records they actually
+      // handled: repairs they logged, assets/stock they issued, and the
+      // requests addressed to them. Super Admin skips this and keeps the
+      // complete picture.
+      const ownAssetIds = new Set<string>()
+      const ownInventoryIds = new Set<string>()
+      if (!scope.isSuperAdmin) {
+        for (const assetId of repairsByAsset.keys()) ownAssetIds.add(assetId)
+        for (const request of requestRows) {
+          for (const item of request.items) {
+            if (item.asset_id) ownAssetIds.add(item.asset_id)
+          }
+        }
+        for (const row of ownIssuedRows) {
+          if (row.asset_id) ownAssetIds.add(row.asset_id)
+          if (row.inventory_id) ownInventoryIds.add(row.inventory_id)
+        }
+      }
+      const scopedAssetRows = scope.isSuperAdmin
+        ? assetRows
+        : assetRows.filter((a) => ownAssetIds.has(a.id))
+      const ownItemKeys = new Set(consumption.items.map((i) => i.itemKey))
+      const scopedInventoryRows = scope.isSuperAdmin
+        ? inventoryRows
+        : inventoryRows.filter(
+            (i) =>
+              ownInventoryIds.has(i.id) ||
+              ownItemKeys.has(consumptionKey(i.item_name, i.unit))
+          )
+
+      const assets: PrescriptiveAsset[] = scopedAssetRows.map((a) => ({
         id: a.id,
         propertyNumber: a.property_number,
         description: a.description,
@@ -424,19 +488,6 @@ export async function getPrescriptiveOverview(
         location: a.location,
       }))
 
-      const repairs: RepairLike[] = repairRows.map((r) => ({
-        assetId: r.asset_id,
-        repairDate: toIso(r.repair_date),
-        status: r.status,
-        costCents: cents(r.cost),
-      }))
-      const repairsByAsset = summarizeRepairs(repairs)
-      const documented = new Set(
-        disposalDocs
-          .map((d) => d.related_asset_id)
-          .filter((v): v is string => Boolean(v))
-      )
-
       const requests: PrescriptiveRequest[] = requestRows.map((r) => {
         const profile = names.get(r.employee_id)
         const items: PrescriptiveRequestItem[] = r.items.map((i) => ({
@@ -456,7 +507,7 @@ export async function getPrescriptiveOverview(
         }
       })
 
-      const inventory: PrescriptiveInventoryItem[] = inventoryRows.map((i) => ({
+      const inventory: PrescriptiveInventoryItem[] = scopedInventoryRows.map((i) => ({
         id: i.id,
         itemName: i.item_name,
         quantity: i.quantity,

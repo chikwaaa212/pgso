@@ -1,7 +1,7 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
-import { usePathname } from "next/navigation";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { usePathname, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import {
   Boxes,
@@ -319,6 +319,7 @@ function PersonnelRequestsContent() {
   // requests sent to them; the admin sees the whole queue so they can act on
   // requests sent to any personnel, exactly like their own.
   const isAdminPortal = portalFromPathname(usePathname()) === "super-admin";
+  const searchParams = useSearchParams();
   const [query, setQuery] = useState("");
   const [statusTab, setStatusTab] =
     useState<(typeof STATUS_TABS)[number]["value"]>("all");
@@ -502,6 +503,31 @@ function PersonnelRequestsContent() {
     (safePage - 1) * pageSize,
     safePage * pageSize
   );
+
+  // Deep link from a Recommendation ("Open request"): jump to the request's
+  // page and flash its row so the reader does not have to search the queue.
+  const [locatedId, setLocatedId] = useState<string | null>(null);
+  const highlightHandled = useRef<string | null>(null);
+  useEffect(() => {
+    const highlightId = searchParams.get("highlight");
+    if (!highlightId || loading) return;
+    const index = filteredRows.findIndex((r) => r.id === highlightId);
+    if (index < 0) return;
+    if (highlightHandled.current === highlightId) return;
+    highlightHandled.current = highlightId;
+    setPage(Math.floor(index / pageSize) + 1);
+    setLocatedId(highlightId);
+    const scroll = window.setTimeout(() => {
+      document
+        .querySelector(`tr[data-highlight-id="${highlightId}"]`)
+        ?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 120);
+    const clear = window.setTimeout(() => setLocatedId(null), 5000);
+    return () => {
+      window.clearTimeout(scroll);
+      window.clearTimeout(clear);
+    };
+  }, [filteredRows, loading, pageSize, searchParams]);
 
   const pendingCount = rows.filter(
     (r) => (r.status ?? "pending") === "pending"
@@ -1037,7 +1063,10 @@ function PersonnelRequestsContent() {
                   return (
                     <tr
                       key={r.id}
-                      className={req.row}
+                      data-highlight-id={r.id}
+                      className={
+                        locatedId === r.id ? `${req.row} ${req.rowLocated}` : req.row
+                      }
                       tabIndex={0}
                       onClick={openDetails}
                       onKeyDown={(e) => {

@@ -113,7 +113,7 @@ describe('prescriptive idle rules', () => {
     )
     assert.equal(rows[0].rule, 'IDLE_MATCHED_DEMAND')
     assert.equal(rows[0].priority, 'high')
-    assert.match(rows[0].href ?? '', /\/requests$/)
+    assert.match(rows[0].href ?? '', /\/requests\?highlight=r1$/)
   })
 
   it('matches a pending request by asset id even when wording differs', () => {

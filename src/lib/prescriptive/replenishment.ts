@@ -145,7 +145,8 @@ export function buildReplenishmentRecommendations(
           suggestedOrderQty !== null && suggestedOrderQty > 0
             ? `Review a stock-replenishment request for about ${suggestedOrderQty.toLocaleString('en-PH')} ${unit}. Confirm with the end-user before submitting.`
             : 'Review a stock-replenishment request and confirm the quantity with the end-user.',
-        href: `${portalBase}/inventory?q=${encodeURIComponent(item.itemName)}`,
+        // Stock lives on /stocks (the ledger); highlight the exact SKU there.
+        href: `${portalBase}/stocks?q=${encodeURIComponent(item.itemName)}&highlight=${encodeURIComponent(item.id)}`,
         evidence: [
           { label: 'On hand', value: `${item.quantity.toLocaleString('en-PH')} ${unit}` },
           {

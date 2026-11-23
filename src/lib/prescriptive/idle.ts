@@ -44,8 +44,10 @@ function assetLabel(asset: PrescriptiveAsset): string {
 }
 
 function assetsHref(base: string, asset: PrescriptiveAsset): string {
-  const q = asset.propertyNumber?.trim() || asset.description?.trim() || ''
-  return q ? `${base}/assets?q=${encodeURIComponent(q)}` : `${base}/assets`
+  // `highlight` alone is authoritative: the registry locates the row by id and
+  // scrolls to it, so a search term that does not appear in the visible
+  // columns cannot hide the record.
+  return `${base}/assets?${new URLSearchParams({ tab: 'added', highlight: asset.id })}`
 }
 
 function normalized(value: string | null | undefined): string {
@@ -148,7 +150,9 @@ export function buildIdleRecommendations(
       action: match
         ? 'Review the pending request and, if the asset fits, prepare a transfer. This page does not create or approve the request.'
         : 'Review whether another office or employee can use this asset. If not, consider disposal or retention review.',
-      href: match ? `${portalBase}/requests` : assetsHref(portalBase, asset),
+      href: match
+        ? `${portalBase}/requests?highlight=${encodeURIComponent(match.id)}`
+        : assetsHref(portalBase, asset),
       evidence,
     })
   }

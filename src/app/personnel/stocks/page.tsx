@@ -1,6 +1,6 @@
 'use client'
 
-import { Suspense, useCallback, useEffect, useMemo, useState } from 'react'
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import {
@@ -250,6 +250,26 @@ function PersonnelInventoryContent() {
   const pageCount = Math.max(1, Math.ceil(total / pageSize))
   const safePage = Math.min(Math.max(1, page), pageCount)
   const visible = filtered.slice((safePage - 1) * pageSize, safePage * pageSize)
+
+  // Deep link from a Recommendation ("Open inventory"): select the referenced
+  // SKU, move to its page and scroll it into view.
+  const highlightId = searchParams.get('highlight')
+  const highlightHandled = useRef<string | null>(null)
+  useEffect(() => {
+    if (!highlightId || loading || rows.length === 0) return
+    const index = filtered.findIndex((r) => r.id === highlightId)
+    if (index < 0) return
+    if (highlightHandled.current === highlightId) return
+    highlightHandled.current = highlightId
+    setSelectedId(highlightId)
+    setPage(Math.floor(index / pageSize) + 1)
+    const timer = window.setTimeout(() => {
+      document
+        .querySelector(`tr[data-highlight-id="${CSS.escape(highlightId)}"]`)
+        ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }, 120)
+    return () => window.clearTimeout(timer)
+  }, [highlightId, filtered, loading, pageSize, rows.length])
 
   const clearFilters = () => {
     setQuery('')
@@ -565,6 +585,7 @@ function PersonnelInventoryContent() {
                   return (
                     <tr
                       key={item.id}
+                      data-highlight-id={item.id}
                       className={
                         isSelected ? assetStyles.selectedRow : assetStyles.selectableRow
                       }

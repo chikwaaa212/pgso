@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
   ArrowUpRight,
@@ -297,11 +298,21 @@ function ThresholdCell({
 }
 
 export default function SuperAdminInventoryPage() {
+  // useSearchParams needs a Suspense boundary during prerender.
+  return (
+    <Suspense fallback={<InventoryLoading />}>
+      <SuperAdminInventoryContent />
+    </Suspense>
+  );
+}
+
+function SuperAdminInventoryContent() {
+  const searchParams = useSearchParams();
   // Server-paged window (PAGE_SIZE) via the shared inventory reader:
   // the DB returns only the window + exact total per filter set (60s,
   // busted by stock/threshold writes). Header alerts read the global stats
   // snapshot (not the window) so counts stay exact while paging.
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(searchParams.get("q") ?? "");
   const debouncedQuery = useDebouncedValue(query, 300);
   const [level, setLevel] = useState<"all" | Level>("all");
   const [page, setPage] = useState(1);
@@ -396,6 +407,26 @@ export default function SuperAdminInventoryPage() {
     ? assetOptionDisabledReason({ source: "stock", quantity: selectedRow.quantity })
     : null;
   const selectedAssignable = selectedRow !== null && selectedAssignReason === null;
+
+  // Deep link from a Recommendation ("Open inventory"): show the ledger tab,
+  // select the referenced SKU and scroll it into view. The link also carries
+  // `q`, so the server window is already narrowed to the item.
+  const highlightId = searchParams.get("highlight");
+  const highlightHandled = useRef<string | null>(null);
+  useEffect(() => {
+    if (!highlightId || loading) return;
+    if (!rows.some((r) => r.id === highlightId)) return;
+    if (highlightHandled.current === highlightId) return;
+    highlightHandled.current = highlightId;
+    setTab("ledger");
+    setSelectedId(highlightId);
+    const timer = window.setTimeout(() => {
+      document
+        .querySelector(`tr[data-highlight-id="${highlightId}"]`)
+        ?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 120);
+    return () => window.clearTimeout(timer);
+  }, [highlightId, loading, rows]);
 
   // Own write (issue/assign): drop the affected client caches, then refetch
   // this window and its header stats.
@@ -710,6 +741,7 @@ export default function SuperAdminInventoryPage() {
                     return (
                       <tr
                         key={item.id}
+                        data-highlight-id={item.id}
                         className={
                           isSelected ? assetStyles.selectedRow : assetStyles.selectableRow
                         }

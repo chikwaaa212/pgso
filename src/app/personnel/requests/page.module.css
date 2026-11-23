@@ -857,6 +857,22 @@
   cursor: pointer;
 }
 
+/* Row located from a Recommendation deep link: flash it, then settle on a
+   soft highlight so it stays easy to spot in the queue. */
+.rowLocated td {
+  background-color: var(--color-yellow-100, #fef9c3);
+  animation: rowLocatedFlash 1.6s ease-out 2;
+}
+
+@keyframes rowLocatedFlash {
+  0% {
+    background-color: var(--color-yellow-500, #eab308);
+  }
+  100% {
+    background-color: var(--color-yellow-100, #fef9c3);
+  }
+}
+
 .row:focus-visible {
   outline: 2px solid var(--color-navy-900);
   outline-offset: -2px;

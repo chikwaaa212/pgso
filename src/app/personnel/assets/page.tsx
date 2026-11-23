@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { PAGE_SIZE } from "@/lib/constants";
@@ -296,6 +296,38 @@ export default function PersonnelAssetsPage() {
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
   const safePage = Math.min(Math.max(1, page), pageCount);
   const visible = filtered.slice((safePage - 1) * pageSize, safePage * pageSize);
+
+  // Deep link from a Recommendation ("Open asset"): select the referenced row,
+  // move to its page and scroll it into view so the reader never has to search
+  // for the property number again.
+  const highlightId = searchParams.get("highlight");
+  const highlightHandled = useRef<string | null>(null);
+  const highlightTabTried = useRef(false);
+  useEffect(() => {
+    if (!highlightId || loading || rows.length === 0) return;
+    if (rows.some((r) => r.id === highlightId)) return;
+    // The recommendation always points at an `assets` row ("From added"), but
+    // a hand-edited URL may land on the wrong tab — try the other one once.
+    if (highlightTabTried.current) return;
+    highlightTabTried.current = true;
+    switchTab(isInspected ? "added" : "inspected");
+  }, [highlightId, loading, rows, isInspected, switchTab]);
+
+  useEffect(() => {
+    if (!highlightId || loading) return;
+    const index = filtered.findIndex((r) => r.id === highlightId);
+    if (index < 0) return;
+    if (highlightHandled.current === highlightId) return;
+    highlightHandled.current = highlightId;
+    setSelectedId(highlightId);
+    setPage(Math.floor(index / pageSize) + 1);
+    const timer = window.setTimeout(() => {
+      document
+        .querySelector(`tr[data-highlight-id="${highlightId}"]`)
+        ?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 120);
+    return () => window.clearTimeout(timer);
+  }, [highlightId, filtered, loading, pageSize]);
 
   // Ledger-style summary, computed over the loaded tab window — same cards as
   // /personnel/stocks so both registries read the same way.
@@ -734,6 +766,7 @@ export default function PersonnelAssetsPage() {
                     return (
                       <tr
                         key={a.id}
+                        data-highlight-id={a.id}
                         className={
                           isSelected
                             ? assetStyles.selectedRow
