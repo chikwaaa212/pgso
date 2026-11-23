@@ -3,6 +3,7 @@ import 'server-only'
 import prisma from '@/lib/prisma'
 import { getPersonnelScope, type PersonnelScope } from '@/lib/personnel-scope'
 import { withScopedCache } from '@/lib/personnel-cache'
+import { classifyCondition } from '@/lib/reporting'
 import {
   aggregateConsumption,
   buildConsumptionSuggestions,
@@ -435,11 +436,12 @@ export async function getPrescriptiveOverview(
       // ── Personnel ownership scope ─────────────────────────────────────
       // Assets/inventory are shared pools with no owner column, so "the data
       // this personnel owns" is derived from the records they actually
-      // handled: repairs they logged, assets/stock they issued, and the
-      // requests addressed to them. Super Admin skips this and keeps the
-      // complete picture.
+      // handled: repairs they logged, assets they issued, and the requests
+      // addressed to them. Two shared-pool exceptions stay visible to every
+      // personnel user because they are safety/stock signals: unserviceable
+      // equipment (needs disposal review) and low/out-of-stock items.
+      // Super Admin skips all of this and keeps the complete picture.
       const ownAssetIds = new Set<string>()
-      const ownInventoryIds = new Set<string>()
       if (!scope.isSuperAdmin) {
         for (const assetId of repairsByAsset.keys()) ownAssetIds.add(assetId)
         for (const request of requestRows) {
@@ -449,19 +451,14 @@ export async function getPrescriptiveOverview(
         }
         for (const row of ownIssuedRows) {
           if (row.asset_id) ownAssetIds.add(row.asset_id)
-          if (row.inventory_id) ownInventoryIds.add(row.inventory_id)
         }
       }
       const scopedAssetRows = scope.isSuperAdmin
         ? assetRows
-        : assetRows.filter((a) => ownAssetIds.has(a.id))
-      const ownItemKeys = new Set(consumption.items.map((i) => i.itemKey))
-      const scopedInventoryRows = scope.isSuperAdmin
-        ? inventoryRows
-        : inventoryRows.filter(
-            (i) =>
-              ownInventoryIds.has(i.id) ||
-              ownItemKeys.has(consumptionKey(i.item_name, i.unit))
+        : assetRows.filter(
+            (a) =>
+              ownAssetIds.has(a.id) ||
+              classifyCondition(a.condition) === 'unserviceable'
           )
 
       const assets: PrescriptiveAsset[] = scopedAssetRows.map((a) => ({
@@ -507,7 +504,7 @@ export async function getPrescriptiveOverview(
         }
       })
 
-      const inventory: PrescriptiveInventoryItem[] = scopedInventoryRows.map((i) => ({
+      const inventory: PrescriptiveInventoryItem[] = inventoryRows.map((i) => ({
         id: i.id,
         itemName: i.item_name,
         quantity: i.quantity,

@@ -422,7 +422,7 @@ export function RecommendationsWorkspace({ portal }: { portal: Portal }) {
                 <ShieldCheck size={13} aria-hidden="true" />
                 {portal === 'super-admin'
                   ? 'Advisory only — this view covers every asset, stock item, repair, issuance and request across the province. Nothing is changed automatically.'
-                  : 'Advisory only — these suggestions are based on the records you handle (your repairs, issuances and requests). Nothing is changed automatically.'}
+                  : 'Advisory only — suggestions come from records you handle, plus unserviceable equipment and low-stock items. Nothing is changed automatically.'}
               </p>
 
               {counts.total === 0 ? (
